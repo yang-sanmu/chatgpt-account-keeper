@@ -1,0 +1,26 @@
+{
+  "_comment": "ChatGPT 网页端选择器集中管理。官网改版时通常只需改这里。多个候选用数组，代码会依次尝试。",
+  "url": "https://chatgpt.com/",
+  "loginIndicators": [
+    "#prompt-textarea",
+    "div[contenteditable='true']"
+  ],
+  "composer": [
+    "#prompt-textarea",
+    "div[contenteditable='true'][data-virtualkeyboard='true']",
+    "div[contenteditable='true']"
+  ],
+  "sendButton": [
+    "button[data-testid='send-button']",
+    "button[aria-label*='Send']",
+    "button[aria-label*='发送']"
+  ],
+  "stopButton": [
+    "button[data-testid='stop-button']",
+    "button[aria-label*='Stop']",
+    "button[aria-label*='停止']"
+  ],
+  "assistantMessage": [
+    "div[data-message-author-role='assistant']"
+  ]
+}

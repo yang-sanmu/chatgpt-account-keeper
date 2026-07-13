@@ -1,0 +1,14 @@
+{
+  "accounts": [
+    {
+      "id": "acc_example",
+      "note": "示例账号（备注可选）",
+      "profileDir": "profiles/acc_example",
+      "proxy": null,
+      "enabled": true,
+      "conversationSet": "default",
+      "email": null,
+      "gptName": null
+    }
+  ]
+}

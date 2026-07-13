@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GPT 账号管理面板</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <h1>GPT 账号管理面板</h1>
+    <div class="scheduler-box">
+      <span id="sched-state" class="pill">调度器: 加载中…</span>
+      <button id="sched-toggle" class="btn">启动调度</button>
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab active" data-tab="accounts">账号</button>
+    <button class="tab" data-tab="conversations">会话内容</button>
+    <button class="tab" data-tab="settings">定时设置</button>
+  </nav>
+
+  <main>
+    <!-- 账号 -->
+    <section id="tab-accounts" class="tab-panel active">
+      <div class="section-head">
+        <h2>账号列表</h2>
+        <button id="add-account" class="btn primary">+ 添加账号</button>
+      </div>
+      <table class="grid">
+        <thead>
+          <tr>
+            <th>账号 / 备注</th><th>状态</th><th>启用</th><th>会话集</th><th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="account-rows"></tbody>
+      </table>
+      <p class="empty" id="account-empty" hidden>还没有账号，点右上角添加。</p>
+    </section>
+
+    <!-- 会话内容 -->
+    <section id="tab-conversations" class="tab-panel">
+      <div class="section-head">
+        <h2>会话内容集</h2>
+        <button id="add-set" class="btn primary">+ 新建会话集</button>
+      </div>
+      <div id="conv-list"></div>
+    </section>
+
+    <!-- 定时设置 -->
+    <section id="tab-settings" class="tab-panel">
+      <h2>定时设置</h2>
+      <form id="settings-form" class="form">
+        <label>每轮间隔（分钟）
+          <input type="number" name="intervalMinutes" min="1" />
+        </label>
+        <label>随机抖动（分钟）
+          <input type="number" name="jitterMinutes" min="0" />
+        </label>
+        <label>登录状态检查间隔（分钟）
+          <input type="number" name="statusCheckMinutes" min="1" />
+        </label>
+        <label class="checkbox">
+          <input type="checkbox" name="headless" />
+          无头模式运行（不显示浏览器窗口）
+        </label>
+        <button type="submit" class="btn primary">保存设置</button>
+      </form>
+      <p class="hint">修改后下一轮调度生效。间隔越规律越容易被风控识别，建议保留抖动。状态检查会在后台无头打开浏览器，间隔太短会增加负载。</p>
+    </section>
+  </main>
+
+  <!-- 历史记录抽屉 -->
+  <div id="history-drawer" class="drawer" hidden>
+    <div class="drawer-head">
+      <h3 id="history-title">历史记录</h3>
+      <button id="history-close" class="btn">关闭</button>
+    </div>
+    <div id="history-body" class="drawer-body"></div>
+  </div>
+
+  <!-- 登录进度弹窗 -->
+  <div id="login-modal" class="modal" hidden>
+    <div class="modal-card">
+      <h3>正在登录</h3>
+      <p id="login-msg">准备中…</p>
+      <button id="login-close" class="btn" hidden>关闭</button>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

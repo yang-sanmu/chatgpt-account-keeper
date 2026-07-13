@@ -1,0 +1,86 @@
+#!/usr/bin/env node
+import { loginAccount } from "./login.js";
+import { runOnce, scheduler } from "./scheduler.js";
+import { getAccounts, getAccount } from "./store.js";
+import { recordConversation } from "./logger.js";
+import * as log from "./logger.js";
+
+function parseFlags(argv) {
+  const flags = {};
+  for (const a of argv) {
+    const m = a.match(/^--([^=]+)=(.*)$/);
+    if (m) flags[m[1]] = m[2];
+    else if (a.startsWith("--")) flags[a.slice(2)] = true;
+  }
+  return flags;
+}
+
+const HELP = `
+GPT 账号会话工具
+
+用法:
+  node src/cli.js login <accountId>       手动登录某账号（打开有头浏览器）
+  node src/cli.js once <accountId>        让某账号立即跑一次会话
+  node src/cli.js once-all                所有启用账号各跑一次
+  node src/cli.js run                     启动常驻定时调度
+  node src/cli.js list                    列出配置的账号
+
+选项:
+  --headless=false    显示浏览器窗口（调试用；once/run 默认无头）
+  --interval=180      run: 每轮间隔分钟数
+  --jitter=30         run: 随机抖动分钟数
+`;
+
+async function main() {
+  const [cmd, ...rest] = process.argv.slice(2);
+  const flags = parseFlags(rest);
+  const positional = rest.filter((a) => !a.startsWith("--"));
+  const headless = flags.headless === "false" ? false : true;
+
+  switch (cmd) {
+    case "login": {
+      const id = positional[0];
+      if (!id) return console.log("用法: login <accountId>");
+      await loginAccount(id);
+      break;
+    }
+    case "once": {
+      const id = positional[0];
+      if (!id) return console.log("用法: once <accountId>");
+      const acc = getAccount(id);
+      if (!acc) return log.error(`找不到账号 ${id}`);
+      const res = await runOnce(acc, { headless });
+      recordConversation(acc.id, res);
+      console.log(JSON.stringify(res, null, 2));
+      break;
+    }
+    case "once-all": {
+      for (const acc of getAccounts().filter((a) => a.enabled)) {
+        const res = await runOnce(acc, { headless });
+        recordConversation(acc.id, res);
+        log.info(`${acc.id}: ${res.ok ? "成功" : "失败 - " + res.reason}`);
+      }
+      break;
+    }
+    case "run": {
+      scheduler.start();
+      await new Promise(() => {}); // 保持进程存活
+      break;
+    }
+    case "list": {
+      for (const a of getAccounts()) {
+        console.log(
+          `${a.enabled ? "[✓]" : "[ ]"} ${a.id}  ${a.label}  -> ${a.profileDir}`
+        );
+      }
+      break;
+    }
+    default:
+      console.log(HELP);
+  }
+}
+
+main().catch((e) => {
+  log.error(String(e.stack || e));
+  process.exit(1);
+});

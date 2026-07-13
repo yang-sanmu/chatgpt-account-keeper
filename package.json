@@ -1,0 +1,19 @@
+{
+  "name": "chatgpt-account-keeper",
+  "version": "0.1.0",
+  "description": "多 ChatGPT 网页账号会话管理与定时对话工具（手动登录 + 持久化会话态）",
+  "type": "module",
+  "bin": {
+    "chatgpt-account-keeper": "src/cli.js"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "login": "node src/cli.js login",
+    "run": "node src/cli.js run",
+    "once": "node src/cli.js once"
+  },
+  "dependencies": {
+    "express": "^4.22.2",
+    "playwright": "^1.49.0"
+  }
+}

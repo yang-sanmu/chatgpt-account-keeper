@@ -29,9 +29,10 @@ npx playwright install chromium
 ```bash
 cp config/accounts.example.json config/accounts.json
 cp config/settings.example.json config/settings.json
+cp config/conversations.example.json config/conversations.json
 ```
 
-（`accounts.json` 也可留空由面板“添加账号”生成。）
+（`accounts.json` 也可留空由面板“添加账号”生成；会话内容可在面板“会话内容”里编辑。）
 
 ## 启动
 

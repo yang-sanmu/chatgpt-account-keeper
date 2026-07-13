@@ -91,6 +91,14 @@ function statusHtml(id, loggedIn, checkedAt) {
     <span class="dot ${dot}"></span>${text}${when}</span>`;
 }
 
+// ISO 时间转本地格式，如 2026/07/13 11:44:22
+function fmtLocal(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d)) return iso;
+  return d.toLocaleString("zh-CN", { hour12: false });
+}
+
 function timeAgo(iso) {
   const diff = (Date.now() - new Date(iso).getTime()) / 1000;
   if (diff < 60) return "刚刚";
@@ -272,7 +280,7 @@ async function openHistory(id) {
         const cls = it.ok ? "" : "fail";
         const ans = it.ok ? escapeHtml(it.reply || "") : "失败: " + escapeHtml(it.reason || "");
         return `<div class="hist-item ${cls}">
-          <div class="meta">${it.time}</div>
+          <div class="meta">${fmtLocal(it.time)}</div>
           <div class="q">${escapeHtml(it.prompt || "(无 prompt)")}</div>
           <div class="a">${ans}</div>
         </div>`;

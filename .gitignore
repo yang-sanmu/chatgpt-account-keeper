@@ -8,6 +8,9 @@ profiles/
 config/accounts.json
 config/settings.json
 
+# 个人会话内容（运行时数据，用 .example 做模板）
+config/conversations.json
+
 # 对话历史与运行日志
 logs/
 

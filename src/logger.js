@@ -4,28 +4,30 @@ import { fromRoot, ensureDir } from "./paths.js";
 
 const LOG_DIR = ensureDir(fromRoot("logs"));
 
-function ts() {
-  return new Date().toISOString();
+// 控制台时间戳：本地格式，24 小时制，便于直接阅读。
+function consoleTs() {
+  return new Date().toLocaleString("zh-CN", { hour12: false });
 }
 
 export function info(msg) {
-  console.log(`[${ts()}] ${msg}`);
+  console.log(`[${consoleTs()}] ${msg}`);
 }
 
 export function warn(msg) {
-  console.warn(`[${ts()}] WARN  ${msg}`);
+  console.warn(`[${consoleTs()}] WARN  ${msg}`);
 }
 
 export function error(msg) {
-  console.error(`[${ts()}] ERROR ${msg}`);
+  console.error(`[${consoleTs()}] ERROR ${msg}`);
 }
 
 /**
  * 把一次对话结果追加写入 logs/<accountId>.jsonl。
+ * time 字段保持 ISO 格式，供前端 fmtLocal 可靠解析。
  */
 export function recordConversation(accountId, entry) {
   const file = path.join(LOG_DIR, `${accountId}.jsonl`);
-  const line = JSON.stringify({ time: ts(), ...entry }) + "\n";
+  const line = JSON.stringify({ time: new Date().toISOString(), ...entry }) + "\n";
   fs.appendFileSync(file, line, "utf8");
 }
 

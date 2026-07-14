@@ -1,7 +1,8 @@
 import { launchForAccount } from "./browser.js";
 import { readJson } from "./paths.js";
 import { runAgent } from "./agent.js";
-import { getAccounts, getConversations, getSettings, displayName } from "./store.js";
+import { getAccounts, getAccount, getSettings, displayName } from "./store.js";
+import { selectSetForAccount, commitWindow } from "./rotation.js";
 import { withAccountLock } from "./locks.js";
 import { recordConversation } from "./logger.js";
 import * as log from "./logger.js";
@@ -39,14 +40,18 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
  */
 export async function runOnce(account, opts = {}) {
   const selectors = readJson("config/selectors.json");
-  const sets = getConversations();
-  const set = sets[account.conversationSet ?? "default"];
-  if (!set) return { ok: false, reason: `会话集不存在: ${account.conversationSet}` };
-  if (!set.topic) return { ok: false, reason: "会话集未设置主题" };
-
   const name = displayName(account);
   // 套账号锁：同一 profile 不能被两个浏览器实例同时打开。
+  // 主题选择与窗口计数都放在锁内，避免并发触发时轮换状态读-改-写竞态。
   return withAccountLock(account.id, async () => {
+    // 用锁内最新账号数据选主题（切换时已持久化新状态）。
+    const fresh = getAccount(account.id) ?? account;
+    const picked = selectSetForAccount(fresh);
+    if (!picked) {
+      return { ok: false, reason: "没有可用的会话集主题，请先在“会话内容”里配置" };
+    }
+    const { setName, set } = picked;
+
     const { context, page } = await launchForAccount(account, {
       headless: opts.headless ?? true,
     });
@@ -54,10 +59,15 @@ export async function runOnce(account, opts = {}) {
       await page.goto(selectors.url, { waitUntil: "domcontentloaded" });
       const email = await sessionEmail(page);
       if (!email) return { ok: false, reason: "未登录，请先登录该账号" };
-      log.info(`「${name}」开始 agent 对话，主题「${set.topic}」`);
+      log.info(`「${name}」开始 agent 对话，主题「${set.topic}」(${setName})`);
       const result = await runAgent(page, selectors, set);
       log.info(`「${name}」完成 ${result.totalRounds ?? 0} 轮对话`);
-      return result;
+      // 只有对话成功才算跑完一个有效窗口，失败不消耗计数。
+      if (result.ok) {
+        const latest = getAccount(account.id);
+        commitWindow(account.id, latest?.rotation);
+      }
+      return { ...result, setName };
     } catch (e) {
       return { ok: false, reason: String(e.message || e) };
     } finally {

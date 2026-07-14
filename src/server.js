@@ -35,8 +35,8 @@ app.get("/api/accounts", wrap(async (req, res) => {
 }));
 
 app.post("/api/accounts", wrap(async (req, res) => {
-  const { note, proxy, conversationSet } = req.body ?? {};
-  const acc = store.addAccount({ note, proxy, conversationSet });
+  const { note, proxy } = req.body ?? {};
+  const acc = store.addAccount({ note, proxy });
   res.json(acc);
 }));
 

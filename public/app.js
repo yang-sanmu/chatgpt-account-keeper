@@ -39,17 +39,17 @@ async function loadAccounts() {
   tbody.innerHTML = "";
   $("#account-empty").hidden = accounts.length > 0;
 
-  const convNames = Object.keys(convCache);
   for (const a of accounts) {
     const tr = document.createElement("tr");
-    const opts = convNames
-      .map(
-        (n) =>
-          `<option value="${escapeHtml(n)}" ${
-            (a.conversationSet || "default") === n ? "selected" : ""
-          }>${escapeHtml(n)}</option>`
-      )
-      .join("");
+    const rot = a.rotation || {};
+    const rule = a.switchRule || "random";
+    // rotation.currentSet 是内部 key，显示时转成主题内容
+    const topicText = rot.currentSet
+      ? convCache[rot.currentSet]?.topic || rot.currentSet
+      : null;
+    const progress = topicText
+      ? `当前：${escapeHtml(topicText)}（${rot.windowsDone ?? 0}/${rot.windowsTarget ?? 0}）`
+      : "<span class='muted'>未开始</span>";
     tr.innerHTML = `
       <td>
         <div class="acc-email" data-email="${a.id}">${
@@ -64,7 +64,18 @@ async function loadAccounts() {
         <input type="checkbox" ${a.enabled ? "checked" : ""} data-enable="${a.id}" />
       </td>
       <td>
-        <select data-conv-set="${a.id}">${opts}</select>
+        <div class="rot-config">
+          <select data-rule="${a.id}">
+            <option value="random" ${rule === "random" ? "selected" : ""}>随机切换</option>
+            <option value="sequential" ${rule === "sequential" ? "selected" : ""}>顺序切换</option>
+          </select>
+          <span class="rot-windows">窗口
+            <input type="number" min="1" class="rot-min" data-minw="${a.id}" value="${a.minWindows ?? 1}" />
+            -
+            <input type="number" min="1" class="rot-max" data-maxw="${a.id}" value="${a.maxWindows ?? 3}" />
+          </span>
+        </div>
+        <div class="rot-progress">${progress}</div>
       </td>
       <td class="actions">
         <button class="btn small" data-login="${a.id}">登录</button>
@@ -129,15 +140,36 @@ function bindAccountActions() {
     })
   );
 
-  // 会话集：随时切换即时保存
-  $$("[data-conv-set]").forEach((el) =>
+  // 切换规则：随机/顺序，即时保存
+  $$("[data-rule]").forEach((el) =>
     el.addEventListener("change", async () => {
-      await api(`/accounts/${el.dataset.convSet}`, {
+      await api(`/accounts/${el.dataset.rule}`, {
         method: "PATCH",
-        body: { conversationSet: el.value },
+        body: { switchRule: el.value },
       });
-      toast("会话集已更新");
+      toast("切换规则已更新");
     })
+  );
+
+  // 窗口数范围：失焦保存，min/max 自动纠正
+  const saveWindows = async (id) => {
+    let min = Number($(`[data-minw="${id}"]`).value) || 1;
+    let max = Number($(`[data-maxw="${id}"]`).value) || 1;
+    if (min < 1) min = 1;
+    if (max < min) max = min;
+    $(`[data-minw="${id}"]`).value = min;
+    $(`[data-maxw="${id}"]`).value = max;
+    await api(`/accounts/${id}`, {
+      method: "PATCH",
+      body: { minWindows: min, maxWindows: max },
+    });
+    toast("窗口数已保存");
+  };
+  $$("[data-minw]").forEach((el) =>
+    el.addEventListener("change", () => saveWindows(el.dataset.minw))
+  );
+  $$("[data-maxw]").forEach((el) =>
+    el.addEventListener("change", () => saveWindows(el.dataset.maxw))
   );
 
   $$("[data-login]").forEach((el) =>
@@ -218,6 +250,7 @@ async function runNow(id) {
   try {
     const res = await api(`/accounts/${id}/run`, { method: "POST" });
     toast(res.ok ? "完成，回复已记录" : "失败: " + res.reason);
+    loadAccounts(); // 刷新轮换进度显示
   } catch (e) {
     toast("出错: " + e.message);
   }
@@ -320,36 +353,35 @@ function renderHistItem(it) {
     <div class="a">${escapeHtml(it.reply || "")}</div></div>`;
 }
 
-// ---------- 会话内容（Agent 模式：主题 + 随机轮数）----------
-let convCache = {}; // 会话集缓存，供账号行的下拉使用
+// ---------- 主题（Agent 模式：主题 + 随机轮数）----------
+let convCache = {}; // 主题缓存（key -> {topic,minRounds,maxRounds}），供账号进度显示
 
 async function loadConversations() {
   convCache = await api("/conversations");
   const list = $("#conv-list");
   list.innerHTML = "";
-  for (const [name, set] of Object.entries(convCache)) {
+  for (const [key, set] of Object.entries(convCache)) {
     const card = document.createElement("div");
     card.className = "conv-card";
     card.innerHTML = `
-      <h3>${escapeHtml(name)}</h3>
       <label class="conv-field">主题
-        <input class="conv-topic" data-topic="${escapeHtml(name)}"
+        <input class="conv-topic" data-topic="${escapeHtml(key)}"
           value="${escapeHtml(set.topic || "")}"
           placeholder="例如：C# 编程 / 英语学习 / 健身饮食" />
       </label>
       <div class="row">
         <label class="conv-field small-field">每次对话轮数（随机）下限
-          <input type="number" min="1" class="conv-min" data-min="${escapeHtml(name)}"
+          <input type="number" min="1" class="conv-min" data-min="${escapeHtml(key)}"
             value="${set.minRounds ?? 2}" />
         </label>
         <label class="conv-field small-field">上限
-          <input type="number" min="1" class="conv-max" data-max="${escapeHtml(name)}"
+          <input type="number" min="1" class="conv-max" data-max="${escapeHtml(key)}"
             value="${set.maxRounds ?? 8}" />
         </label>
       </div>
       <div class="row">
-        <button class="btn primary small" data-save-conv="${escapeHtml(name)}">保存</button>
-        <button class="btn danger small" data-del-conv="${escapeHtml(name)}">删除会话集</button>
+        <button class="btn primary small" data-save-conv="${escapeHtml(key)}">保存</button>
+        <button class="btn danger small" data-del-conv="${escapeHtml(key)}">删除主题</button>
       </div>
       <p class="hint">Agent 会围绕主题开启对话，让 GPT 每轮给出“下一个问题”并自动追问，达到随机轮数后新开对话。</p>`;
     list.appendChild(card);
@@ -357,14 +389,14 @@ async function loadConversations() {
 
   $$("[data-save-conv]").forEach((el) =>
     el.addEventListener("click", async () => {
-      const name = el.dataset.saveConv;
-      const topic = $(`[data-topic="${name}"]`).value.trim();
-      let minRounds = Number($(`[data-min="${name}"]`).value) || 1;
-      let maxRounds = Number($(`[data-max="${name}"]`).value) || 1;
+      const key = el.dataset.saveConv;
+      const topic = $(`[data-topic="${key}"]`).value.trim();
+      let minRounds = Number($(`[data-min="${key}"]`).value) || 1;
+      let maxRounds = Number($(`[data-max="${key}"]`).value) || 1;
       if (minRounds < 1) minRounds = 1;
       if (maxRounds < minRounds) maxRounds = minRounds;
       if (!topic) return toast("请先填写主题");
-      await api(`/conversations/${encodeURIComponent(name)}`, {
+      await api(`/conversations/${encodeURIComponent(key)}`, {
         method: "PUT",
         body: { topic, minRounds, maxRounds },
       });
@@ -373,8 +405,10 @@ async function loadConversations() {
   );
   $$("[data-del-conv]").forEach((el) =>
     el.addEventListener("click", async () => {
-      if (!confirm(`删除会话集 ${el.dataset.delConv}？`)) return;
-      await api(`/conversations/${encodeURIComponent(el.dataset.delConv)}`, {
+      const key = el.dataset.delConv;
+      const label = convCache[key]?.topic || "该主题";
+      if (!confirm(`删除主题「${label}」？`)) return;
+      await api(`/conversations/${encodeURIComponent(key)}`, {
         method: "DELETE",
       });
       toast("已删除");
@@ -384,13 +418,16 @@ async function loadConversations() {
 }
 
 $("#add-set").addEventListener("click", async () => {
-  const name = prompt("会话集名称（英文/数字，如 default）");
-  if (!name) return;
-  await api(`/conversations/${encodeURIComponent(name)}`, {
+  // 自动生成内部 key（用户不可见），直接新建一张空主题卡片去填写。
+  const key = "topic_" + Date.now().toString(36);
+  await api(`/conversations/${encodeURIComponent(key)}`, {
     method: "PUT",
     body: { topic: "", minRounds: 2, maxRounds: 8 },
   });
-  loadConversations();
+  await loadConversations();
+  // 聚焦到新卡片的主题输入
+  const input = document.querySelector(`[data-topic="${key}"]`);
+  if (input) input.focus();
 });
 
 // ---------- 设置 ----------
@@ -446,7 +483,7 @@ function escapeHtml(str) {
 }
 
 // ---------- 初始化 ----------
-// 先加载会话集（账号行的下拉依赖 convCache），再加载账号
+// 先加载主题（账号进度显示依赖 convCache），再加载账号
 async function init() {
   await loadConversations();
   await loadAccounts();

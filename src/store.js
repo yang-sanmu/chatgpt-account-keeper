@@ -20,9 +20,21 @@ function writeJsonFile(file, data) {
 }
 
 // ---------- accounts ----------
+// 规范化账号：为旧数据补齐轮换相关字段，去掉已废弃的 conversationSet。
+function normalizeAccount(a) {
+  const { conversationSet, ...rest } = a;
+  return {
+    switchRule: "random",
+    minWindows: 1,
+    maxWindows: 3,
+    ...rest,
+    rotation: a.rotation ?? { currentSet: null, windowsDone: 0, windowsTarget: 0 },
+  };
+}
+
 export function getAccounts() {
   const data = readJsonFile(ACCOUNTS_FILE, { accounts: [] });
-  return data.accounts ?? [];
+  return (data.accounts ?? []).map(normalizeAccount);
 }
 
 export function getAccount(id) {
@@ -44,7 +56,13 @@ function slugId() {
   return "acc_" + arr[0].toString(36) + arr[1].toString(36);
 }
 
-export function addAccount({ note = "", proxy = null, conversationSet = "default" } = {}) {
+export function addAccount({
+  note = "",
+  proxy = null,
+  switchRule = "random",
+  minWindows = 1,
+  maxWindows = 3,
+} = {}) {
   const accounts = getAccounts();
   const id = slugId();
   const account = {
@@ -55,7 +73,12 @@ export function addAccount({ note = "", proxy = null, conversationSet = "default
     profileDir: `profiles/${id}`,
     proxy,
     enabled: true,
-    conversationSet,
+    // 主题轮换规则：在所有会话集之间动态切换
+    switchRule, // "random" | "sequential"
+    minWindows, // 一个主题连续跑的对话（窗口）数下限
+    maxWindows, // 上限
+    // 运行时轮换状态（持久化）
+    rotation: { currentSet: null, windowsDone: 0, windowsTarget: 0 },
   };
   accounts.push(account);
   saveAccounts(accounts);

@@ -60,7 +60,11 @@ h2 { font-size: 16px; }
 .acc-email { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
 .acc-note { width: 100%; max-width: 200px; padding: 4px 8px; border: 1px solid #e3e6ea; border-radius: 5px; font-size: 12px; }
 .muted { color: #b0b7c0; font-weight: normal; }
-select[data-conv-set] { padding: 5px 8px; border: 1px solid #d0d5dd; border-radius: 6px; font-size: 13px; }
+.rot-config { display: flex; flex-direction: column; gap: 6px; }
+.rot-config select { padding: 5px 8px; border: 1px solid #d0d5dd; border-radius: 6px; font-size: 13px; }
+.rot-windows { font-size: 12px; color: #5a6472; display: flex; align-items: center; gap: 4px; }
+.rot-windows input { width: 48px; padding: 3px 6px; border: 1px solid #d0d5dd; border-radius: 5px; font-size: 12px; }
+.rot-progress { font-size: 12px; color: #2264d1; margin-top: 6px; }
 
 .conv-field { display: flex; flex-direction: column; gap: 6px; font-size: 14px; margin-bottom: 12px; }
 .conv-topic { padding: 8px 10px; border: 1px solid #d0d5dd; border-radius: 6px; font-size: 14px; }

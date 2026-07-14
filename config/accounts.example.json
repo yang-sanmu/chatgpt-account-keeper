@@ -6,9 +6,12 @@
       "profileDir": "profiles/acc_example",
       "proxy": null,
       "enabled": true,
-      "conversationSet": "default",
       "email": null,
-      "gptName": null
+      "gptName": null,
+      "switchRule": "random",
+      "minWindows": 1,
+      "maxWindows": 3,
+      "rotation": { "currentSet": null, "windowsDone": 0, "windowsTarget": 0 }
     }
   ]
 }

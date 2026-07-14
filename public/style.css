@@ -62,10 +62,14 @@ h2 { font-size: 16px; }
 .muted { color: #b0b7c0; font-weight: normal; }
 select[data-conv-set] { padding: 5px 8px; border: 1px solid #d0d5dd; border-radius: 6px; font-size: 13px; }
 
-.prompt-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
-.prompt-row { display: flex; gap: 8px; align-items: center; }
-.prompt-input { flex: 1; padding: 8px 10px; border: 1px solid #d0d5dd; border-radius: 6px; font-size: 14px; font-family: inherit; }
-.row-del { flex-shrink: 0; padding: 4px 10px; line-height: 1; }
+.conv-field { display: flex; flex-direction: column; gap: 6px; font-size: 14px; margin-bottom: 12px; }
+.conv-topic { padding: 8px 10px; border: 1px solid #d0d5dd; border-radius: 6px; font-size: 14px; }
+.small-field { max-width: 160px; }
+.small-field input { padding: 6px 8px; border: 1px solid #d0d5dd; border-radius: 6px; font-size: 14px; }
+
+.round { border-left: 3px solid #d6e0f5; padding-left: 10px; margin-bottom: 12px; }
+.round .q { font-weight: 600; font-size: 13px; margin-bottom: 4px; color: #2264d1; }
+.round .a { font-size: 13px; color: #444; white-space: pre-wrap; max-height: 140px; overflow-y: auto; }
 
 .status-dot { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: #b0b7c0; }

@@ -1,6 +1,7 @@
 {
   "_comment": "ChatGPT 网页端选择器集中管理。官网改版时通常只需改这里。多个候选用数组，代码会依次尝试。",
   "url": "https://chatgpt.com/",
+  "newChatUrl": "https://chatgpt.com/",
   "loginIndicators": [
     "#prompt-textarea",
     "div[contenteditable='true']"

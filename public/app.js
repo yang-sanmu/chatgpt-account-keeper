@@ -275,36 +275,53 @@ async function openHistory(id) {
       body.innerHTML = '<p class="empty">暂无记录</p>';
       return;
     }
-    body.innerHTML = items
-      .map((it) => {
-        const cls = it.ok ? "" : "fail";
-        const ans = it.ok ? escapeHtml(it.reply || "") : "失败: " + escapeHtml(it.reason || "");
-        return `<div class="hist-item ${cls}">
-          <div class="meta">${fmtLocal(it.time)}</div>
-          <div class="q">${escapeHtml(it.prompt || "(无 prompt)")}</div>
-          <div class="a">${ans}</div>
-        </div>`;
-      })
-      .join("");
+    body.innerHTML = items.map(renderHistItem).join("");
   } catch (e) {
     body.innerHTML = '<p class="empty">加载失败: ' + escapeHtml(e.message) + "</p>";
   }
 }
 $("#history-close").addEventListener("click", () => ($("#history-drawer").hidden = true));
 
-// ---------- 会话内容 ----------
-let convCache = {}; // 会话集缓存，供账号行的下拉使用
+// 渲染一条历史记录。兼容三种结构：
+// - 当前 agent：{ ok, topic, rounds:[{q,a}], totalRounds }
+// - 早期 agent：{ ok, topic, threads:[{rounds:[{q,a}]}] }
+// - 最早单轮：{ ok, prompt, reply }
+function renderHistItem(it) {
+  const cls = it.ok ? "" : "fail";
+  const head = `<div class="meta">${fmtLocal(it.time)}${
+    it.topic ? " · 主题：" + escapeHtml(it.topic) : ""
+  }${it.totalRounds ? " · " + it.totalRounds + " 轮" : ""}</div>`;
 
-// 一个 prompt 一行输入框。用“添加一行”按钮明确新增，不靠回车。
-function promptRow(text = "") {
-  const div = document.createElement("div");
-  div.className = "prompt-row";
-  div.innerHTML = `
-    <input class="prompt-input" value="${escapeHtml(text)}" placeholder="输入一条对话内容" />
-    <button class="btn small danger row-del" title="删除此行">×</button>`;
-  div.querySelector(".row-del").addEventListener("click", () => div.remove());
-  return div;
+  if (!it.ok) {
+    return `<div class="hist-item fail">${head}
+      <div class="a">失败: ${escapeHtml(it.reason || "未知")}</div></div>`;
+  }
+
+  // 取出多轮数组：当前扁平 rounds，或早期 threads[].rounds
+  let rounds = null;
+  if (Array.isArray(it.rounds)) rounds = it.rounds;
+  else if (Array.isArray(it.threads)) rounds = it.threads.flatMap((t) => t.rounds || []);
+
+  if (rounds) {
+    const body = rounds
+      .map(
+        (r, i) => `<div class="round">
+          <div class="q">Q${i + 1}：${escapeHtml(r.q || "")}</div>
+          <div class="a">${escapeHtml(r.a || "")}</div>
+        </div>`
+      )
+      .join("");
+    return `<div class="hist-item ${cls}">${head}${body}</div>`;
+  }
+
+  // 最早单轮
+  return `<div class="hist-item ${cls}">${head}
+    <div class="q">${escapeHtml(it.prompt || "(无 prompt)")}</div>
+    <div class="a">${escapeHtml(it.reply || "")}</div></div>`;
 }
+
+// ---------- 会话内容（Agent 模式：主题 + 随机轮数）----------
+let convCache = {}; // 会话集缓存，供账号行的下拉使用
 
 async function loadConversations() {
   convCache = await api("/conversations");
@@ -315,39 +332,41 @@ async function loadConversations() {
     card.className = "conv-card";
     card.innerHTML = `
       <h3>${escapeHtml(name)}</h3>
-      <div class="prompt-list" data-conv="${escapeHtml(name)}"></div>
+      <label class="conv-field">主题
+        <input class="conv-topic" data-topic="${escapeHtml(name)}"
+          value="${escapeHtml(set.topic || "")}"
+          placeholder="例如：C# 编程 / 英语学习 / 健身饮食" />
+      </label>
       <div class="row">
-        <button class="btn small add-row">+ 添加一行</button>
-        <label>抽取策略：
-          <select data-strategy="${escapeHtml(name)}">
-            <option value="random" ${set.pickStrategy !== "sequential" ? "selected" : ""}>随机</option>
-            <option value="sequential" ${set.pickStrategy === "sequential" ? "selected" : ""}>顺序</option>
-          </select>
+        <label class="conv-field small-field">每次对话轮数（随机）下限
+          <input type="number" min="1" class="conv-min" data-min="${escapeHtml(name)}"
+            value="${set.minRounds ?? 2}" />
         </label>
+        <label class="conv-field small-field">上限
+          <input type="number" min="1" class="conv-max" data-max="${escapeHtml(name)}"
+            value="${set.maxRounds ?? 8}" />
+        </label>
+      </div>
+      <div class="row">
         <button class="btn primary small" data-save-conv="${escapeHtml(name)}">保存</button>
         <button class="btn danger small" data-del-conv="${escapeHtml(name)}">删除会话集</button>
-      </div>`;
-    const listEl = card.querySelector(".prompt-list");
-    const prompts = set.prompts && set.prompts.length ? set.prompts : [""];
-    prompts.forEach((p) => listEl.appendChild(promptRow(p)));
-    card.querySelector(".add-row").addEventListener("click", () => {
-      const row = promptRow("");
-      listEl.appendChild(row);
-      row.querySelector(".prompt-input").focus();
-    });
+      </div>
+      <p class="hint">Agent 会围绕主题开启对话，让 GPT 每轮给出“下一个问题”并自动追问，达到随机轮数后新开对话。</p>`;
     list.appendChild(card);
   }
 
   $$("[data-save-conv]").forEach((el) =>
     el.addEventListener("click", async () => {
       const name = el.dataset.saveConv;
-      const prompts = [...$(`[data-conv="${name}"]`).querySelectorAll(".prompt-input")]
-        .map((i) => i.value.trim())
-        .filter(Boolean);
-      const pickStrategy = $(`[data-strategy="${name}"]`).value;
+      const topic = $(`[data-topic="${name}"]`).value.trim();
+      let minRounds = Number($(`[data-min="${name}"]`).value) || 1;
+      let maxRounds = Number($(`[data-max="${name}"]`).value) || 1;
+      if (minRounds < 1) minRounds = 1;
+      if (maxRounds < minRounds) maxRounds = minRounds;
+      if (!topic) return toast("请先填写主题");
       await api(`/conversations/${encodeURIComponent(name)}`, {
         method: "PUT",
-        body: { prompts, pickStrategy },
+        body: { topic, minRounds, maxRounds },
       });
       toast("已保存");
     })
@@ -369,7 +388,7 @@ $("#add-set").addEventListener("click", async () => {
   if (!name) return;
   await api(`/conversations/${encodeURIComponent(name)}`, {
     method: "PUT",
-    body: { prompts: [], pickStrategy: "random" },
+    body: { topic: "", minRounds: 2, maxRounds: 8 },
   });
   loadConversations();
 });

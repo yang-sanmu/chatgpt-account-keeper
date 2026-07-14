@@ -1,6 +1,6 @@
 import { launchForAccount } from "./browser.js";
 import { readJson } from "./paths.js";
-import { sendPrompt } from "./chat.js";
+import { runAgent } from "./agent.js";
 import { getAccounts, getConversations, getSettings, displayName } from "./store.js";
 import { withAccountLock } from "./locks.js";
 import { recordConversation } from "./logger.js";
@@ -32,28 +32,17 @@ function secureRandom() {
   }
 }
 
-function pickPrompt(set) {
-  const prompts = set?.prompts ?? [];
-  if (prompts.length === 0) return null;
-  if (set.pickStrategy === "sequential") {
-    const idx = new Date().getMinutes() % prompts.length;
-    return prompts[idx];
-  }
-  return prompts[Math.floor(secureRandom() * prompts.length)];
-}
-
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /**
- * 让单个账号跑一次预设会话。返回 { ok, prompt, reply, reason }。
+ * 让单个账号跑一次 agent 多轮对话。返回 { ok, topic, threads, totalRounds, reason }。
  */
 export async function runOnce(account, opts = {}) {
   const selectors = readJson("config/selectors.json");
   const sets = getConversations();
   const set = sets[account.conversationSet ?? "default"];
   if (!set) return { ok: false, reason: `会话集不存在: ${account.conversationSet}` };
-  const prompt = pickPrompt(set);
-  if (!prompt) return { ok: false, reason: "会话集没有可用 prompt" };
+  if (!set.topic) return { ok: false, reason: "会话集未设置主题" };
 
   const name = displayName(account);
   // 套账号锁：同一 profile 不能被两个浏览器实例同时打开。
@@ -64,14 +53,13 @@ export async function runOnce(account, opts = {}) {
     try {
       await page.goto(selectors.url, { waitUntil: "domcontentloaded" });
       const email = await sessionEmail(page);
-      if (!email) return { ok: false, prompt, reason: "未登录，请先登录该账号" };
-      log.info(`「${name}」发送: ${prompt}`);
-      const reply = await sendPrompt(page, selectors, prompt);
-      const preview = reply.slice(0, 80).replace(/\s+/g, " ");
-      log.info(`「${name}」回复(${reply.length}字): ${preview}…`);
-      return { ok: true, prompt, reply };
+      if (!email) return { ok: false, reason: "未登录，请先登录该账号" };
+      log.info(`「${name}」开始 agent 对话，主题「${set.topic}」`);
+      const result = await runAgent(page, selectors, set);
+      log.info(`「${name}」完成 ${result.totalRounds ?? 0} 轮对话`);
+      return result;
     } catch (e) {
-      return { ok: false, prompt, reason: String(e.message || e) };
+      return { ok: false, reason: String(e.message || e) };
     } finally {
       await context.close();
     }

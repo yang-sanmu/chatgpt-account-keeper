@@ -83,19 +83,32 @@ class SchedulerService {
   constructor() {
     this.running = false;
     this._stopRequested = false;
-    this._loop = null;
-    this.lastRoundAt = null;
-    this.nextRoundAt = null;
+    // 每账号一条独立循环：accountId -> { nextAt, lastAt, busy, promise }
+    this._accountLoops = new Map();
     this.lastResults = {}; // accountId -> { ok, reason, time }
-    this.busyAccount = null;
+  }
+
+  // 计算一次间隔：interval ± jitter（分钟）转毫秒，下限 1 分钟。
+  _nextDelayMs() {
+    const s = getSettings();
+    const intervalMin = s.intervalMinutes ?? 180;
+    const jitterMin = s.jitterMinutes ?? 30;
+    const jitter = (secureRandom() * 2 - 1) * jitterMin * 60000;
+    return Math.max(60000, intervalMin * 60000 + jitter);
   }
 
   status() {
+    const accounts = {};
+    for (const [id, st] of this._accountLoops) {
+      accounts[id] = {
+        nextAt: st.nextAt ? new Date(st.nextAt).toISOString() : null,
+        lastAt: st.lastAt ? new Date(st.lastAt).toISOString() : null,
+        busy: !!st.busy,
+      };
+    }
     return {
       running: this.running,
-      lastRoundAt: this.lastRoundAt,
-      nextRoundAt: this.nextRoundAt,
-      busyAccount: this.busyAccount,
+      accounts, // 每账号各自的下次/上次时间
       lastResults: this.lastResults,
     };
   }
@@ -104,61 +117,101 @@ class SchedulerService {
     if (this.running) return { running: true, message: "调度器已在运行" };
     this.running = true;
     this._stopRequested = false;
-    this._loop = this._run();
+    const s = getSettings();
+    log.info(
+      `调度器启动（每账号独立定时）：每 ~${s.intervalMinutes ?? 180} 分钟(±${
+        s.jitterMinutes ?? 30
+      })，headless=${s.headless ?? true}`
+    );
+    // 管理循环：定期检查启用账号，为新账号拉起独立循环
+    this._manager = this._runManager();
     return { running: true, message: "调度器已启动" };
   }
 
   async stop() {
     if (!this.running) return { running: false, message: "调度器未运行" };
     this._stopRequested = true;
-    log.info("已请求停止调度，本轮账号结束后停止…");
+    log.info("已请求停止调度，各账号本次对话结束后停止…");
     return { running: this.running, message: "已请求停止" };
   }
 
-  async _run() {
-    const settings = getSettings();
-    const intervalMin = settings.intervalMinutes ?? 180;
-    const jitterMin = settings.jitterMinutes ?? 30;
-    const headless = settings.headless ?? true;
-    log.info(`调度器启动：每 ~${intervalMin} 分钟(±${jitterMin})一轮`);
-
+  // 管理循环：每 15 秒扫描一次启用账号，为尚无循环的账号启动独立定时循环。
+  async _runManager() {
     while (!this._stopRequested) {
       const active = getAccounts().filter((a) => a.enabled);
-      this.lastRoundAt = new Date().toISOString();
-      log.info(`本轮开始，启用账号 ${active.length} 个`);
+      const activeIds = new Set(active.map((a) => a.id));
 
       for (const account of active) {
-        if (this._stopRequested) break;
-        this.busyAccount = account.id;
-        const res = await runOnce(account, { headless });
-        recordConversation(account.id, res);
-        this.lastResults[account.id] = {
-          ok: res.ok,
-          reason: res.reason ?? null,
-          time: new Date().toISOString(),
-        };
-        if (!res.ok) log.warn(`「${displayName(account)}」失败: ${res.reason}`);
-        this.busyAccount = null;
-        await sleep(30000 + Math.floor(secureRandom() * 60000));
+        if (!this._accountLoops.has(account.id)) {
+          const state = { nextAt: 0, lastAt: null, busy: false, promise: null };
+          this._accountLoops.set(account.id, state);
+          state.promise = this._runAccountLoop(account.id);
+        }
+      }
+      // 已停用/删除的账号：从循环表移除，其循环会在下次检查时自然退出
+      for (const id of [...this._accountLoops.keys()]) {
+        if (!activeIds.has(id)) this._accountLoops.delete(id);
       }
 
-      if (this._stopRequested) break;
-      const jitter = Math.floor((secureRandom() * 2 - 1) * jitterMin * 60000);
-      const waitMs = Math.max(60000, intervalMin * 60000 + jitter);
-      this.nextRoundAt = new Date(Date.now() + waitMs).toISOString();
-      log.info(`本轮结束，下轮约 ${Math.round(waitMs / 60000)} 分钟后`);
-
-      // 分段睡眠，便于及时响应停止请求
-      const until = Date.now() + waitMs;
-      while (Date.now() < until && !this._stopRequested) {
-        await sleep(3000);
-      }
+      const until = Date.now() + 15000;
+      while (Date.now() < until && !this._stopRequested) await sleep(3000);
     }
 
     this.running = false;
     this._stopRequested = false;
-    this.nextRoundAt = null;
     log.info("调度器已停止");
+  }
+
+  // 单账号独立循环：首次随机延迟错开起跑，之后各自 interval±jitter。
+  async _runAccountLoop(accountId) {
+    const headless = () => getSettings().headless ?? true;
+
+    // 首次启动加 0~intervalMin 的随机初始延迟，避免所有账号同时起跑。
+    const s = getSettings();
+    const initDelay = Math.floor(secureRandom() * (s.intervalMinutes ?? 180) * 60000);
+    const state = this._accountLoops.get(accountId);
+    if (!state) return;
+    state.nextAt = Date.now() + initDelay;
+    log.info(
+      `「${displayName(getAccount(accountId) ?? { id: accountId })}」首次约 ${Math.round(
+        initDelay / 60000
+      )} 分钟后开始`
+    );
+
+    while (!this._stopRequested && this._accountLoops.has(accountId)) {
+      // 等到本账号的下次时间（分段睡眠以便响应停止/停用）
+      while (
+        Date.now() < state.nextAt &&
+        !this._stopRequested &&
+        this._accountLoops.has(accountId)
+      ) {
+        await sleep(3000);
+      }
+      if (this._stopRequested || !this._accountLoops.has(accountId)) break;
+
+      // 账号可能已被停用：跑之前再确认一次
+      const acc = getAccount(accountId);
+      if (!acc || !acc.enabled) break;
+
+      state.busy = true;
+      const res = await runOnce(acc, { headless: headless() });
+      recordConversation(accountId, res);
+      this.lastResults[accountId] = {
+        ok: res.ok,
+        reason: res.reason ?? null,
+        time: new Date().toISOString(),
+      };
+      if (!res.ok) log.warn(`「${displayName(acc)}」失败: ${res.reason}`);
+      state.busy = false;
+      state.lastAt = Date.now();
+
+      // 各自计算下次时间
+      const delay = this._nextDelayMs();
+      state.nextAt = Date.now() + delay;
+      log.info(`「${displayName(acc)}」下次约 ${Math.round(delay / 60000)} 分钟后`);
+    }
+
+    this._accountLoops.delete(accountId);
   }
 }
 

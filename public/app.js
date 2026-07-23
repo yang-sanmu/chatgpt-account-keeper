@@ -356,11 +356,19 @@ function renderHistItem(it) {
 // ---------- 主题（Agent 模式：主题 + 随机轮数）----------
 let convCache = {}; // 主题缓存（key -> {topic,minRounds,maxRounds}），供账号进度显示
 
-async function loadConversations() {
+// topKey：把该主题卡片渲染到列表最顶部（新建后置顶，避免滚轮跳到底部）
+async function loadConversations(topKey = null) {
   convCache = await api("/conversations");
   const list = $("#conv-list");
   list.innerHTML = "";
-  for (const [key, set] of Object.entries(convCache)) {
+  let entries = Object.entries(convCache);
+  if (topKey && convCache[topKey]) {
+    entries = [
+      [topKey, convCache[topKey]],
+      ...entries.filter(([k]) => k !== topKey),
+    ];
+  }
+  for (const [key, set] of entries) {
     const card = document.createElement("div");
     card.className = "conv-card";
     card.innerHTML = `
@@ -424,10 +432,11 @@ $("#add-set").addEventListener("click", async () => {
     method: "PUT",
     body: { topic: "", minRounds: 2, maxRounds: 8 },
   });
-  await loadConversations();
-  // 聚焦到新卡片的主题输入
+  // 新卡片置顶，滚回顶部并聚焦——连续新建时滚轮不会跑到底部。
+  await loadConversations(key);
+  window.scrollTo({ top: 0, behavior: "smooth" });
   const input = document.querySelector(`[data-topic="${key}"]`);
-  if (input) input.focus();
+  if (input) input.focus({ preventScroll: true });
 });
 
 // ---------- 设置 ----------

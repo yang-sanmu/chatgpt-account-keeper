@@ -3,93 +3,324 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>GPT 账号管理面板</title>
+  <title>GPT 账号管理面板 | ChatGPT Keeper</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
-  <header class="topbar">
-    <h1>GPT 账号管理面板</h1>
-    <div class="scheduler-box">
-      <span id="sched-state" class="pill">调度器: 加载中…</span>
-      <button id="sched-toggle" class="btn">启动调度</button>
-    </div>
-  </header>
-
-  <nav class="tabs">
-    <button class="tab active" data-tab="accounts">账号</button>
-    <button class="tab" data-tab="conversations">主题</button>
-    <button class="tab" data-tab="settings">定时设置</button>
-  </nav>
-
-  <main>
-    <!-- 账号 -->
-    <section id="tab-accounts" class="tab-panel active">
-      <div class="section-head">
-        <h2>账号列表</h2>
-        <button id="add-account" class="btn primary">+ 添加账号</button>
+  <div class="app-container">
+    <!-- 顶栏 Header -->
+    <header class="topbar">
+      <div class="brand">
+        <div class="logo-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2a10 10 0 1 0 10 10H12V2z"></path>
+            <path d="M12 12L2.5 7.5"></path>
+            <path d="M12 12v10"></path>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <h1>ChatGPT Keeper</h1>
+          <span class="version-tag">v0.1.0</span>
+        </div>
       </div>
-      <table class="grid">
-        <thead>
-          <tr>
-            <th>账号 / 备注</th><th>状态</th><th>启用</th><th>主题轮换</th><th>操作</th>
-          </tr>
-        </thead>
-        <tbody id="account-rows"></tbody>
-      </table>
-      <p class="empty" id="account-empty" hidden>还没有账号，点右上角添加。</p>
-    </section>
 
-    <!-- 会话内容 -->
-    <section id="tab-conversations" class="tab-panel">
-      <div class="section-head">
-        <h2>主题列表</h2>
-        <button id="add-set" class="btn primary">+ 新建主题</button>
+      <div class="scheduler-box">
+        <div id="sched-state" class="pill off">
+          <span class="pulse-dot"></span>
+          <span class="sched-text">调度器: 加载中…</span>
+        </div>
+        <button id="sched-toggle" class="btn primary-gradient glow">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+          <span class="btn-text">启动调度</span>
+        </button>
       </div>
-      <div id="conv-list"></div>
+    </header>
+
+    <!-- 全局数据统计概览 Stats Bar -->
+    <section class="stats-overview">
+      <div class="stat-card">
+        <div class="stat-icon blue">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+        </div>
+        <div class="stat-info">
+          <span class="stat-label">总账号数量</span>
+          <span id="stat-total-accounts" class="stat-value">0</span>
+        </div>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-icon green">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+        </div>
+        <div class="stat-info">
+          <span class="stat-label">已登录在线</span>
+          <span id="stat-logged-accounts" class="stat-value text-green">0</span>
+        </div>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-icon purple">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+        </div>
+        <div class="stat-info">
+          <span class="stat-label">对话主题集</span>
+          <span id="stat-total-topics" class="stat-value">0</span>
+        </div>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-icon orange">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+        </div>
+        <div class="stat-info">
+          <span class="stat-label">自动调度状态</span>
+          <span id="stat-sched-status" class="stat-value text-muted">已停止</span>
+        </div>
+      </div>
     </section>
 
-    <!-- 定时设置 -->
-    <section id="tab-settings" class="tab-panel">
-      <h2>定时设置</h2>
-      <form id="settings-form" class="form">
-        <label>每轮间隔（分钟）
-          <input type="number" name="intervalMinutes" min="1" />
-        </label>
-        <label>随机抖动（分钟）
-          <input type="number" name="jitterMinutes" min="0" />
-        </label>
-        <label>登录状态检查间隔（分钟）
-          <input type="number" name="statusCheckMinutes" min="1" />
-        </label>
-        <label class="checkbox">
-          <input type="checkbox" name="headless" />
-          无头模式运行（不显示浏览器窗口）
-        </label>
-        <button type="submit" class="btn primary">保存设置</button>
-      </form>
-      <p class="hint">修改后下一轮调度生效。间隔越规律越容易被风控识别，建议保留抖动。状态检查会在后台无头打开浏览器，间隔太短会增加负载。</p>
-    </section>
-  </main>
+    <!-- 导航 Tab -->
+    <nav class="tabs-nav">
+      <div class="tabs">
+        <button class="tab active" data-tab="accounts">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+          <span>账号管理</span>
+          <span id="badge-account-count" class="tab-badge">0</span>
+        </button>
+        <button class="tab" data-tab="conversations">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+          <span>主题轮换</span>
+          <span id="badge-topic-count" class="tab-badge">0</span>
+        </button>
+        <button class="tab" data-tab="settings">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+          <span>定时与风控设置</span>
+        </button>
+      </div>
+    </nav>
 
-  <!-- 历史记录抽屉 -->
-  <div id="history-drawer" class="drawer" hidden>
-    <div class="drawer-head">
-      <h3 id="history-title">历史记录</h3>
-      <button id="history-close" class="btn">关闭</button>
+    <!-- 主主体 Main Container -->
+    <main class="main-content">
+      <!-- 账号列表面板 -->
+      <section id="tab-accounts" class="tab-panel active">
+        <div class="panel-header">
+          <div class="header-left">
+            <h2>账号列表</h2>
+            <div class="search-box">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+              <input type="text" id="account-search" placeholder="搜索账号邮箱或备注…" />
+            </div>
+            <select id="account-status-filter" class="filter-select">
+              <option value="all">全部分组</option>
+              <option value="enabled">已启用</option>
+              <option value="disabled">已禁用</option>
+              <option value="loggedin">已登录</option>
+              <option value="loggedout">未登录</option>
+            </select>
+          </div>
+          <button id="add-account" class="btn primary-gradient shadow">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+            <span>添加账号</span>
+          </button>
+        </div>
+
+        <div class="table-responsive shadow-card">
+          <table class="grid">
+            <thead>
+              <tr>
+                <th style="width: 28%;">账号标识 / 备注</th>
+                <th style="width: 18%;">登录状态</th>
+                <th style="width: 10%;">调度启用</th>
+                <th style="width: 24%;">主题轮换与窗口</th>
+                <th style="width: 20%; text-align: right;">快捷操作</th>
+              </tr>
+            </thead>
+            <tbody id="account-rows"></tbody>
+          </table>
+
+          <div class="empty-state" id="account-empty" hidden>
+            <div class="empty-icon">
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+            </div>
+            <h3>暂无匹配账号</h3>
+            <p>点击右上角的 “添加账号” 按钮开始创建账号会话。</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- 会话主题集面板 -->
+      <section id="tab-conversations" class="tab-panel">
+        <div class="panel-header">
+          <div class="header-left">
+            <h2>对话主题集</h2>
+            <div class="search-box">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+              <input type="text" id="topic-search" placeholder="搜索主题名称…" />
+            </div>
+          </div>
+          <button id="add-set" class="btn primary-gradient shadow">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+            <span>新建主题</span>
+          </button>
+        </div>
+
+        <div class="callout-box info topic-banner" style="margin-top: 0; margin-bottom: 20px;">
+          <div class="callout-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+          </div>
+          <div class="callout-content">
+            <p style="font-size: 13px; color: var(--text-secondary);">💡 Agent 会围绕各主题自动与 ChatGPT 开启对话并深入追问，达到设定随机轮数上限后自动重置并轮换下一主题。</p>
+          </div>
+        </div>
+
+        <div id="conv-list" class="topics-grid"></div>
+
+        <div class="empty-state" id="topic-empty" hidden>
+          <div class="empty-icon">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+          </div>
+          <h3>暂无对话主题</h3>
+          <p>添加主题后，AI 代理将围绕主题自动追问并维持会话活度。</p>
+        </div>
+      </section>
+
+      <!-- 定时与风控设置面板 -->
+      <section id="tab-settings" class="tab-panel">
+        <div class="panel-header">
+          <h2>定时与风控参数设置</h2>
+        </div>
+
+        <div class="settings-card shadow-card">
+          <form id="settings-form" class="form-grid">
+            <div class="form-group">
+              <label for="input-interval">
+                <span class="label-title">每轮轮换间隔 (分钟)</span>
+                <span class="label-desc">每次自动对话轮换之间的基础等待时长</span>
+              </label>
+              <div class="input-with-unit">
+                <input type="number" id="input-interval" name="intervalMinutes" min="1" required />
+                <span class="unit">分钟</span>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="input-jitter">
+                <span class="label-title">随机抖动浮动 (分钟)</span>
+                <span class="label-desc">在基础间隔之上叠加随机正负浮动，防止行为模式被检测</span>
+              </label>
+              <div class="input-with-unit">
+                <input type="number" id="input-jitter" name="jitterMinutes" min="0" required />
+                <span class="unit">分钟</span>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="input-statuscheck">
+                <span class="label-title">登录状态巡检间隔 (分钟)</span>
+                <span class="label-desc">后台自动无头检测账号 Cookie 有效期的间隔</span>
+              </label>
+              <div class="input-with-unit">
+                <input type="number" id="input-statuscheck" name="statusCheckMinutes" min="1" required />
+                <span class="unit">分钟</span>
+              </div>
+            </div>
+
+            <div class="form-group checkbox-card">
+              <div class="checkbox-text">
+                <span class="label-title">无头模式运行 (Headless Mode)</span>
+                <span class="label-desc">勾选后将在后台隐藏浏览器界面，降低 CPU/GPU 内存开销</span>
+              </div>
+              <label class="switch">
+                <input type="checkbox" name="headless" />
+                <span class="slider round"></span>
+              </label>
+            </div>
+
+            <div class="form-actions">
+              <button type="submit" class="btn primary-gradient shadow large">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
+                <span>保存设置</span>
+              </button>
+            </div>
+          </form>
+
+          <div class="callout-box info">
+            <div class="callout-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+            </div>
+            <div class="callout-content">
+              <h4>安全防护与风控提示</h4>
+              <p>修改参数后将在下一轮任务调度触发时生效。保持合理的随机抖动区间能有效模仿人类不规则的对话习惯，提升会话态存活周期。</p>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- 历史记录抽屉 Overlay & Drawer -->
+    <div id="drawer-backdrop" class="backdrop" hidden></div>
+    <aside id="history-drawer" class="drawer" hidden>
+      <div class="drawer-head">
+        <div class="drawer-title-group">
+          <h3 id="history-title">对话历史记录</h3>
+          <span id="history-acc-tag" class="acc-tag">ID</span>
+        </div>
+        <button id="history-close" class="btn-icon" title="关闭">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+      </div>
+
+      <div class="drawer-toolbar">
+        <div class="search-box small">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+          <input type="text" id="history-search" placeholder="筛选关键词…" />
+        </div>
+        <div class="filter-pills">
+          <button class="pill-btn active" data-hist-filter="all">全部</button>
+          <button class="pill-btn" data-hist-filter="success">成功</button>
+          <button class="pill-btn" data-hist-filter="fail">失败</button>
+        </div>
+      </div>
+
+      <div id="history-body" class="drawer-body"></div>
+    </aside>
+
+    <!-- 登录进度弹窗 Modal -->
+    <div id="login-backdrop" class="backdrop modal-backdrop" hidden></div>
+    <div id="login-modal" class="modal" hidden>
+      <div class="modal-card shadow-card">
+        <div class="modal-header">
+          <div class="modal-icon-glow">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"></path><polyline points="10 17 15 12 10 7"></polyline><line x1="15" y1="12" x2="3" y2="12"></line></svg>
+          </div>
+          <h3>正在登录账户</h3>
+        </div>
+        <div class="modal-body">
+          <div class="spinner-ring" id="login-spinner"></div>
+          <p id="login-msg" class="login-status-msg">正在准备浏览器环境…</p>
+          <div class="steps-progress">
+            <div class="step-dot active" id="step-1">1</div>
+            <div class="step-line"></div>
+            <div class="step-dot" id="step-2">2</div>
+            <div class="step-line"></div>
+            <div class="step-dot" id="step-3">3</div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button id="login-close" class="btn primary shadow full-width" hidden>完成并关闭</button>
+        </div>
+      </div>
     </div>
-    <div id="history-body" class="drawer-body"></div>
-  </div>
 
-  <!-- 登录进度弹窗 -->
-  <div id="login-modal" class="modal" hidden>
-    <div class="modal-card">
-      <h3>正在登录</h3>
-      <p id="login-msg">准备中…</p>
-      <button id="login-close" class="btn" hidden>关闭</button>
+    <!-- 全局 Toast 通知 -->
+    <div id="toast" class="toast" hidden>
+      <div class="toast-icon">✓</div>
+      <span class="toast-text">提示信息</span>
     </div>
   </div>
-
-  <div id="toast" class="toast" hidden></div>
 
   <script src="/app.js"></script>
 </body>

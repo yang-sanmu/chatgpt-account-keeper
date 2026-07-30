@@ -389,6 +389,7 @@
         <div class="modal-body">
           <div class="spinner-ring" id="login-spinner"></div>
           <p id="login-msg" class="login-status-msg">正在准备浏览器环境…</p>
+          <div id="login-exit" class="proxy-inherit" style="margin-top: 8px;"></div>
           <div class="steps-progress">
             <div class="step-dot active" id="step-1">1</div>
             <div class="step-line"></div>
@@ -399,6 +400,38 @@
         </div>
         <div class="modal-footer">
           <button id="login-close" class="btn primary shadow full-width" hidden>完成并关闭</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 添加账号：先选分组（决定登录时的出口），再开浏览器 -->
+    <div id="newacc-backdrop" class="backdrop modal-backdrop" hidden></div>
+    <div id="newacc-modal" class="modal" hidden>
+      <div class="modal-card shadow-card">
+        <div class="modal-header">
+          <div class="modal-icon-glow">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+          </div>
+          <h3>添加账号</h3>
+        </div>
+        <div class="modal-body" style="text-align: left;">
+          <p class="hint-text" style="margin-bottom: 14px;">
+            先选分组：登录时弹出的浏览器会直接走该分组的代理节点，避免首次登录用系统 IP、之后又换成节点 IP。
+          </p>
+          <div class="group-item-row" style="margin-bottom: 10px;">
+            <span class="group-field-label">所属分组</span>
+            <select id="newacc-group" class="filter-select" style="flex:1;">
+              <option value="">未分组（跟随系统网络）</option>
+            </select>
+          </div>
+          <div class="group-item-row">
+            <span class="group-field-label">登录出口</span>
+            <span id="newacc-exit" class="proxy-inherit"></span>
+          </div>
+        </div>
+        <div class="modal-footer" style="display:flex; gap:8px;">
+          <button id="newacc-cancel" class="btn" style="flex:1;">取消</button>
+          <button id="newacc-confirm" class="btn primary shadow" style="flex:1;">创建并登录</button>
         </div>
       </div>
     </div>

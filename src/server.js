@@ -34,6 +34,19 @@ const wrap = (fn) => (req, res) =>
   });
 
 // ---------- 账号 ----------
+function getLoginGroupOrThrow(groupId) {
+  if (!groupId) return null;
+  const group = store.getGroup(groupId);
+  if (!group) throw new BadRequest("分组不存在，请重新选择");
+  if (!group.proxyId) return group;
+
+  const node = proxies.getNodes().find((n) => n.id === group.proxyId);
+  if (!node) throw new BadRequest("分组绑定的代理节点不存在，请到分组管理中重新选择");
+  if (node.missing) throw new BadRequest("分组绑定的代理节点已失效，请到分组管理中重新选择");
+  if (!node.enabled) throw new BadRequest("分组绑定的代理节点已停用，请先启用或重新选择");
+  return group;
+}
+
 // 账号列表附带缓存的登录状态，前端刷新即可显示实时状态。
 app.get("/api/accounts", wrap(async (req, res) => {
   const open = getOpenPages();
@@ -53,7 +66,29 @@ app.get("/api/accounts", wrap(async (req, res) => {
 
 app.post("/api/accounts", wrap(async (req, res) => {
   const { note, groupId } = req.body ?? {};
-  const acc = store.addAccount({ note, groupId });
+  const normalizedGroupId = groupId || null;
+  const selectedGroup = getLoginGroupOrThrow(normalizedGroupId);
+  const selectedProxyId = selectedGroup?.proxyId ?? null;
+
+  // 有分组代理时先把边车真正启动起来，再落账号。这样节点失效、停用、
+  // mihomo 缺失或端口起不来都不会留下一个无法登录的半成品账号。
+  if (selectedProxyId) {
+    let ready;
+    try {
+      ready = await proxies.ensureRunning();
+    } catch (e) {
+      throw new BadRequest(`分组代理无法启动：${String(e.message || e)}`);
+    }
+    if (!ready?.running) throw new BadRequest("分组代理未能启动，请检查代理节点配置");
+
+    // ensureRunning 有 await；期间分组可能被另一个请求修改，落盘前必须再确认。
+    const latestGroup = getLoginGroupOrThrow(normalizedGroupId);
+    if (latestGroup.proxyId !== selectedProxyId) {
+      throw new BadRequest("分组代理已发生变化，请重新确认登录出口");
+    }
+  }
+
+  const acc = store.addAccount({ note, groupId: normalizedGroupId });
   res.json(acc);
 }));
 

@@ -16,6 +16,8 @@ let proxyDelays = {}; // nodeId -> 延迟文本
 let currentDrawerAccountId = null;
 // 新建分组时暂存选中的代理节点（还没有 group id 可挂）
 let newGroupProxyId = null;
+// 创建请求发出后锁住弹窗，避免用户点“取消”却仍在后台留下账号。
+let newAccountSubmitting = false;
 
 // Search & Filter State
 let accountSearchQuery = "";
@@ -734,17 +736,65 @@ $("#new-group-name").addEventListener("keydown", (e) => {
   if (e.key === "Enter") $("#create-group").click();
 });
 
-$("#add-account").addEventListener("click", async () => {
-  const btn = $("#add-account");
-  setBtnLoading(btn, true, "添加中");
+// ---------- 添加账号：先选分组，再开浏览器登录 ----------
+// 分组决定出口，而首次登录是最敏感的一次会话。若先建账号再选分组，
+// 登录会走系统 IP、之后的调度又换成节点 IP，同一账号出现 IP 跳变。
+
+function renderNewAccountExit() {
+  const groupId = $("#newacc-group").value;
+  $("#newacc-exit").innerHTML = groupProxyLabel(groupId || null);
+}
+
+function openNewAccountModal() {
+  if (newAccountSubmitting) return;
+  const sel = $("#newacc-group");
+  sel.innerHTML =
+    `<option value="">未分组（跟随系统网络）</option>` +
+    groupsCache
+      .map((g) => `<option value="${g.id}">${escapeHtml(g.name)}</option>`)
+      .join("");
+  sel.value = "";
+  renderNewAccountExit();
+  $("#newacc-backdrop").hidden = false;
+  $("#newacc-modal").hidden = false;
+}
+
+function closeNewAccountModal() {
+  if (newAccountSubmitting) return;
+  $("#newacc-backdrop").hidden = true;
+  $("#newacc-modal").hidden = true;
+}
+
+function setNewAccountSubmitting(submitting) {
+  newAccountSubmitting = submitting;
+  $("#newacc-group").disabled = submitting;
+  $("#newacc-cancel").disabled = submitting;
+  $("#newacc-modal").setAttribute("aria-busy", String(submitting));
+}
+
+$("#add-account").addEventListener("click", openNewAccountModal);
+$("#newacc-cancel").addEventListener("click", closeNewAccountModal);
+$("#newacc-backdrop").addEventListener("click", closeNewAccountModal);
+$("#newacc-group").addEventListener("change", renderNewAccountExit);
+
+$("#newacc-confirm").addEventListener("click", async () => {
+  if (newAccountSubmitting) return;
+  const btn = $("#newacc-confirm");
+  const groupId = $("#newacc-group").value || null;
+  setNewAccountSubmitting(true);
+  setBtnLoading(btn, true, "创建中");
   try {
-    const acc = await api("/accounts", { method: "POST", body: {} });
+    const acc = await api("/accounts", { method: "POST", body: { groupId } });
     await loadAccounts();
+    // 只有创建完成后才解锁并关闭；提交期间取消/背景/Esc 都会被忽略。
+    setNewAccountSubmitting(false);
+    closeNewAccountModal();
     toast("新账号已建立", "success");
-    doLogin(acc.id);
+    void doLogin(acc.id, false, acc.groupId ?? null);
   } catch (e) {
     toast("创建账号失败: " + e.message, "error");
   } finally {
+    setNewAccountSubmitting(false);
     setBtnLoading(btn, false);
   }
 });
@@ -840,7 +890,7 @@ async function runNow(id) {
 }
 
 // ---------- 登录流程与 Step 指示器 ----------
-async function doLogin(id, force = false) {
+async function doLogin(id, force = false, groupIdOverride = undefined) {
   const modalBackdrop = $("#login-backdrop");
   const modal = $("#login-modal");
   const msg = $("#login-msg");
@@ -858,6 +908,10 @@ async function doLogin(id, force = false) {
   msg.textContent = force
     ? "正在清除失效的登录态并载入登录页…"
     : "正在启动浏览器并载入 ChatGPT 登录页…";
+  // 明确告知这次登录走哪个出口，避免以为在走节点其实是系统网络
+  const acc = accountsCache.find((x) => x.id === id);
+  const groupId = groupIdOverride === undefined ? acc?.groupId ?? null : groupIdOverride;
+  $("#login-exit").innerHTML = groupProxyLabel(groupId);
 
   let task;
   try {
@@ -1433,6 +1487,7 @@ window.addEventListener("keydown", (e) => {
     closeDrawer();
     closeLoginModal();
     closeGroupModal();
+    closeNewAccountModal();
   }
 });
 

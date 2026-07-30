@@ -52,8 +52,8 @@ app.get("/api/accounts", wrap(async (req, res) => {
 }));
 
 app.post("/api/accounts", wrap(async (req, res) => {
-  const { note, proxy, groupId, proxyId } = req.body ?? {};
-  const acc = store.addAccount({ note, proxy, groupId, proxyId });
+  const { note, groupId } = req.body ?? {};
+  const acc = store.addAccount({ note, groupId });
   res.json(acc);
 }));
 
@@ -134,11 +134,16 @@ app.get("/api/groups", wrap(async (req, res) => {
 }));
 
 app.post("/api/groups", wrap(async (req, res) => {
-  res.json(store.addGroup(req.body?.name));
+  res.json(store.addGroup(req.body?.name, req.body?.proxyId));
 }));
 
+// 分组的 name / proxyId 都可单独更新。代理绑在分组上，组内账号统一走该节点。
 app.patch("/api/groups/:id", wrap(async (req, res) => {
-  const g = store.renameGroup(req.params.id, req.body?.name);
+  const { name, proxyId } = req.body ?? {};
+  const patch = {};
+  if (name !== undefined) patch.name = name;
+  if (proxyId !== undefined) patch.proxyId = proxyId;
+  const g = store.updateGroup(req.params.id, patch);
   if (!g) return res.status(404).json({ error: "分组不存在" });
   res.json(g);
 }));
@@ -234,6 +239,9 @@ app.get("/api/accounts/:id/history", wrap(async (req, res) => {
   const limit = Number(req.query.limit) || 50;
   res.json(readHistory(req.params.id, limit));
 }));
+
+// 旧版本把代理存在账号上，启动时安全迁移到分组，避免出口变化。
+store.migrateAccountProxyToGroup();
 
 const PORT = process.env.PORT || 5173;
 // 只监听本机回环地址：面板没有任何鉴权，且能操作已登录的 ChatGPT 会话、

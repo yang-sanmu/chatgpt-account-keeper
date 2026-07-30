@@ -4,21 +4,21 @@ import net from "node:net";
 import { spawn } from "node:child_process";
 import YAML from "yaml";
 import { fromRoot, ensureDir } from "./paths.js";
-import { getAccounts } from "./store.js";
+import { getGroups, effectiveProxyId } from "./store.js";
 import { mergeProxyNodes } from "./proxyUtils.js";
 import * as log from "./logger.js";
 
 /**
- * 定向代理：让每个账号可以各自走指定的代理节点（VPN 节点），
- * 没设置的账号走系统默认网络。
+ * 定向代理：让每个分组可以走指定的代理节点（VPN 节点），
+ * 组内账号共用该出口；未绑定分组节点的账号走系统默认网络。
  *
  * 做法：另起一个**私有的 mihomo 进程**（不碰你系统上的 Clash Verge），
  * 用它的 listeners 特性为每个节点单独开一个本地 HTTP 端口，
  * Playwright 启动时按账号连不同端口即可：
  *
- *   账号A --proxy 127.0.0.1:21001 --\
- *   账号B --proxy 127.0.0.1:21002 --- 私有 mihomo ==> 各自节点出口
- *   账号C ----（不设代理）------------> 系统网络（你的 Verge 节点）
+ *   美国组账号 --proxy 127.0.0.1:21001 --\
+ *   韩国组账号 --proxy 127.0.0.1:21002 --- 私有 mihomo ==> 各组节点出口
+ *   未绑定组 ----（不设代理）-----------> 系统网络（你的 Verge 节点）
  *
  * 已实测：mihomo v1.19.21 该配置可正常绑定端口，且出口 IP 确实走对应节点。
  */
@@ -172,9 +172,11 @@ export async function importSubscription(url) {
   }
 
   const prev = readStore();
+  // 仍被分组引用的节点即使从订阅里消失也要留着（标 missing），
+  // 否则分组的代理配置会突然变空、组内账号悄悄改走系统网络。
   const referencedIds = new Set(
-    getAccounts()
-      .map((account) => account.proxyId)
+    getGroups()
+      .map((group) => group.proxyId)
       .filter(Boolean)
   );
   const nodes = mergeProxyNodes(list, prev.nodes, referencedIds);
@@ -241,11 +243,13 @@ function portOf(id) {
 }
 
 /**
- * 账号要用的代理地址。没绑定节点则返回 null（走系统默认网络）。
+ * 账号要用的代理地址。代理绑在**分组**上，所以这里先解析账号所属分组的节点。
+ * 未分组、或分组没绑节点则返回 null（走系统默认网络）。
  */
 export function proxyForAccount(account) {
-  if (!account?.proxyId) return null;
-  const port = portOf(account.proxyId);
+  const proxyId = effectiveProxyId(account);
+  if (!proxyId) return null;
+  const port = portOf(proxyId);
   if (!port) return null;
   return { server: `http://127.0.0.1:${port}` };
 }

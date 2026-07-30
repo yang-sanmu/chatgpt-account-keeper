@@ -41,7 +41,7 @@ test("normalizeProxyNode rejects invalid and HTML-bearing ports", () => {
   );
 });
 
-test("mergeProxyNodes retains only removed nodes still referenced by accounts", () => {
+test("mergeProxyNodes retains only removed nodes still referenced by groups", () => {
   const referencedId = proxyNodeId("referenced old");
   const unreferencedId = proxyNodeId("unreferenced old");
   const previous = [

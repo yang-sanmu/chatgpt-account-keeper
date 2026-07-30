@@ -145,7 +145,7 @@
                 <th style="width: 22%;">账号标识 / 备注</th>
                 <th style="width: 15%;">登录状态</th>
                 <th style="width: 8%;">调度启用</th>
-                <th style="width: 15%;">分组 / 代理节点</th>
+                <th style="width: 15%;">分组 / 出口</th>
                 <th style="width: 18%;">主题轮换与窗口</th>
                 <th style="width: 22%; text-align: right;">快捷操作</th>
               </tr>
@@ -249,7 +249,7 @@
               <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
             </div>
             <h3>暂无代理节点</h3>
-            <p>填入 Clash 订阅地址并点击「导入」，之后可为每个账号单独指定节点。</p>
+            <p>填入 Clash 订阅地址并点击「导入」，之后到「分组管理」为每个分组指定节点。</p>
           </div>
         </div>
 
@@ -259,7 +259,7 @@
           </div>
           <div class="callout-content">
             <h4>工作方式</h4>
-            <p>程序会另起一个私有 mihomo 进程，为每个启用的节点开一个本地端口，账号按绑定各走各的节点；<strong>没有绑定节点的账号走系统默认网络</strong>（也就是你 Clash 当前选的节点）。不会修改你的 Clash Verge 配置。</p>
+            <p>程序会另起一个私有 mihomo 进程，为每个启用的节点开一个本地端口。<strong>代理绑定在分组上</strong>：到账号页「分组管理」为分组选节点，组内账号统一走该出口；<strong>未分组、或分组没绑节点的账号走系统默认网络</strong>（也就是你 Clash 当前选的节点）。不会修改你的 Clash Verge 配置。</p>
           </div>
         </div>
       </section>
@@ -414,12 +414,18 @@
           <h3>账号分组管理</h3>
         </div>
         <div class="modal-body" style="text-align: left;">
-          <div class="row" style="gap: 8px; margin-bottom: 14px;">
-            <input type="text" id="new-group-name" placeholder="新分组名称，例如：美国注册" style="flex: 1;" />
-            <button id="create-group" class="btn primary small">新建</button>
+          <div class="new-group-box">
+            <div class="group-item-row">
+              <input type="text" id="new-group-name" class="group-name-input" placeholder="新分组名称，例如：美国注册" />
+              <button id="create-group" class="btn primary small">新建</button>
+            </div>
+            <div class="group-item-row">
+              <span class="group-field-label">代理节点</span>
+              <div id="new-group-proxy" class="group-field-body"></div>
+            </div>
           </div>
           <div id="group-list"></div>
-          <p class="hint-text" style="margin-top: 12px;">删除分组不会删除账号，仅把组内账号变为「未分组」。</p>
+          <p class="hint-text" style="margin-top: 12px;">代理绑定在分组上：同组账号统一走该节点，未绑节点的分组跟随系统网络。删除分组不会删除账号，仅把组内账号变为「未分组」。</p>
         </div>
         <div class="modal-footer">
           <button id="group-close" class="btn shadow full-width">关闭</button>

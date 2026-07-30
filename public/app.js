@@ -14,6 +14,8 @@ let proxyCache = [];
 let proxyStatus = {};
 let proxyDelays = {}; // nodeId -> 延迟文本
 let currentDrawerAccountId = null;
+// 新建分组时暂存选中的代理节点（还没有 group id 可挂）
+let newGroupProxyId = null;
 
 // Search & Filter State
 let accountSearchQuery = "";
@@ -186,7 +188,7 @@ function renderAccounts() {
       </td>
       <td>
         <div class="rot-config">
-          <select class="rot-select" data-group="${a.id}" title="所属分组">
+          <select class="rot-select" data-group="${a.id}" title="所属分组（代理由分组决定）">
             <option value="" ${!a.groupId ? "selected" : ""}>未分组</option>
             ${groupsCache
               .map(
@@ -195,17 +197,9 @@ function renderAccounts() {
               )
               .join("")}
           </select>
-          <select class="rot-select" data-proxy="${a.id}" title="定向代理节点">
-            <option value="" ${!a.proxyId ? "selected" : ""}>跟随系统</option>
-            ${proxyCache
-              .map(
-                (p) =>
-                  `<option value="${p.id}" ${a.proxyId === p.id ? "selected" : ""}>${escapeHtml(
-                    p.name
-                  )}${p.missing ? "（已失效）" : ""}</option>`
-              )
-              .join("")}
-          </select>
+          <div class="proxy-inherit" title="代理绑定在分组上，改分组的节点请到「分组管理」">${groupProxyLabel(
+            a.groupId
+          )}</div>
         </div>
       </td>
       <td>
@@ -244,6 +238,21 @@ function renderAccounts() {
   }
 
   bindAccountActions();
+}
+
+/**
+ * 账号行里展示“该账号实际走哪个出口”。代理绑在分组上，所以这里只读展示，
+ * 想改节点要去分组管理——避免同组账号出口不一致。
+ */
+function groupProxyLabel(groupId) {
+  if (!groupId) return `<span class="px-tag muted">出口：跟随系统</span>`;
+  const g = groupsCache.find((x) => x.id === groupId);
+  if (!g?.proxyId) return `<span class="px-tag muted">出口：跟随系统</span>`;
+  const node = proxyCache.find((p) => p.id === g.proxyId);
+  if (!node) return `<span class="px-tag warn">出口：节点已失效</span>`;
+  return `<span class="px-tag" title="${escapeHtml(node.name)}">出口：${escapeHtml(node.name)}${
+    node.missing ? "（已失效）" : ""
+  }</span>`;
 }
 
 function statusHtml(id, st, checkedAt) {
@@ -368,27 +377,10 @@ function bindAccountActions() {
         const acc = accountsCache.find((x) => x.id === el.dataset.group);
         if (acc) acc.groupId = el.value || null;
         toast("分组已更新", "success");
-        // 正在按分组过滤时，改完要重画（该行可能已不属于当前视图）
-        if (accountGroupFilter !== "all") renderAccounts();
+        // 分组换了，出口也跟着换，整行重画一遍最稳
+        renderAccounts();
       } catch (e) {
         toast("更新分组失败: " + e.message, "error");
-      }
-    })
-  );
-
-  // 代理节点选择
-  $$("[data-proxy]").forEach((el) =>
-    el.addEventListener("change", async () => {
-      try {
-        await api(`/accounts/${el.dataset.proxy}`, {
-          method: "PATCH",
-          body: { proxyId: el.value || null },
-        });
-        const acc = accountsCache.find((x) => x.id === el.dataset.proxy);
-        if (acc) acc.proxyId = el.value || null;
-        toast(el.value ? "已绑定代理节点" : "已改为跟随系统网络", "success");
-      } catch (e) {
-        toast("更新代理失败: " + e.message, "error");
       }
     })
   );
@@ -468,6 +460,129 @@ $("#account-group-filter").addEventListener("change", (e) => {
   renderAccounts();
 });
 
+// ---------- 代理节点选择器（可模糊搜索的下拉） ----------
+// 原生 <select> 没法搜索，几百个订阅节点靠滚动找根本没法用，
+// 所以这里用输入框 + 可过滤菜单自己实现一个。
+
+/**
+ * 模糊匹配：先按空格分词做子串匹配（“美国 香港”这类多关键词），
+ * 都不中再退化成「按顺序出现」的子序列匹配（输 "usjp" 也能命中 "US-JP"）。
+ */
+function fuzzyMatch(text, query) {
+  const t = (text || "").toLowerCase();
+  const q = (query || "").trim().toLowerCase();
+  if (!q) return true;
+  const tokens = q.split(/\s+/).filter(Boolean);
+  if (tokens.every((tok) => t.includes(tok))) return true;
+
+  let i = 0;
+  for (const ch of q.replace(/\s+/g, "")) {
+    i = t.indexOf(ch, i);
+    if (i === -1) return false;
+    i++;
+  }
+  return true;
+}
+
+function proxyNodeLabel(id) {
+  if (!id) return "跟随系统网络";
+  const node = proxyCache.find((p) => p.id === id);
+  if (!node) return "节点已失效（请重新选择）";
+  return node.name + (node.missing ? "（已不在订阅中）" : "");
+}
+
+/**
+ * 渲染一个代理选择器。value 为节点 id，空 = 跟随系统网络。
+ */
+function proxyPickerHtml(key, value) {
+  return `<div class="px-picker" data-picker="${key}">
+    <input type="text" class="px-picker-input" data-picker-input="${key}"
+      value="${escapeHtml(proxyNodeLabel(value))}"
+      data-value="${escapeHtml(value || "")}"
+      placeholder="跟随系统网络" autocomplete="off" spellcheck="false" />
+    <span class="px-picker-caret">▾</span>
+    <div class="px-picker-menu" data-picker-menu="${key}" hidden></div>
+  </div>`;
+}
+
+/**
+ * 给页面上所有还没绑定过的选择器挂事件。onChange(key, proxyId) 在用户选中时触发。
+ */
+function bindProxyPickers(onChange) {
+  $$(".px-picker").forEach((box) => {
+    if (box.dataset.bound === "1") return;
+    box.dataset.bound = "1";
+
+    const key = box.dataset.picker;
+    const input = box.querySelector(".px-picker-input");
+    const menu = box.querySelector(".px-picker-menu");
+
+    const currentId = () => input.dataset.value || "";
+    const choose = (id) => {
+      input.dataset.value = id;
+      input.value = proxyNodeLabel(id);
+      menu.hidden = true;
+      box.classList.remove("open");
+      input.blur();
+      onChange(key, id || null);
+    };
+
+    const paint = (query) => {
+      const rows = [{ id: "", name: "跟随系统网络" }, ...proxyCache].filter((n) =>
+        fuzzyMatch(n.name, query)
+      );
+      if (rows.length === 0) {
+        menu.innerHTML = `<div class="px-opt empty">没有匹配的节点</div>`;
+        return;
+      }
+      menu.innerHTML = rows
+        .map((n) => {
+          const sel = n.id === currentId() ? " selected" : "";
+          const tail = n.missing ? ` <span class="px-opt-tail">已失效</span>` : "";
+          return `<div class="px-opt${sel}" data-opt="${escapeHtml(n.id)}">${escapeHtml(
+            n.name
+          )}${tail}</div>`;
+        })
+        .join("");
+    };
+
+    const open = () => {
+      paint("");
+      menu.hidden = false;
+      box.classList.add("open");
+      input.select();
+    };
+    const close = () => {
+      menu.hidden = true;
+      box.classList.remove("open");
+      // 用户可能打了半截搜索词没选，关闭时还原成当前真实选中项
+      input.value = proxyNodeLabel(currentId());
+    };
+
+    input.addEventListener("focus", open);
+    input.addEventListener("input", () => paint(input.value));
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        input.blur();
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        const first = menu.querySelector(".px-opt[data-opt]");
+        if (first) choose(first.dataset.opt || "");
+      }
+    });
+
+    menu.addEventListener("mousedown", (e) => {
+      // 阻止 input 先失焦导致 click 落空
+      const opt = e.target.closest(".px-opt[data-opt]");
+      if (!opt) return;
+      e.preventDefault();
+      choose(opt.dataset.opt || "");
+    });
+
+    input.addEventListener("blur", () => setTimeout(close, 120));
+  });
+}
+
 // ---------- 分组管理 ----------
 async function loadGroups() {
   try {
@@ -499,14 +614,39 @@ function renderGroupList() {
   box.innerHTML = groupsCache
     .map((g) => {
       const count = accountsCache.filter((a) => a.groupId === g.id).length;
-      return `<div class="row" style="gap:8px; align-items:center; margin-bottom:8px;">
-        <input type="text" data-gname="${g.id}" value="${escapeHtml(g.name)}" style="flex:1;" />
-        <span class="time-ago">${count} 个账号</span>
-        <button class="btn small" data-grename="${g.id}">改名</button>
-        <button class="btn small danger" data-gdel="${g.id}">删除</button>
+      return `<div class="group-item">
+        <div class="group-item-row">
+          <input type="text" class="group-name-input" data-gname="${g.id}" value="${escapeHtml(
+            g.name
+          )}" placeholder="分组名称" />
+          <span class="time-ago">${count} 个账号</span>
+          <button class="btn small" data-grename="${g.id}">改名</button>
+          <button class="btn small danger" data-gdel="${g.id}">删除</button>
+        </div>
+        <div class="group-item-row">
+          <span class="group-field-label">代理节点</span>
+          ${proxyPickerHtml("g:" + g.id, g.proxyId)}
+        </div>
       </div>`;
     })
     .join("");
+
+  // 分组的代理选好就立即落盘，组内账号下次启动浏览器即生效。
+  bindProxyPickers(async (key, proxyId) => {
+    if (!key.startsWith("g:")) return;
+    const id = key.slice(2);
+    try {
+      await api(`/groups/${id}`, { method: "PATCH", body: { proxyId } });
+      const g = groupsCache.find((x) => x.id === id);
+      if (g) g.proxyId = proxyId;
+      toast(proxyId ? "分组代理已更新" : "该分组已改为跟随系统网络", "success");
+      renderAccounts();
+    } catch (e) {
+      toast("更新分组代理失败: " + e.message, "error");
+      await loadGroups();
+      renderGroupList();
+    }
+  });
 
   $$("[data-grename]").forEach((el) =>
     el.addEventListener("click", async () => {
@@ -548,9 +688,19 @@ function renderGroupList() {
   );
 }
 
+// 新建分组行里的代理选择器：每次打开弹窗都重建一次，保证节点列表是最新的。
+function renderNewGroupPicker() {
+  newGroupProxyId = null;
+  $("#new-group-proxy").innerHTML = proxyPickerHtml("new", null);
+  bindProxyPickers((key, proxyId) => {
+    if (key === "new") newGroupProxyId = proxyId;
+  });
+}
+
 function openGroupModal() {
   $("#group-backdrop").hidden = false;
   $("#group-modal").hidden = false;
+  renderNewGroupPicker();
   renderGroupList();
 }
 
@@ -568,10 +718,11 @@ $("#create-group").addEventListener("click", async () => {
   const name = input.value.trim();
   if (!name) return toast("请填写分组名称", "error");
   try {
-    await api("/groups", { method: "POST", body: { name } });
+    await api("/groups", { method: "POST", body: { name, proxyId: newGroupProxyId } });
     input.value = "";
     toast("分组已创建", "success");
     await loadGroups();
+    renderNewGroupPicker();
     renderGroupList();
     renderAccounts();
   } catch (e) {

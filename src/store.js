@@ -1,5 +1,7 @@
 import fs from "node:fs";
+import { createHash } from "node:crypto";
 import { fromRoot, ensureDir } from "./paths.js";
+import * as log from "./logger.js";
 
 // 可读写的配置存储。account/conversation 增删改都经过这里并落盘。
 const ACCOUNTS_FILE = fromRoot("config/accounts.json");
@@ -21,16 +23,16 @@ function writeJsonFile(file, data) {
 }
 
 // ---------- accounts ----------
-// 规范化账号：为旧数据补齐轮换相关字段，去掉已废弃的 conversationSet。
+// 规范化账号：为旧数据补齐轮换相关字段，去掉已废弃的
+// conversationSet / proxyId / proxy。账号的出口只由所属分组决定。
 function normalizeAccount(a) {
-  const { conversationSet, ...rest } = a;
+  const { conversationSet, proxyId, proxy, ...rest } = a;
   return {
     switchRule: "random",
     minWindows: 1,
     maxWindows: 3,
-    // 分组与定向代理都允许为空：空 = 未分组 / 跟随系统网络
+    // 分组允许为空：空 = 未分组（未分组的账号跟随系统网络）
     groupId: null,
-    proxyId: null,
     ...rest,
     rotation: a.rotation ?? { currentSet: null, windowsDone: 0, windowsTarget: 0 },
   };
@@ -51,7 +53,8 @@ export function displayName(a) {
 }
 
 export function saveAccounts(accounts) {
-  writeJsonFile(ACCOUNTS_FILE, { accounts });
+  const normalized = Array.isArray(accounts) ? accounts.map(normalizeAccount) : [];
+  writeJsonFile(ACCOUNTS_FILE, { accounts: normalized });
 }
 
 function slugId() {
@@ -62,9 +65,7 @@ function slugId() {
 
 export function addAccount({
   note = "",
-  proxy = null,
   groupId = null,
-  proxyId = null,
   switchRule = "random",
   minWindows = 1,
   maxWindows = 3,
@@ -77,9 +78,7 @@ export function addAccount({
     email: null,
     gptName: null,
     profileDir: `profiles/${id}`,
-    proxy,
-    groupId, // 所属分组，null = 未分组
-    proxyId, // 定向代理节点，null = 跟随系统网络
+    groupId, // 所属分组，null = 未分组；代理由分组决定
     enabled: true,
     // 主题轮换规则：在所有会话集之间动态切换
     switchRule, // "random" | "sequential"
@@ -97,8 +96,8 @@ export function updateAccount(id, patch) {
   const accounts = getAccounts();
   const idx = accounts.findIndex((a) => a.id === id);
   if (idx === -1) return null;
-  // profileDir 与 id 不允许被随意改写
-  const { id: _i, profileDir: _p, ...safe } = patch;
+  // profileDir 与 id 不允许被随意改写；proxyId / proxy 已废弃（代理跟着分组走）
+  const { id: _i, profileDir: _p, proxyId: _x, proxy: _legacyProxy, ...safe } = patch;
   accounts[idx] = { ...accounts[idx], ...safe };
   saveAccounts(accounts);
   return accounts[idx];
@@ -113,15 +112,180 @@ export function removeAccount(id) {
 }
 
 // ---------- groups (账号分组) ----------
-// 分组只是给账号加个可筛选的标签，允许为空（账号可以不属于任何分组）。
+// 分组既是可筛选的标签，也是**代理归属的唯一单位**：组内账号统一走该组绑定的节点。
+// 允许为空（账号可以不属于任何分组，此时跟随系统网络）。
+
+function normalizeGroup(g) {
+  return { proxyId: null, ...g }; // 旧数据没有 proxyId，补 null = 跟随系统网络
+}
 
 export function getGroups() {
   const data = readJsonFile(GROUPS_FILE, { groups: [] });
-  return Array.isArray(data.groups) ? data.groups : [];
+  return Array.isArray(data.groups) ? data.groups.map(normalizeGroup) : [];
+}
+
+export function getGroup(id) {
+  return getGroups().find((g) => g.id === id) ?? null;
+}
+
+/**
+ * 账号实际使用的代理节点 id。代理绑在分组上，账号自己不再持有 proxyId：
+ * 未分组 / 分组未绑节点 => null（跟随系统默认网络）。
+ */
+export function effectiveProxyId(account) {
+  if (!account?.groupId) return null;
+  return getGroup(account.groupId)?.proxyId ?? null;
 }
 
 function saveGroups(groups) {
   writeJsonFile(GROUPS_FILE, { groups });
+}
+
+function migrationGroupId(sourceKey, proxyId) {
+  const digest = createHash("sha256")
+    .update(`${sourceKey}\0${proxyId}`)
+    .digest("hex")
+    .slice(0, 16);
+  return `grp_migr_${digest}`;
+}
+
+function uniqueGroupName(groups, preferred) {
+  const used = new Set(groups.map((g) => g.name));
+  if (!used.has(preferred)) return preferred;
+  let n = 2;
+  while (used.has(`${preferred} ${n}`)) n++;
+  return `${preferred} ${n}`;
+}
+
+/**
+ * 生成旧账号代理到分组代理的迁移结果，不读写文件，便于完整测试。
+ *
+ * 保留原则：
+ * - 同组成员旧出口一致时，直接把代理上提到原分组；
+ * - 同组存在不同出口或存在“跟随系统”成员时，按旧 proxyId 拆出迁移分组；
+ * - 未分组或引用已删除分组的账号也会进入迁移分组，不会丢失出口；
+ * - 旧 proxy 字段是任意代理地址，无法映射到订阅节点。此类账号先停用，
+ *   清掉账号级字段，等待用户在分组管理中明确选择节点。
+ */
+export function planAccountProxyMigration(rawAccounts = [], rawGroups = []) {
+  const accounts = Array.isArray(rawAccounts) ? rawAccounts.map((a) => ({ ...a })) : [];
+  const groups = Array.isArray(rawGroups)
+    ? rawGroups.map((g) => normalizeGroup({ ...g }))
+    : [];
+  const originalGroups = [...groups];
+  const groupsById = new Map(groups.map((g) => [g.id, g]));
+  const stats = {
+    boundExistingGroups: 0,
+    createdGroups: 0,
+    reassignedAccounts: 0,
+    disabledManualProxyAccounts: 0,
+  };
+
+  // 没有“跟随系统”成员时，原分组可以承接出现最多的旧节点；
+  // 其它节点随后拆组。这样既保留所有出口，也尽量少制造新分组。
+  for (const g of originalGroups) {
+    if (g.proxyId) continue;
+    const members = accounts.filter((a) => a.groupId === g.id);
+    if (!members.length || members.some((a) => !a.proxyId)) continue;
+
+    const counts = new Map();
+    for (const a of members) {
+      counts.set(a.proxyId, (counts.get(a.proxyId) ?? 0) + 1);
+    }
+    const proxyId = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+    if (proxyId) {
+      g.proxyId = proxyId;
+      stats.boundExistingGroups++;
+    }
+  }
+
+  const migrationGroups = new Map();
+  const ensureMigrationGroup = (sourceKey, baseName, proxyId) => {
+    const key = `${sourceKey}\0${proxyId}`;
+    if (migrationGroups.has(key)) return migrationGroups.get(key);
+
+    const idBase = migrationGroupId(sourceKey, proxyId);
+    let id = idBase;
+    let suffix = 2;
+    while (groupsById.has(id) && groupsById.get(id).proxyId !== proxyId) {
+      id = `${idBase}_${suffix++}`;
+    }
+
+    let group = groupsById.get(id);
+    if (!group) {
+      group = {
+        id,
+        name: uniqueGroupName(groups, `${baseName}（迁移代理）`),
+        proxyId,
+      };
+      groups.push(group);
+      groupsById.set(id, group);
+      stats.createdGroups++;
+    }
+    migrationGroups.set(key, group);
+    return group;
+  };
+
+  for (const a of accounts) {
+    const legacyProxyId = a.proxyId || null;
+    const sourceGroup = a.groupId ? groupsById.get(a.groupId) : null;
+
+    if (legacyProxyId && sourceGroup?.proxyId !== legacyProxyId) {
+      const sourceKey = sourceGroup
+        ? sourceGroup.id
+        : a.groupId
+          ? `missing:${a.groupId}`
+          : "ungrouped";
+      const baseName = sourceGroup?.name ?? (a.groupId ? `原分组 ${a.groupId}` : "未分组账号");
+      const target = ensureMigrationGroup(sourceKey, baseName, legacyProxyId);
+      a.groupId = target.id;
+      stats.reassignedAccounts++;
+    }
+
+    // 旧 proxy 是账号级任意地址，分组模型没有等价的 proxyId 可自动映射。
+    // 停用比改走系统网络安全；用户选好分组节点后可再手动启用。
+    if (a.proxy && !legacyProxyId) {
+      a.enabled = false;
+      stats.disabledManualProxyAccounts++;
+    }
+
+    delete a.proxyId;
+    delete a.proxy;
+  }
+
+  return {
+    accounts: accounts.map(normalizeAccount),
+    groups,
+    stats,
+  };
+}
+
+/**
+ * 一次性迁移：代理从「每账号」搬到「每分组」，并保持每个旧 proxyId
+ * 账号迁移前后的有效出口不变。
+ */
+export function migrateAccountProxyToGroup() {
+  const rawAccounts = readJsonFile(ACCOUNTS_FILE, { accounts: [] }).accounts ?? [];
+  if (!Array.isArray(rawAccounts) || !rawAccounts.some((a) => a?.proxyId || a?.proxy)) return;
+
+  const rawGroups = readJsonFile(GROUPS_FILE, { groups: [] }).groups ?? [];
+  const { accounts, groups, stats } = planAccountProxyMigration(rawAccounts, rawGroups);
+
+  // 先落分组再落账号。迁移分组 id 是确定性的，即使两次写入之间进程退出，
+  // 下次启动也会复用同一分组而不是重复创建。
+  saveGroups(groups);
+  saveAccounts(accounts);
+
+  log.info(
+    `代理绑定已从账号迁移到分组：${stats.boundExistingGroups} 个原分组已绑定节点，` +
+      `${stats.createdGroups} 个迁移分组已创建，${stats.reassignedAccounts} 个账号已重新分组`
+  );
+  if (stats.disabledManualProxyAccounts) {
+    log.warn(
+      `${stats.disabledManualProxyAccounts} 个账号使用旧式手工代理地址，已先停用；` +
+        "请在分组管理中选择代理节点后再启用"
+    );
+  }
 }
 
 // 用户输入不合法：标记为 badRequest，让 API 层答 400 而不是 500。
@@ -131,27 +295,42 @@ function badRequest(msg) {
   return e;
 }
 
-export function addGroup(name) {
+export function addGroup(name, proxyId = null) {
   const clean = String(name ?? "").trim();
   if (!clean) throw badRequest("分组名称不能为空");
   const groups = getGroups();
   if (groups.some((g) => g.name === clean)) throw badRequest("分组名称已存在");
   const arr = new Uint32Array(2);
   globalThis.crypto.getRandomValues(arr);
-  const group = { id: "grp_" + arr[0].toString(36) + arr[1].toString(36), name: clean };
+  const group = {
+    id: "grp_" + arr[0].toString(36) + arr[1].toString(36),
+    name: clean,
+    proxyId: proxyId || null, // 绑定的代理节点，null = 组内账号跟随系统网络
+  };
   groups.push(group);
   saveGroups(groups);
   return group;
 }
 
-export function renameGroup(id, name) {
-  const clean = String(name ?? "").trim();
-  if (!clean) throw badRequest("分组名称不能为空");
+/**
+ * 更新分组。name / proxyId 都是可选：只传 proxyId 就只改代理。
+ * proxyId 传 null（或空串）表示解绑，改为跟随系统网络。
+ */
+export function updateGroup(id, patch = {}) {
   const groups = getGroups();
   const g = groups.find((x) => x.id === id);
   if (!g) return null;
-  if (groups.some((x) => x.name === clean && x.id !== id)) throw badRequest("分组名称已存在");
-  g.name = clean;
+
+  if (patch.name !== undefined) {
+    const clean = String(patch.name ?? "").trim();
+    if (!clean) throw badRequest("分组名称不能为空");
+    if (groups.some((x) => x.name === clean && x.id !== id)) throw badRequest("分组名称已存在");
+    g.name = clean;
+  }
+  if (patch.proxyId !== undefined) {
+    g.proxyId = patch.proxyId || null;
+  }
+
   saveGroups(groups);
   return g;
 }

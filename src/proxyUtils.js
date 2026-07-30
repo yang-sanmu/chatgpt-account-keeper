@@ -31,7 +31,7 @@ export function normalizeProxyNode(raw) {
 
 /**
  * Build the persisted node list for a refreshed subscription.
- * Removed nodes are retained only while an account still references them.
+ * Removed nodes are retained only while a group still references them.
  */
 export function mergeProxyNodes(rawNodes, previousNodes, referencedIds) {
   const prevById = new Map(previousNodes.map((node) => [node.id, node]));

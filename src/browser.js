@@ -1,7 +1,7 @@
 import { chromium } from "playwright";
 import { fromRoot, ensureDir } from "./paths.js";
 import { proxyForAccount, ensureRunning } from "./proxyManager.js";
-import { getAccount } from "./store.js";
+import { getAccount, effectiveProxyId } from "./store.js";
 import * as log from "./logger.js";
 
 // 一个真实 Chrome 的 UA，减少被判定为自动化的概率。
@@ -20,7 +20,7 @@ const UA =
  */
 export async function launchForAccount(account, opts = {}) {
   // 调用可能在账号锁后排队很久（例如用户一直开着“打开网页”窗口）。
-  // 真正启动时重新读取，避免期间修改过的 proxyId 没生效、任务走了旧出口。
+  // 真正启动时重新读取，避免期间改过的分组/分组代理没生效、任务走了旧出口。
   const liveAccount = getAccount(account?.id) ?? account;
   const headless = opts.headless ?? true;
   const userDataDir = ensureDir(fromRoot(liveAccount.profileDir));
@@ -37,8 +37,8 @@ export async function launchForAccount(account, opts = {}) {
     ],
   };
 
-  // 定向代理：账号绑定了节点就走该节点的本地端口，否则走系统默认网络。
-  if (liveAccount.proxyId) {
+  // 定向代理：账号所属分组绑了节点就走该节点的本地端口，否则走系统默认网络。
+  if (effectiveProxyId(liveAccount)) {
     // 边车必须先就绪，否则 Chromium 会连到一个还没监听的端口。
     await ensureRunning();
     const p = proxyForAccount(liveAccount);
@@ -49,15 +49,9 @@ export async function launchForAccount(account, opts = {}) {
       // 绑了节点却拿不到端口（节点被停用/已从订阅移除）。宁可报错也不静默裸奔，
       // 否则账号会用错误的出口 IP 访问，风险更高。
       throw new Error(
-        `账号绑定的代理节点不可用（可能已停用或不在订阅中），请重新选择节点或改为跟随系统`
+        `账号所属分组绑定的代理节点不可用（可能已停用或不在订阅中），请到分组管理里重新选择节点`
       );
     }
-  } else if (liveAccount.proxy) {
-    // 兼容旧配置：proxy 形如 "http://ip:port" 或 { server, username, password }
-    launchArgs.proxy =
-      typeof liveAccount.proxy === "string"
-        ? { server: liveAccount.proxy }
-        : liveAccount.proxy;
   }
 
   const context = await chromium.launchPersistentContext(userDataDir, launchArgs);

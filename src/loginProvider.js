@@ -138,7 +138,17 @@ export async function checkLoggedIn(account) {
   const selectors = readJson("config/selectors.json");
   let context;
   try {
-    const liveAccount = getAccount(account.id) ?? account;
+    const liveAccount = getAccount(account.id);
+    if (!liveAccount) {
+      return {
+        state: null,
+        loggedIn: false,
+        email: null,
+        detail: "账号已删除，已跳过状态检查",
+        skipped: true,
+        deleted: true,
+      };
+    }
     const launched = await launchForAccount(liveAccount, { headless: true });
     context = launched.context;
     const page = launched.page;

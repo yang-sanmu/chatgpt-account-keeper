@@ -13,6 +13,8 @@ import {
   restartStatusMonitor,
 } from "./statusMonitor.js";
 import { recordConversation, readHistory } from "./logger.js";
+import { profileManager } from "./profileManager.js";
+import { isBusy, isHeld } from "./locks.js";
 import * as log from "./logger.js";
 
 const app = express();
@@ -28,6 +30,10 @@ const wrap = (fn) => (req, res) =>
     if (e instanceof BadRequest || e?.badRequest) {
       log.warn(msg);
       return res.status(400).json({ error: msg });
+    }
+    if (Number.isInteger(e?.statusCode) && e.statusCode >= 400 && e.statusCode < 600) {
+      log.warn(msg);
+      return res.status(e.statusCode).json({ error: msg });
     }
     log.error(String(e.stack || e));
     res.status(500).json({ error: msg });
@@ -99,9 +105,50 @@ app.patch("/api/accounts/:id", wrap(async (req, res) => {
 }));
 
 app.delete("/api/accounts/:id", wrap(async (req, res) => {
-  const ok = store.removeAccount(req.params.id);
-  if (!ok) return res.status(404).json({ error: "账号不存在" });
-  res.json({ ok: true });
+  const account = store.getAccount(req.params.id);
+  if (!account) return res.status(404).json({ error: "账号不存在" });
+  if (isBusy(account.id) || isHeld(account.id)) {
+    const error = new Error("该账号正在使用中，请先关闭窗口或等待任务结束");
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const profileAction = String(req.query.profile ?? "detach");
+  if (!["detach", "archive", "purge"].includes(profileAction)) {
+    throw new BadRequest("profile 参数必须是 detach、archive 或 purge");
+  }
+
+  const profile = profileManager.removeAccountWithProfile(
+    account,
+    profileAction,
+    () => store.removeAccount(account.id),
+    store.getAccounts()
+  );
+  res.json({ ok: true, profile });
+}));
+
+// ---------- Profile 存储维护 ----------
+// 扫描只读取 profiles 的直接子目录；归档放到 profiles-archive，不会再次被识别成孤儿。
+app.get("/api/profiles/scan", wrap(async (req, res) => {
+  res.json(profileManager.scan(store.getAccounts()));
+}));
+
+// scope: all / linked / orphan；也可以传 name 只清理一个指定 Profile。
+app.post("/api/profiles/cache/clean", wrap(async (req, res) => {
+  const scope = String(req.body?.scope ?? "all");
+  const name = req.body?.name ? String(req.body.name) : null;
+  if (!["all", "linked", "orphan"].includes(scope)) {
+    throw new BadRequest("scope 必须是 all、linked 或 orphan");
+  }
+  res.json(profileManager.cleanCaches(store.getAccounts(), { scope, name }));
+}));
+
+app.post("/api/profiles/orphans/:name/archive", wrap(async (req, res) => {
+  res.json(profileManager.archiveOrphan(req.params.name, store.getAccounts()));
+}));
+
+app.delete("/api/profiles/orphans/:name", wrap(async (req, res) => {
+  res.json(profileManager.purgeOrphan(req.params.name, store.getAccounts()));
 }));
 
 // 账号登录状态。默认读缓存（秒回）；?refresh=1 强制现开浏览器检查。

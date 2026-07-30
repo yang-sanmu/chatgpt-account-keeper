@@ -4,6 +4,12 @@ node_modules/
 # 敏感：账号登录态（cookies/session），泄露即账号被盗
 profiles/
 
+# 敏感：已归档账号的完整浏览器登录态
+profiles-archive/
+
+# Profile 彻底删除过程中的同盘暂存目录
+.profile-trash/
+
 # 敏感：含真实邮箱、代理等
 config/accounts.json
 config/settings.json

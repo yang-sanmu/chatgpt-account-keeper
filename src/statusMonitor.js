@@ -1,4 +1,4 @@
-import { getAccounts, getSettings } from "./store.js";
+import { getAccount, getAccounts, getSettings } from "./store.js";
 import { checkLoggedIn } from "./loginProvider.js";
 import { withAccountLock, isHeld } from "./locks.js";
 import { SESSION_OK, SESSION_OUT } from "./health.js";
@@ -52,7 +52,31 @@ export async function refreshAccount(account) {
       detail: cached.detail ?? "账号窗口正在使用，状态由已打开的窗口自动采样",
     };
   }
-  const result = await withAccountLock(account.id, () => checkLoggedIn(account));
+  if (!getAccount(account.id)) {
+    return {
+      state: null,
+      loggedIn: false,
+      email: null,
+      detail: "账号已删除，已跳过状态检查",
+      skipped: true,
+      deleted: true,
+    };
+  }
+  const result = await withAccountLock(account.id, () => {
+    const liveAccount = getAccount(account.id);
+    if (!liveAccount) {
+      return {
+        state: null,
+        loggedIn: false,
+        email: null,
+        detail: "账号已删除，已跳过状态检查",
+        skipped: true,
+        deleted: true,
+      };
+    }
+    return checkLoggedIn(liveAccount);
+  });
+  if (result.deleted) return result;
   setCachedStatus(account.id, result.state, result.email, result.detail ?? null);
   return result;
 }

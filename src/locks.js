@@ -2,24 +2,31 @@
 // 同时打开，否则会锁冲突。登录/立即跑/检查状态/定时调度都要经过这里。
 
 const queues = new Map(); // accountId -> Promise 链尾
+const pendingCounts = new Map(); // accountId -> 正在运行或排队的任务数
 
 export function withAccountLock(accountId, fn) {
   const prev = queues.get(accountId) ?? Promise.resolve();
+  pendingCounts.set(accountId, (pendingCounts.get(accountId) ?? 0) + 1);
   // 无论上一个成功失败，都接着排队
   const run = prev.then(fn, fn);
   // 记录链尾（吞掉错误，避免 unhandled rejection 影响后续排队）
-  queues.set(
-    accountId,
-    run.then(
-      () => {},
-      () => {}
-    )
+  const tail = run.then(
+    () => {},
+    () => {}
   );
+  queues.set(accountId, tail);
+  tail.then(() => {
+    const left = (pendingCounts.get(accountId) ?? 1) - 1;
+    if (left > 0) pendingCounts.set(accountId, left);
+    else pendingCounts.delete(accountId);
+    // 只清理自己对应的链尾；期间若又排进了新任务，保留新的链尾。
+    if (queues.get(accountId) === tail) queues.delete(accountId);
+  });
   return run;
 }
 
 export function isBusy(accountId) {
-  return queues.has(accountId);
+  return (pendingCounts.get(accountId) ?? 0) > 0;
 }
 
 /**

@@ -14,6 +14,9 @@ let proxyCache = [];
 let proxyStatus = {};
 let proxyDelays = {}; // nodeId -> 延迟文本
 let currentDrawerAccountId = null;
+let deleteAccountId = null;
+let deleteSubmitting = false;
+let profileScanData = null;
 // 新建分组时暂存选中的代理节点（还没有 group id 可挂）
 let newGroupProxyId = null;
 // 创建请求发出后锁住弹窗，避免用户点“取消”却仍在后台留下账号。
@@ -82,6 +85,14 @@ function escapeHtml(str) {
   return String(str || "").replace(/[&<>"']/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
   );
+}
+
+function formatBytes(bytes) {
+  const value = Number(bytes) || 0;
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 ** 2) return `${(value / 1024).toFixed(1)} KB`;
+  if (value < 1024 ** 3) return `${(value / 1024 ** 2).toFixed(1)} MB`;
+  return `${(value / 1024 ** 3).toFixed(2)} GB`;
 }
 
 function timeAgo(iso) {
@@ -799,16 +810,65 @@ $("#newacc-confirm").addEventListener("click", async () => {
   }
 });
 
-async function delAccount(id) {
-  if (!confirm(`确定删除账号 [${id}]？登录态数据将保留在 profiles 目录中。`)) return;
+function delAccount(id) {
+  const account = accountsCache.find((item) => item.id === id);
+  deleteAccountId = id;
+  $("#delete-account-label").textContent = account?.email || account?.note || id;
+  $("#delete-backdrop").hidden = false;
+  $("#delete-modal").hidden = false;
+}
+
+function closeDeleteModal() {
+  if (deleteSubmitting) return;
+  deleteAccountId = null;
+  $("#delete-backdrop").hidden = true;
+  $("#delete-modal").hidden = true;
+}
+
+async function deleteAccountWithProfile(mode, button) {
+  if (!deleteAccountId || deleteSubmitting) return;
+  if (
+    mode === "purge" &&
+    !confirm("最后确认：账号 Profile、Cookie 和完整登录态将被永久删除，且无法恢复。是否继续？")
+  ) {
+    return;
+  }
+
+  const id = deleteAccountId;
+  const labels = {
+    detach: "账号已移除，Profile 保留为孤儿目录",
+    archive: "账号已移除，Profile 已归档",
+    purge: "账号及 Profile 已彻底删除",
+  };
+  deleteSubmitting = true;
+  $$("[data-delete-mode]").forEach((item) => (item.disabled = true));
+  $("#delete-cancel").disabled = true;
+  setBtnLoading(button, true, "处理中");
   try {
-    await api(`/accounts/${id}`, { method: "DELETE" });
-    toast("账号已删除", "success");
-    loadAccounts();
+    const result = await api(`/accounts/${encodeURIComponent(id)}?profile=${mode}`, {
+      method: "DELETE",
+    });
+    deleteSubmitting = false;
+    closeDeleteModal();
+    toast(result.profile?.warning || labels[mode], result.profile?.warning ? "error" : "success");
+    await loadAccounts();
+    // 若用户已打开过存储维护区，删除后自动刷新；否则不在后台做重扫描。
+    if (profileScanData) void loadProfileScan();
   } catch (e) {
     toast("删除失败: " + e.message, "error");
+  } finally {
+    deleteSubmitting = false;
+    $$("[data-delete-mode]").forEach((item) => (item.disabled = false));
+    $("#delete-cancel").disabled = false;
+    setBtnLoading(button, false);
   }
 }
+
+$("#delete-cancel").addEventListener("click", closeDeleteModal);
+$("#delete-backdrop").addEventListener("click", closeDeleteModal);
+$$("[data-delete-mode]").forEach((button) =>
+  button.addEventListener("click", () => deleteAccountWithProfile(button.dataset.deleteMode, button))
+);
 
 async function checkStatus(id) {
   const span = $(`[data-status="${id}"]`);
@@ -1465,6 +1525,137 @@ $("#settings-form").addEventListener("submit", async (e) => {
   }
 });
 
+// ---------- Profile 存储维护 ----------
+function renderProfileScan(data) {
+  profileScanData = data;
+  const totals = data.totals || {};
+  $("#profile-storage-empty").hidden = true;
+
+  const summary = $("#profile-summary");
+  summary.hidden = false;
+  summary.innerHTML = `
+    <div class="profile-stat"><strong>${totals.profiles ?? 0}</strong><span>活动目录</span></div>
+    <div class="profile-stat"><strong>${totals.orphans ?? 0}</strong><span>孤儿 Profile</span></div>
+    <div class="profile-stat"><strong>${formatBytes(totals.cacheBytes)}</strong><span>可清理缓存</span></div>
+    <div class="profile-stat"><strong>${formatBytes(totals.archiveBytes)}</strong><span>已归档 (${totals.archiveCount ?? 0})</span></div>
+    <div class="profile-stat"><strong>${formatBytes(totals.trashBytes)}</strong><span>删除残留 (${totals.trashCount ?? 0})</span></div>`;
+
+  const orphanBox = $("#profile-orphans");
+  const list = $("#profile-orphan-list");
+  orphanBox.hidden = false;
+  $("#profile-scan-time").textContent = `扫描于 ${new Date().toLocaleTimeString("zh-CN", {
+    hour12: false,
+  })}`;
+
+  if (!data.orphans?.length) {
+    list.innerHTML = `<div class="profile-storage-empty compact">没有发现孤儿 Profile。</div>`;
+    return;
+  }
+
+  list.innerHTML = data.orphans
+    .map(
+      (profile) => `<div class="profile-row">
+        <div class="profile-row-main">
+          <strong>${escapeHtml(profile.name)}</strong>
+          <span>${formatBytes(profile.bytes)} · ${profile.files ?? 0} 个文件 · 缓存 ${formatBytes(
+            profile.cacheBytes
+          )}</span>
+        </div>
+        <div class="profile-row-actions">
+          <button class="btn small" data-profile-cache="${escapeHtml(profile.name)}">清缓存</button>
+          <button class="btn small" data-profile-archive="${escapeHtml(profile.name)}">归档</button>
+          <button class="btn small danger" data-profile-purge="${escapeHtml(
+            profile.name
+          )}">彻底删除</button>
+        </div>
+      </div>`
+    )
+    .join("");
+
+  $$("[data-profile-cache]").forEach((button) =>
+    button.addEventListener("click", () =>
+      runProfileAction("cache", button.dataset.profileCache, button)
+    )
+  );
+  $$("[data-profile-archive]").forEach((button) =>
+    button.addEventListener("click", () =>
+      runProfileAction("archive", button.dataset.profileArchive, button)
+    )
+  );
+  $$("[data-profile-purge]").forEach((button) =>
+    button.addEventListener("click", () =>
+      runProfileAction("purge", button.dataset.profilePurge, button)
+    )
+  );
+}
+
+async function loadProfileScan() {
+  const button = $("#profile-scan");
+  setBtnLoading(button, true, "扫描中");
+  try {
+    renderProfileScan(await api("/profiles/scan"));
+  } catch (e) {
+    toast("Profile 扫描失败: " + e.message, "error");
+  } finally {
+    setBtnLoading(button, false);
+  }
+}
+
+async function runProfileAction(action, name, button) {
+  if (
+    action === "purge" &&
+    !confirm(`确定永久删除孤儿 Profile「${name}」？其中的 Cookie 和登录态无法恢复。`)
+  ) {
+    return;
+  }
+
+  setBtnLoading(button, true, "处理中");
+  try {
+    let result;
+    if (action === "cache") {
+      result = await api("/profiles/cache/clean", {
+        method: "POST",
+        body: { name },
+      });
+      if (result.skipped?.length) {
+        toast(`未清理：${result.skipped[0].reason}`, "error");
+      } else {
+        toast(`已释放 ${formatBytes(result.freedBytes)}`, "success");
+      }
+    } else if (action === "archive") {
+      await api(`/profiles/orphans/${encodeURIComponent(name)}/archive`, { method: "POST" });
+      toast("孤儿 Profile 已归档", "success");
+    } else {
+      result = await api(`/profiles/orphans/${encodeURIComponent(name)}`, { method: "DELETE" });
+      toast(`Profile 已永久删除，释放 ${formatBytes(result.bytes)}`, "success");
+    }
+    await loadProfileScan();
+  } catch (e) {
+    toast("Profile 操作失败: " + e.message, "error");
+  } finally {
+    setBtnLoading(button, false);
+  }
+}
+
+$("#profile-scan").addEventListener("click", loadProfileScan);
+$("#profile-clean-cache").addEventListener("click", async () => {
+  const button = $("#profile-clean-cache");
+  setBtnLoading(button, true, "清理中");
+  try {
+    const result = await api("/profiles/cache/clean", {
+      method: "POST",
+      body: { scope: "all" },
+    });
+    const skipped = result.skipped?.length ? `，跳过 ${result.skipped.length} 个正在使用的目录` : "";
+    toast(`缓存清理完成，释放 ${formatBytes(result.freedBytes)}${skipped}`, "success");
+    await loadProfileScan();
+  } catch (e) {
+    toast("缓存清理失败: " + e.message, "error");
+  } finally {
+    setBtnLoading(button, false);
+  }
+});
+
 // ---------- 调度器控制 ----------
 async function loadScheduler() {
   try {
@@ -1514,6 +1705,7 @@ window.addEventListener("keydown", (e) => {
     closeLoginModal();
     closeGroupModal();
     closeNewAccountModal();
+    closeDeleteModal();
   }
 });
 

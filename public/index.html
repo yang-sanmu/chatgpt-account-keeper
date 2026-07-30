@@ -345,6 +345,33 @@
             </div>
           </div>
         </div>
+
+        <div class="settings-card storage-card shadow-card">
+          <div class="storage-head">
+            <div>
+              <h3>Profile 存储维护</h3>
+              <p class="hint-text">扫描未被账号引用的浏览器 Profile，或清理可安全重建的网页、代码与 GPU 缓存。Cookie、登录态和站点存储不会被缓存清理删除。</p>
+            </div>
+            <div class="storage-actions">
+              <button id="profile-clean-cache" class="btn">清理全部缓存</button>
+              <button id="profile-scan" class="btn primary shadow">扫描 Profile</button>
+            </div>
+          </div>
+
+          <div id="profile-summary" class="profile-summary" hidden></div>
+
+          <div id="profile-orphans" class="profile-orphans" hidden>
+            <div class="profile-list-head">
+              <h4>孤儿 Profile</h4>
+              <span id="profile-scan-time" class="time-ago"></span>
+            </div>
+            <div id="profile-orphan-list"></div>
+          </div>
+
+          <div id="profile-storage-empty" class="profile-storage-empty">
+            点击“扫描 Profile”查看当前占用与孤儿目录。
+          </div>
+        </div>
       </section>
     </main>
 
@@ -462,6 +489,39 @@
         </div>
         <div class="modal-footer">
           <button id="group-close" class="btn shadow full-width">关闭</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 删除账号与 Profile 处理方式 -->
+    <div id="delete-backdrop" class="backdrop modal-backdrop" hidden></div>
+    <div id="delete-modal" class="modal" hidden>
+      <div class="modal-card delete-modal-card shadow-card">
+        <div class="modal-header">
+          <div class="modal-icon-glow danger-glow">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14H6L5 6"></path><path d="M10 11v5M14 11v5"></path><path d="M9 6V4h6v2"></path></svg>
+          </div>
+          <h3>删除账号</h3>
+        </div>
+        <div class="modal-body" style="text-align:left;">
+          <p>请选择账号 <strong id="delete-account-label"></strong> 的 Profile 处理方式：</p>
+          <div class="delete-options">
+            <button class="delete-option" data-delete-mode="detach">
+              <span class="delete-option-title">仅移除账号</span>
+              <span class="delete-option-desc">只从面板移除，Profile 留在 profiles 中并成为孤儿，可稍后扫描处理。</span>
+            </button>
+            <button class="delete-option" data-delete-mode="archive">
+              <span class="delete-option-title">归档 Profile</span>
+              <span class="delete-option-desc">把完整登录态移动到 profiles-archive，退出活动目录但保留恢复可能。</span>
+            </button>
+            <button class="delete-option danger-option" data-delete-mode="purge">
+              <span class="delete-option-title">彻底删除</span>
+              <span class="delete-option-desc">永久删除账号及浏览器 Profile，登录态不可恢复。</span>
+            </button>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button id="delete-cancel" class="btn shadow full-width">取消</button>
         </div>
       </div>
     </div>

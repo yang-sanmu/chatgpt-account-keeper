@@ -23,3 +23,12 @@ test("refreshAccount returns cached state immediately for a manually held accoun
     releaseHeld(accountId);
   }
 });
+
+test("refreshAccount skips a stale queued account after it has been deleted", async () => {
+  const result = await refreshAccount({ id: `missing_${Date.now()}` });
+
+  assert.equal(result.skipped, true);
+  assert.equal(result.deleted, true);
+  assert.equal(result.state, null);
+  assert.equal(result.loggedIn, false);
+});

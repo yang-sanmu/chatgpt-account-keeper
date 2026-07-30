@@ -16,6 +16,7 @@ config/groups.json
 
 # 代理边车运行时目录（自动生成的 mihomo 配置与缓存）
 .mihomo/
+.mihomo-test/
 
 # 个人会话内容（运行时数据，用 .example 做模板）
 config/conversations.json

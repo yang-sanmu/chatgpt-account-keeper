@@ -1,9 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  assignStablePorts,
   mergeProxyNodes,
   normalizeProxyNode,
   proxyNodeId,
+  selectRuntimeProxyNodes,
 } from "../src/proxyUtils.js";
 
 test("normalizeProxyNode converts a valid string port to an integer", () => {
@@ -70,4 +72,32 @@ test("mergeProxyNodes retains only removed nodes still referenced by groups", ()
   assert.equal(nodes.some((node) => node.id === referencedId && node.missing), true);
   assert.equal(nodes.some((node) => node.id === unreferencedId), false);
   assert.equal(nodes.some((node) => node.name === "current" && !node.missing), true);
+});
+
+test("selectRuntimeProxyNodes loads only referenced usable nodes", () => {
+  const nodes = [
+    { id: "used", enabled: true, missing: false },
+    { id: "unused", enabled: true, missing: false },
+    { id: "other", enabled: true, missing: false },
+    { id: "disabled", enabled: false, missing: false },
+    { id: "missing", enabled: true, missing: true },
+  ];
+
+  const selected = selectRuntimeProxyNodes(nodes, new Set(["used", "disabled", "missing"]));
+
+  assert.deepEqual(selected.map((node) => node.id), ["used"]);
+});
+
+test("assignStablePorts skips the mihomo controller port without collisions", () => {
+  const nodes = Array.from({ length: 1002 }, (_, index) => ({ id: `node_${index}` }));
+  const ports = assignStablePorts(nodes, {
+    basePort: 21000,
+    reservedPorts: [21999],
+  });
+
+  assert.equal(ports.get("node_998"), 21998);
+  assert.equal(ports.get("node_999"), 22000);
+  assert.equal(ports.get("node_1000"), 22001);
+  assert.equal(new Set(ports.values()).size, nodes.length);
+  assert.equal([...ports.values()].includes(21999), false);
 });

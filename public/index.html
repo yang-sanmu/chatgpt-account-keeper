@@ -236,7 +236,7 @@
                 <th style="width: 38%;">节点名称</th>
                 <th style="width: 12%;">类型</th>
                 <th style="width: 22%;">服务器</th>
-                <th style="width: 10%;">本地端口</th>
+                <th style="width: 10%;">分组端口</th>
                 <th style="width: 8%;">启用</th>
                 <th style="width: 10%; text-align: right;">延迟</th>
               </tr>
@@ -259,7 +259,7 @@
           </div>
           <div class="callout-content">
             <h4>工作方式</h4>
-            <p>程序会另起一个私有 mihomo 进程，为每个启用的节点开一个本地端口。<strong>代理绑定在分组上</strong>：到账号页「分组管理」为分组选节点，组内账号统一走该出口；<strong>未分组、或分组没绑节点的账号走系统默认网络</strong>（也就是你 Clash 当前选的节点）。不会修改你的 Clash Verge 配置。</p>
+            <p>程序会另起一个私有 mihomo 主边车，常态下只加载被分组使用的节点并为它们开放本地端口；测速使用独立临时进程，完成后立即关闭，不影响账号连接。<strong>代理绑定在分组上</strong>：到账号页「分组管理」为分组选节点，组内账号统一走该出口；<strong>未分组、或分组没绑节点的账号走系统默认网络</strong>（也就是你 Clash 当前选的节点）。不会修改你的 Clash Verge 配置。</p>
           </div>
         </div>
       </section>

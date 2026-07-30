@@ -65,6 +65,39 @@ export function mergeProxyNodes(rawNodes, previousNodes, referencedIds) {
   return nodes;
 }
 
+/**
+ * Select the nodes that the private mihomo process needs right now.
+ * Normal runtime only needs group-referenced, usable nodes.
+ */
+export function selectRuntimeProxyNodes(nodes, referencedIds) {
+  const wanted = new Set(referencedIds ?? []);
+  return nodes.filter(
+    (node) => wanted.has(node.id) && node.enabled !== false && !node.missing
+  );
+}
+
+/**
+ * Assign stable ports in node order while skipping ports reserved by control
+ * APIs or other local services.
+ */
+export function assignStablePorts(
+  nodes,
+  { basePort, reservedPorts = [], maxPort = 65535 }
+) {
+  const reserved = new Set(reservedPorts);
+  const ports = new Map();
+  let port = basePort;
+
+  for (const node of nodes) {
+    while (reserved.has(port)) port++;
+    if (port > maxPort) {
+      throw new RangeError("代理节点过多，本地监听端口已用尽");
+    }
+    ports.set(node.id, port++);
+  }
+  return ports;
+}
+
 export function proxyNodeId(name) {
   let hash = 0;
   for (let i = 0; i < name.length; i++) {

@@ -169,23 +169,31 @@ app.get("/api/groups", wrap(async (req, res) => {
 }));
 
 app.post("/api/groups", wrap(async (req, res) => {
-  res.json(store.addGroup(req.body?.name, req.body?.proxyId));
+  const group = store.addGroup(req.body?.name, req.body?.proxyId);
+  if (group.proxyId) await proxies.reconcile();
+  res.json(group);
 }));
 
 // 分组的 name / proxyId 都可单独更新。代理绑在分组上，组内账号统一走该节点。
 app.patch("/api/groups/:id", wrap(async (req, res) => {
   const { name, proxyId } = req.body ?? {};
+  const previous = store.getGroup(req.params.id);
   const patch = {};
   if (name !== undefined) patch.name = name;
   if (proxyId !== undefined) patch.proxyId = proxyId;
   const g = store.updateGroup(req.params.id, patch);
   if (!g) return res.status(404).json({ error: "分组不存在" });
+  if (proxyId !== undefined && previous?.proxyId !== g.proxyId) {
+    await proxies.reconcile();
+  }
   res.json(g);
 }));
 
 app.delete("/api/groups/:id", wrap(async (req, res) => {
+  const previous = store.getGroup(req.params.id);
   const ok = store.removeGroup(req.params.id);
   if (!ok) return res.status(404).json({ error: "分组不存在" });
+  if (previous?.proxyId) await proxies.reconcile();
   res.json({ ok: true });
 }));
 
@@ -201,6 +209,10 @@ app.post("/api/proxies/import", wrap(async (req, res) => {
 
 app.post("/api/proxies/refresh", wrap(async (req, res) => {
   res.json(await proxies.refreshSubscription());
+}));
+
+app.post("/api/proxies/test-all", wrap(async (req, res) => {
+  res.json(await proxies.testAllNodes());
 }));
 
 app.patch("/api/proxies/:id", wrap(async (req, res) => {

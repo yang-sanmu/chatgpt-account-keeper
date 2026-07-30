@@ -5,7 +5,11 @@ import { spawn } from "node:child_process";
 import YAML from "yaml";
 import { fromRoot, ensureDir } from "./paths.js";
 import { getGroups, effectiveProxyId } from "./store.js";
-import { mergeProxyNodes } from "./proxyUtils.js";
+import {
+  assignStablePorts,
+  mergeProxyNodes,
+  selectRuntimeProxyNodes,
+} from "./proxyUtils.js";
 import * as log from "./logger.js";
 
 /**
@@ -13,7 +17,7 @@ import * as log from "./logger.js";
  * 组内账号共用该出口；未绑定分组节点的账号走系统默认网络。
  *
  * 做法：另起一个**私有的 mihomo 进程**（不碰你系统上的 Clash Verge），
- * 用它的 listeners 特性为每个节点单独开一个本地 HTTP 端口，
+ * 用它的 listeners 特性为每个被分组引用的节点开一个本地 HTTP 端口，
  * Playwright 启动时按账号连不同端口即可：
  *
  *   美国组账号 --proxy 127.0.0.1:21001 --\
@@ -25,8 +29,11 @@ import * as log from "./logger.js";
 
 const PROXIES_FILE = fromRoot("config/proxies.json");
 const RUNTIME_DIR = fromRoot(".mihomo");
+const TEST_RUNTIME_DIR = fromRoot(".mihomo-test");
 const BASE_PORT = 21000;
 const API_PORT = 21999;
+// 测速使用完全独立的 mihomo，绝不重启承载账号流量的主边车。
+const TEST_API_PORT = 20999;
 
 // mihomo 可执行文件候选位置：优先项目自带，其次 Clash Verge 安装目录。
 const MIHOMO_CANDIDATES = [
@@ -73,6 +80,7 @@ export function getNodes({ safe = true } = {}) {
   // 端口映射算一次就够：早先每个节点都调 portOf()，
   // 而 portOf 会重新读整个 proxies.json —— 几百个节点的订阅就是几百次全文件解析。
   const ports = portMapFrom(nodes);
+  const routedIds = referencedProxyIds();
   return nodes.map((n) => ({
     id: n.id,
     name: n.name,
@@ -81,7 +89,11 @@ export function getNodes({ safe = true } = {}) {
     port: n.raw?.port ?? null,
     enabled: n.enabled !== false,
     missing: !!n.missing,
-    localPort: ports.get(n.id) ?? null,
+    // 只有被分组实际引用的节点才有主边车监听端口；测速走独立临时进程。
+    localPort:
+      routedIds.has(n.id) && n.enabled !== false && !n.missing
+        ? ports.get(n.id) ?? null
+        : null,
   }));
 }
 
@@ -208,9 +220,11 @@ export async function setNodeEnabled(id, enabled) {
   const store = readStore();
   const n = store.nodes.find((x) => x.id === id);
   if (!n) return null;
+  const affectsRuntime = referencedProxyIds().has(id);
   n.enabled = !!enabled;
   writeStore(store);
-  await restart();
+  // 未被分组使用的节点不在运行配置里，切换它无需打断当前代理连接。
+  if (affectsRuntime) await restart();
   return getNodes().find((x) => x.id === id) ?? null;
 }
 
@@ -221,25 +235,28 @@ export async function clearNodes() {
 
 // ---------- 端口分配 ----------
 
-// 节点 id -> 本地端口。按节点在列表中的顺序稳定分配，重启后不变。
-// 传入已读好的 nodes，避免调用方在循环里反复读文件。
+// 节点 id -> 预留本地端口。严格按订阅位置分配，停用节点也保留自己的槽位；
+// 这样切换一个未被分组使用的节点，不会让后续分组节点的端口整体位移。
 function portMapFrom(nodes) {
-  const map = new Map();
-  let i = 0;
-  for (const n of nodes) {
-    if (n.enabled === false || n.missing) continue;
-    map.set(n.id, BASE_PORT + i);
-    i++;
-  }
-  return map;
-}
-
-function portMap() {
-  return portMapFrom(readStore().nodes);
+  return assignStablePorts(nodes, {
+    basePort: BASE_PORT,
+    reservedPorts: [API_PORT],
+  });
 }
 
 function portOf(id) {
-  return portMap().get(id) ?? null;
+  const { nodes } = readStore();
+  const node = nodes.find((candidate) => candidate.id === id);
+  if (!node || node.enabled === false || node.missing) return null;
+  return portMapFrom(nodes).get(id) ?? null;
+}
+
+function referencedProxyIds() {
+  return new Set(
+    getGroups()
+      .map((group) => group.proxyId)
+      .filter(Boolean)
+  );
 }
 
 /**
@@ -274,8 +291,9 @@ function runLifecycleTransition(fn) {
 
 function buildConfig() {
   const { nodes } = readStore();
-  const active = nodes.filter((n) => n.enabled !== false && !n.missing);
-  const ports = portMap();
+  const active = selectRuntimeProxyNodes(nodes, referencedProxyIds());
+  // 仍按完整订阅中的顺序分配端口，分组引用增减不会改变其它节点的端口。
+  const ports = portMapFrom(nodes);
 
   const listeners = active
     .filter((n) => ports.has(n.id))
@@ -383,6 +401,19 @@ export function ensureRunning() {
   return runLifecycleTransition(() => ensureRunningUnlocked());
 }
 
+/**
+ * 让主边车与当前分组引用保持一致。配置未变化时复用现有进程；
+ * 同步失败只返回状态，由调用方继续保留已经保存的分组配置。
+ */
+export async function reconcile() {
+  try {
+    return await ensureRunning();
+  } catch (e) {
+    log.warn("同步分组代理配置失败: " + e.message);
+    return { running: false, reason: e.message };
+  }
+}
+
 export function stop() {
   if (child && !child.killed) {
     try {
@@ -434,8 +465,6 @@ async function stopAndWait(timeoutMs = 5000) {
 export async function restart() {
   return runLifecycleTransition(async () => {
     await stopAndWait();
-    const { nodes } = readStore();
-    if (!nodes.some((n) => n.enabled !== false && !n.missing)) return { running: false };
     try {
       return await ensureRunningUnlocked();
     } catch (e) {
@@ -447,10 +476,12 @@ export async function restart() {
 
 export function status() {
   const { nodes } = readStore();
+  const routedNodeCount = selectRuntimeProxyNodes(nodes, referencedProxyIds()).length;
   return {
     running: !!child && !child.killed,
     mihomo: getMihomoInfo(),
     nodeCount: nodes.filter((n) => n.enabled !== false && !n.missing).length,
+    routedNodeCount,
     subscription: getSubscriptionInfo(),
   };
 }
@@ -473,18 +504,8 @@ function waitPort(port, timeoutMs) {
   });
 }
 
-/**
- * 测试节点连通性。直接用 mihomo 自己的延迟接口，不用另造代理客户端。
- */
-export async function testNode(id) {
-  const { nodes } = readStore();
-  const node = nodes.find((n) => n.id === id);
-  if (!node) throw badRequest("节点不存在");
-  if (node.enabled === false) throw badRequest("该节点已停用，请先启用再测试");
-  if (node.missing) throw badRequest("该节点已不在订阅中");
-
-  await ensureRunning();
-  const url = `http://127.0.0.1:${API_PORT}/proxies/${encodeURIComponent(
+async function measureTestNode(node) {
+  const url = `http://127.0.0.1:${TEST_API_PORT}/proxies/${encodeURIComponent(
     node.name
   )}/delay?timeout=8000&url=${encodeURIComponent("https://www.gstatic.com/generate_204")}`;
   try {
@@ -499,7 +520,162 @@ export async function testNode(id) {
   }
 }
 
-// 进程退出时收掉边车，别留孤儿进程。
+let testChild = null;
+let testLifecycleTail = Promise.resolve();
+
+function runTestLifecycle(fn) {
+  const run = testLifecycleTail.then(fn, fn);
+  testLifecycleTail = run.then(
+    () => {},
+    () => {}
+  );
+  return run;
+}
+
+function buildTestConfig(nodes) {
+  return {
+    // 延迟检测直接调用控制接口，不需要额外开放入站代理端口。
+    "mixed-port": 0,
+    "allow-lan": false,
+    mode: "rule",
+    "log-level": "warning",
+    ipv6: false,
+    "external-controller": `127.0.0.1:${TEST_API_PORT}`,
+    "unified-delay": true,
+    dns: {
+      enable: true,
+      ipv6: false,
+      "enhanced-mode": "redir-host",
+      nameserver: ["223.5.5.5", "1.1.1.1"],
+    },
+    proxies: nodes.map((node) => node.raw),
+    rules: ["MATCH,DIRECT"],
+  };
+}
+
+async function stopTestAndWait(timeoutMs = 5000) {
+  const proc = testChild;
+  testChild = null;
+  if (!proc || proc.killed || proc.exitCode !== null) return;
+
+  await new Promise((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(() => {
+      try {
+        proc.kill("SIGKILL");
+      } catch {
+        // 已经退出
+      }
+      finish();
+    }, timeoutMs);
+    proc.once("exit", finish);
+    try {
+      proc.kill();
+    } catch {
+      finish();
+    }
+  });
+}
+
+async function withTestSidecarUnlocked(nodes, fn) {
+  const bin = resolveMihomo();
+  if (!bin) {
+    throw new Error(
+      "找不到 mihomo 可执行文件。请安装 Clash Verge，或把 mihomo.exe 放到项目 bin/ 目录"
+    );
+  }
+
+  ensureDir(TEST_RUNTIME_DIR);
+  const cfgPath = path.join(TEST_RUNTIME_DIR, "config.yaml");
+  fs.writeFileSync(cfgPath, YAML.stringify(buildTestConfig(nodes)), "utf8");
+  await stopTestAndWait();
+
+  const proc = spawn(bin, ["-d", TEST_RUNTIME_DIR, "-f", cfgPath], {
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+  });
+  testChild = proc;
+  proc.stdout.on("data", (b) => {
+    const s = String(b).trim();
+    if (s) log.info("[mihomo-test] " + s.split("\n").slice(-1)[0]);
+  });
+  proc.stderr.on("data", (b) => {
+    const s = String(b).trim();
+    if (s) log.warn("[mihomo-test] " + s.split("\n").slice(-1)[0]);
+  });
+  proc.on("exit", (code) => {
+    if (code !== 0 && code !== null) log.warn(`mihomo 测速进程退出，code=${code}`);
+    if (testChild === proc) testChild = null;
+  });
+
+  try {
+    const ok = await waitPort(TEST_API_PORT, 12000);
+    if (!ok) throw new Error("mihomo 测速进程启动后控制端口未就绪");
+    return await fn();
+  } finally {
+    await stopTestAndWait();
+  }
+}
+
+function withTestSidecar(nodes, fn) {
+  return runTestLifecycle(() => withTestSidecarUnlocked(nodes, fn));
+}
+
+function testableNodeOrThrow(nodes, id) {
+  const node = nodes.find((n) => n.id === id);
+  if (!node) throw badRequest("节点不存在");
+  if (node.enabled === false) throw badRequest("该节点已停用，请先启用再测试");
+  if (node.missing) throw badRequest("该节点已不在订阅中");
+  return node;
+}
+
+/**
+ * 测试单个节点。使用独立临时 mihomo，不改动承载账号流量的主边车。
+ */
+export async function testNode(id) {
+  const { nodes } = readStore();
+  const node = testableNodeOrThrow(nodes, id);
+  return withTestSidecar([node], () => measureTestNode(node));
+}
+
+/**
+ * 批量测速：独立进程一次加载所有启用节点，再逐个请求延迟。
+ */
+export async function testAllNodes() {
+  const { nodes } = readStore();
+  const targets = nodes.filter((n) => n.enabled !== false && !n.missing);
+  if (!targets.length) throw badRequest("没有可测试的启用节点");
+
+  return withTestSidecar(targets, async () => {
+    const results = [];
+    for (const node of targets) {
+      results.push({ id: node.id, ...(await measureTestNode(node)) });
+    }
+    return { results };
+  });
+}
+
+function stopTest() {
+  if (testChild && !testChild.killed) {
+    try {
+      testChild.kill();
+    } catch {
+      // 进程可能已退出
+    }
+  }
+  testChild = null;
+}
+
+// 进程退出时收掉主边车和测速边车，别留孤儿进程。
 for (const sig of ["exit", "SIGINT", "SIGTERM"]) {
-  process.on(sig, () => stop());
+  process.on(sig, () => {
+    stop();
+    stopTest();
+  });
 }

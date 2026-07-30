@@ -633,7 +633,7 @@ function renderGroupList() {
     })
     .join("");
 
-  // 分组的代理选好就立即落盘，组内账号下次启动浏览器即生效。
+  // 分组代理选好后立即落盘，并由后端同步主边车配置。
   bindProxyPickers(async (key, proxyId) => {
     if (!key.startsWith("g:")) return;
     const id = key.slice(2);
@@ -1252,6 +1252,7 @@ function renderProxyStatusLine() {
       : "尚未导入订阅"
   );
   parts.push(`启用节点：${proxyStatus.nodeCount ?? 0}`);
+  parts.push(`分组使用：${proxyStatus.routedNodeCount ?? 0}`);
   parts.push(`代理进程：${proxyStatus.running ? "运行中" : "未运行（有账号绑定时自动启动）"}`);
   if (proxyStatus.mihomo && !proxyStatus.mihomo.found) {
     parts.push("⚠ 未找到 mihomo 内核，请安装 Clash Verge 或放置 bin/mihomo.exe");
@@ -1383,7 +1384,7 @@ $("#proxy-refresh").addEventListener("click", async () => {
   }
 });
 
-// 逐个测速，避免一次性把所有节点全打一遍造成瞬时压力。
+// 后端用独立临时 mihomo 一次加载全部节点并逐个测速，不重启账号主边车。
 $("#proxy-test-all").addEventListener("click", async () => {
   const btn = $("#proxy-test-all");
   const targets = proxyCache.filter((p) => p.enabled && !p.missing);
@@ -1391,9 +1392,34 @@ $("#proxy-test-all").addEventListener("click", async () => {
   setBtnLoading(btn, true, "测试中");
   try {
     for (const p of targets) {
-      await testProxy(p.id, null);
+      const cell = $(`[data-delay="${p.id}"]`);
+      if (cell) cell.textContent = "测试中…";
     }
-    toast("全部测试完成", "success");
+    const { results = [] } = await api("/proxies/test-all", { method: "POST" });
+    for (const result of results) {
+      const text = result.ok ? `${result.delay ?? "?"} ms` : "失败";
+      proxyDelays[result.id] = text;
+      const cell = $(`[data-delay="${result.id}"]`);
+      if (cell) {
+        cell.textContent = text;
+        cell.title = result.ok ? "" : result.message || "";
+      }
+    }
+    const failed = results.filter((r) => !r.ok).length;
+    toast(
+      failed ? `全部测试完成，${failed} 个节点失败` : "全部测试完成",
+      failed ? "error" : "success"
+    );
+  } catch (e) {
+    for (const p of targets) {
+      proxyDelays[p.id] = "错误";
+      const cell = $(`[data-delay="${p.id}"]`);
+      if (cell) {
+        cell.textContent = "错误";
+        cell.title = e.message;
+      }
+    }
+    toast("批量测试失败: " + e.message, "error");
   } finally {
     setBtnLoading(btn, false);
   }

@@ -95,6 +95,11 @@
           <span>主题轮换</span>
           <span id="badge-topic-count" class="tab-badge">0</span>
         </button>
+        <button class="tab" data-tab="proxies">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
+          <span>代理节点</span>
+          <span id="badge-proxy-count" class="tab-badge">0</span>
+        </button>
         <button class="tab" data-tab="settings">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
           <span>定时与风控设置</span>
@@ -114,12 +119,18 @@
               <input type="text" id="account-search" placeholder="搜索账号邮箱或备注…" />
             </div>
             <select id="account-status-filter" class="filter-select">
-              <option value="all">全部分组</option>
+              <option value="all">全部状态</option>
               <option value="enabled">已启用</option>
               <option value="disabled">已禁用</option>
               <option value="loggedin">已登录</option>
+              <option value="reauth">需重新登录</option>
               <option value="loggedout">未登录</option>
             </select>
+            <select id="account-group-filter" class="filter-select" title="按分组过滤">
+              <option value="all">全部分组</option>
+              <option value="none">未分组</option>
+            </select>
+            <button id="manage-groups" class="btn small" title="管理分组">分组管理</button>
           </div>
           <button id="add-account" class="btn primary-gradient shadow">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
@@ -131,11 +142,12 @@
           <table class="grid">
             <thead>
               <tr>
-                <th style="width: 28%;">账号标识 / 备注</th>
-                <th style="width: 18%;">登录状态</th>
-                <th style="width: 10%;">调度启用</th>
-                <th style="width: 24%;">主题轮换与窗口</th>
-                <th style="width: 20%; text-align: right;">快捷操作</th>
+                <th style="width: 22%;">账号标识 / 备注</th>
+                <th style="width: 15%;">登录状态</th>
+                <th style="width: 8%;">调度启用</th>
+                <th style="width: 15%;">分组 / 代理节点</th>
+                <th style="width: 18%;">主题轮换与窗口</th>
+                <th style="width: 22%; text-align: right;">快捷操作</th>
               </tr>
             </thead>
             <tbody id="account-rows"></tbody>
@@ -187,6 +199,71 @@
         </div>
       </section>
 
+      <!-- 代理节点面板 -->
+      <section id="tab-proxies" class="tab-panel">
+        <div class="panel-header">
+          <div class="header-left">
+            <h2>代理节点 (定向 VPN)</h2>
+            <div class="search-box">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+              <input type="text" id="proxy-search" placeholder="搜索节点名称…" />
+            </div>
+          </div>
+          <div class="actions">
+            <button id="proxy-refresh" class="btn small">手动刷新订阅</button>
+            <button id="proxy-test-all" class="btn small">测试全部延迟</button>
+          </div>
+        </div>
+
+        <div class="settings-card shadow-card" style="margin-bottom: 20px;">
+          <div class="form-group">
+            <label for="proxy-sub-url">
+              <span class="label-title">Clash 订阅地址</span>
+              <span class="label-desc">导入后节点仅在你点击“导入”或“手动刷新订阅”时才会更新，不会自动刷新</span>
+            </label>
+            <div class="row" style="gap: 8px; align-items: center;">
+              <input type="text" id="proxy-sub-url" placeholder="https://example.com/subscribe?token=…" style="flex: 1;" />
+              <button id="proxy-import" class="btn primary small">导入</button>
+            </div>
+          </div>
+          <div id="proxy-status-line" class="hint-text" style="margin-top: 10px;"></div>
+        </div>
+
+        <div class="table-responsive shadow-card">
+          <table class="grid">
+            <thead>
+              <tr>
+                <th style="width: 38%;">节点名称</th>
+                <th style="width: 12%;">类型</th>
+                <th style="width: 22%;">服务器</th>
+                <th style="width: 10%;">本地端口</th>
+                <th style="width: 8%;">启用</th>
+                <th style="width: 10%; text-align: right;">延迟</th>
+              </tr>
+            </thead>
+            <tbody id="proxy-rows"></tbody>
+          </table>
+
+          <div class="empty-state" id="proxy-empty" hidden>
+            <div class="empty-icon">
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
+            </div>
+            <h3>暂无代理节点</h3>
+            <p>填入 Clash 订阅地址并点击「导入」，之后可为每个账号单独指定节点。</p>
+          </div>
+        </div>
+
+        <div class="callout-box info" style="margin-top: 20px;">
+          <div class="callout-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+          </div>
+          <div class="callout-content">
+            <h4>工作方式</h4>
+            <p>程序会另起一个私有 mihomo 进程，为每个启用的节点开一个本地端口，账号按绑定各走各的节点；<strong>没有绑定节点的账号走系统默认网络</strong>（也就是你 Clash 当前选的节点）。不会修改你的 Clash Verge 配置。</p>
+          </div>
+        </div>
+      </section>
+
       <!-- 定时与风控设置面板 -->
       <section id="tab-settings" class="tab-panel">
         <div class="panel-header">
@@ -224,6 +301,17 @@
               </label>
               <div class="input-with-unit">
                 <input type="number" id="input-statuscheck" name="statusCheckMinutes" min="1" required />
+                <span class="unit">分钟</span>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="input-openpage-timeout">
+                <span class="label-title">“打开网页”窗口兜底超时 (分钟)</span>
+                <span class="label-desc">填 0 表示不限时，窗口一直开到你手动关闭；填正数则超时后自动关闭，避免忘记关窗导致该账号的调度一直挂着</span>
+              </label>
+              <div class="input-with-unit">
+                <input type="number" id="input-openpage-timeout" name="openPageTimeoutMinutes" min="0" required />
                 <span class="unit">分钟</span>
               </div>
             </div>
@@ -311,6 +399,30 @@
         </div>
         <div class="modal-footer">
           <button id="login-close" class="btn primary shadow full-width" hidden>完成并关闭</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 分组管理弹窗 -->
+    <div id="group-backdrop" class="backdrop modal-backdrop" hidden></div>
+    <div id="group-modal" class="modal" hidden>
+      <div class="modal-card shadow-card">
+        <div class="modal-header">
+          <div class="modal-icon-glow">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+          </div>
+          <h3>账号分组管理</h3>
+        </div>
+        <div class="modal-body" style="text-align: left;">
+          <div class="row" style="gap: 8px; margin-bottom: 14px;">
+            <input type="text" id="new-group-name" placeholder="新分组名称，例如：美国注册" style="flex: 1;" />
+            <button id="create-group" class="btn primary small">新建</button>
+          </div>
+          <div id="group-list"></div>
+          <p class="hint-text" style="margin-top: 12px;">删除分组不会删除账号，仅把组内账号变为「未分组」。</p>
+        </div>
+        <div class="modal-footer">
+          <button id="group-close" class="btn shadow full-width">关闭</button>
         </div>
       </div>
     </div>

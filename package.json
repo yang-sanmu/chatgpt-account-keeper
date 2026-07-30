@@ -10,10 +10,12 @@
     "start": "node src/server.js",
     "login": "node src/cli.js login",
     "run": "node src/cli.js run",
-    "once": "node src/cli.js once"
+    "once": "node src/cli.js once",
+    "test": "node --test"
   },
   "dependencies": {
     "express": "^4.22.2",
-    "playwright": "^1.49.0"
+    "playwright": "^1.49.0",
+    "yaml": "2.9.0"
   }
 }

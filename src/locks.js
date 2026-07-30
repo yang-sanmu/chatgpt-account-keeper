@@ -21,3 +21,24 @@ export function withAccountLock(accountId, fn) {
 export function isBusy(accountId) {
   return queues.has(accountId);
 }
+
+/**
+ * 「长期占用」标记：用户手动开着浏览器窗口时打上，关窗后清除。
+ *
+ * 放在这里而不是 openPage.js，是为了避免 statusMonitor ←→ openPage 循环导入
+ * （openPage 本来就要 import statusMonitor 写状态缓存）。
+ * 状态巡检据此跳过这些账号——它们的锁会被长期持有，排队等它没有意义。
+ */
+const heldAccounts = new Set();
+
+export function markHeld(accountId) {
+  heldAccounts.add(accountId);
+}
+
+export function releaseHeld(accountId) {
+  heldAccounts.delete(accountId);
+}
+
+export function isHeld(accountId) {
+  return heldAccounts.has(accountId);
+}

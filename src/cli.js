@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { loginAccount } from "./login.js";
 import { runOnce, scheduler } from "./scheduler.js";
-import { getAccounts, getAccount } from "./store.js";
+import { getAccounts, getAccount, getGroups, displayName } from "./store.js";
 import { recordConversation } from "./logger.js";
 import * as log from "./logger.js";
 
@@ -68,9 +68,13 @@ async function main() {
       break;
     }
     case "list": {
+      const groups = new Map(getGroups().map((g) => [g.id, g.name]));
       for (const a of getAccounts()) {
+        const parts = [displayName(a)];
+        if (a.groupId) parts.push(`组:${groups.get(a.groupId) ?? a.groupId}`);
+        if (a.proxyId) parts.push("代理:已绑定");
         console.log(
-          `${a.enabled ? "[✓]" : "[ ]"} ${a.id}  ${a.label}  -> ${a.profileDir}`
+          `${a.enabled ? "[✓]" : "[ ]"} ${a.id}  ${parts.join("  ")}  -> ${a.profileDir}`
         );
       }
       break;

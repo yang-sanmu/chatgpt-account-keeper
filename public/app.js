@@ -9,12 +9,18 @@ const $$ = (sel) => [...document.querySelectorAll(sel)];
 let accountsCache = [];
 let convCache = {};
 let historyCache = [];
+let groupsCache = [];
+let proxyCache = [];
+let proxyStatus = {};
+let proxyDelays = {}; // nodeId -> 延迟文本
 let currentDrawerAccountId = null;
 
 // Search & Filter State
 let accountSearchQuery = "";
 let accountStatusFilter = "all";
+let accountGroupFilter = "all";
 let topicSearchQuery = "";
+let proxySearchQuery = "";
 let historySearchQuery = "";
 let historyStatusFilter = "all";
 
@@ -128,18 +134,23 @@ function renderAccounts() {
   const tbody = $("#account-rows");
   tbody.innerHTML = "";
 
-  // 过滤账号
+  // 过滤账号：搜索 + 状态 + 分组，三者可叠加
   let filtered = accountsCache.filter((a) => {
     const q = accountSearchQuery.toLowerCase();
     const matchQuery = !q || (a.email && a.email.toLowerCase().includes(q)) || (a.note && a.note.toLowerCase().includes(q)) || a.id.toLowerCase().includes(q);
-    
+
     let matchFilter = true;
     if (accountStatusFilter === "enabled") matchFilter = a.enabled === true;
     else if (accountStatusFilter === "disabled") matchFilter = a.enabled === false;
-    else if (accountStatusFilter === "loggedin") matchFilter = a.loggedIn === true;
-    else if (accountStatusFilter === "loggedout") matchFilter = a.loggedIn === false;
+    else if (accountStatusFilter === "loggedin") matchFilter = a.state === "ok" || (a.state == null && a.loggedIn === true);
+    else if (accountStatusFilter === "reauth") matchFilter = a.state === "reauth";
+    else if (accountStatusFilter === "loggedout") matchFilter = a.state === "out" || (a.state == null && a.loggedIn === false);
 
-    return matchQuery && matchFilter;
+    let matchGroup = true;
+    if (accountGroupFilter === "none") matchGroup = !a.groupId;
+    else if (accountGroupFilter !== "all") matchGroup = a.groupId === accountGroupFilter;
+
+    return matchQuery && matchFilter && matchGroup;
   });
 
   $("#account-empty").hidden = filtered.length > 0;
@@ -166,12 +177,36 @@ function renderAccounts() {
           )}" placeholder="点击添加备注…" />
         </div>
       </td>
-      <td>${statusHtml(a.id, a.loggedIn, a.checkedAt)}</td>
+      <td>${statusHtml(a.id, a, a.checkedAt)}</td>
       <td>
         <label class="switch">
           <input type="checkbox" ${a.enabled ? "checked" : ""} data-enable="${a.id}" />
           <span class="slider round"></span>
         </label>
+      </td>
+      <td>
+        <div class="rot-config">
+          <select class="rot-select" data-group="${a.id}" title="所属分组">
+            <option value="" ${!a.groupId ? "selected" : ""}>未分组</option>
+            ${groupsCache
+              .map(
+                (g) =>
+                  `<option value="${g.id}" ${a.groupId === g.id ? "selected" : ""}>${escapeHtml(g.name)}</option>`
+              )
+              .join("")}
+          </select>
+          <select class="rot-select" data-proxy="${a.id}" title="定向代理节点">
+            <option value="" ${!a.proxyId ? "selected" : ""}>跟随系统</option>
+            ${proxyCache
+              .map(
+                (p) =>
+                  `<option value="${p.id}" ${a.proxyId === p.id ? "selected" : ""}>${escapeHtml(
+                    p.name
+                  )}${p.missing ? "（已失效）" : ""}</option>`
+              )
+              .join("")}
+          </select>
+        </div>
       </td>
       <td>
         <div class="rot-config">
@@ -190,8 +225,16 @@ function renderAccounts() {
       </td>
       <td>
         <div class="actions">
-          <button class="btn small" data-login="${a.id}" title="自动登录/刷新 Cookie">登录</button>
-          <button class="btn small" data-check="${a.id}" title="检查 Cookie 是否过保">刷新</button>
+          <button class="btn small" data-login="${a.id}" title="打开浏览器登录该账号">登录</button>
+          ${
+            a.state === "reauth"
+              ? `<button class="btn small warn" data-relogin="${a.id}" title="清除失效会话后重新登录，不必删除账号">重新登录</button>`
+              : ""
+          }
+          <button class="btn small" data-open="${a.id}" title="打开网页，窗口不会自动关闭">${
+            a.pageOpen ? "已打开" : "打开网页"
+          }</button>
+          <button class="btn small" data-check="${a.id}" title="立即检查登录状态">刷新</button>
           <button class="btn small primary" data-run="${a.id}" title="立即执行一轮对话">立即跑</button>
           <button class="btn small" data-history="${a.id}" title="查看对话日志">历史</button>
           <button class="btn small danger" data-del="${a.id}" title="删除此账号配置">删除</button>
@@ -203,23 +246,36 @@ function renderAccounts() {
   bindAccountActions();
 }
 
-function statusHtml(id, loggedIn, checkedAt) {
-  let dot = "", text = "未知";
-  if (loggedIn === true) { dot = "green"; text = "已登录"; }
-  else if (loggedIn === false) { dot = "red"; text = "未登录"; }
-
+function statusHtml(id, st, checkedAt) {
   const when = checkedAt
     ? `<span class="time-ago" title="${fmtLocal(checkedAt)}"> · ${timeAgo(checkedAt)}</span>`
     : "";
-
-  return `<span class="status-dot" data-status="${id}">
-    <span class="dot ${dot}"></span>
-    <span>${text}</span>
-    ${when}
-  </span>`;
+  return `<span class="status-dot" data-status="${id}">${statusInner(st)}${when}</span>`;
 }
 
-function statusInner(loggedIn) {
+/**
+ * 三态状态显示。reauth 是关键的一类：cookie 还在、看着像已登录，
+ * 但令牌已失效（改了密码或加了双重认证），必须重新登录才能跑对话。
+ */
+function statusInner(st) {
+  const state = st && typeof st === "object" ? st.state : null;
+  const loggedIn = st && typeof st === "object" ? st.loggedIn : st;
+  const detail = st && typeof st === "object" ? st.statusDetail || st.detail : null;
+
+  if (state === "reauth") {
+    return `<span class="dot orange"></span><span title="${escapeHtml(
+      detail || "令牌已失效"
+    )}">需重新登录</span>`;
+  }
+  // unknown：没能确认（网络抖动/限流）。不显示成“已登录”，避免误导。
+  if (state === "unknown") {
+    return `<span class="dot"></span><span title="${escapeHtml(
+      detail || "未能确认会话状态"
+    )}">待确认</span>`;
+  }
+  if (state === "ok") return `<span class="dot green"></span><span>已登录</span>`;
+  if (state === "out") return `<span class="dot red"></span><span>未登录</span>`;
+  // 无 state 字段时（旧缓存）退回布尔判断
   if (loggedIn === true) return `<span class="dot green"></span><span>已登录</span>`;
   if (loggedIn === false) return `<span class="dot red"></span><span>未登录</span>`;
   return `<span class="dot"></span><span>未知</span>`;
@@ -301,9 +357,74 @@ function bindAccountActions() {
     el.addEventListener("change", () => saveWindows(el.dataset.maxw))
   );
 
+  // 分组选择
+  $$("[data-group]").forEach((el) =>
+    el.addEventListener("change", async () => {
+      try {
+        await api(`/accounts/${el.dataset.group}`, {
+          method: "PATCH",
+          body: { groupId: el.value || null },
+        });
+        const acc = accountsCache.find((x) => x.id === el.dataset.group);
+        if (acc) acc.groupId = el.value || null;
+        toast("分组已更新", "success");
+        // 正在按分组过滤时，改完要重画（该行可能已不属于当前视图）
+        if (accountGroupFilter !== "all") renderAccounts();
+      } catch (e) {
+        toast("更新分组失败: " + e.message, "error");
+      }
+    })
+  );
+
+  // 代理节点选择
+  $$("[data-proxy]").forEach((el) =>
+    el.addEventListener("change", async () => {
+      try {
+        await api(`/accounts/${el.dataset.proxy}`, {
+          method: "PATCH",
+          body: { proxyId: el.value || null },
+        });
+        const acc = accountsCache.find((x) => x.id === el.dataset.proxy);
+        if (acc) acc.proxyId = el.value || null;
+        toast(el.value ? "已绑定代理节点" : "已改为跟随系统网络", "success");
+      } catch (e) {
+        toast("更新代理失败: " + e.message, "error");
+      }
+    })
+  );
+
   // 按钮事件
   $$("[data-login]").forEach((el) =>
     el.addEventListener("click", () => doLogin(el.dataset.login))
+  );
+
+  // 强制重新登录：清掉失效会话再登录，不必删账号
+  $$("[data-relogin]").forEach((el) =>
+    el.addEventListener("click", () => doLogin(el.dataset.relogin, true))
+  );
+
+  // 打开网页（不自动关闭）
+  $$("[data-open]").forEach((el) =>
+    el.addEventListener("click", async () => {
+      const id = el.dataset.open;
+      setBtnLoading(el, true, "打开中");
+      try {
+        const res = await api(`/accounts/${id}/open-page`, {
+          method: "POST",
+          body: {},
+        });
+        if (res.ok) {
+          toast("窗口已打开，用完请手动关闭浏览器窗口", "success");
+        } else {
+          toast(res.message || "打开失败", "error");
+        }
+        loadAccounts();
+      } catch (e) {
+        toast("打开失败: " + e.message, "error");
+      } finally {
+        setBtnLoading(el, false);
+      }
+    })
   );
 
   $$("[data-check]").forEach((el) =>
@@ -342,6 +463,126 @@ $("#account-status-filter").addEventListener("change", (e) => {
   renderAccounts();
 });
 
+$("#account-group-filter").addEventListener("change", (e) => {
+  accountGroupFilter = e.target.value;
+  renderAccounts();
+});
+
+// ---------- 分组管理 ----------
+async function loadGroups() {
+  try {
+    groupsCache = await api("/groups");
+    renderGroupFilter();
+  } catch (e) {
+    toast("加载分组失败: " + e.message, "error");
+  }
+}
+
+function renderGroupFilter() {
+  const sel = $("#account-group-filter");
+  const keep = accountGroupFilter;
+  sel.innerHTML =
+    `<option value="all">全部分组</option><option value="none">未分组</option>` +
+    groupsCache.map((g) => `<option value="${g.id}">${escapeHtml(g.name)}</option>`).join("");
+  // 分组被删掉时回退到“全部分组”
+  const exists = keep === "all" || keep === "none" || groupsCache.some((g) => g.id === keep);
+  sel.value = exists ? keep : "all";
+  accountGroupFilter = sel.value;
+}
+
+function renderGroupList() {
+  const box = $("#group-list");
+  if (groupsCache.length === 0) {
+    box.innerHTML = `<p class="hint-text">还没有分组，用上面的输入框新建一个。</p>`;
+    return;
+  }
+  box.innerHTML = groupsCache
+    .map((g) => {
+      const count = accountsCache.filter((a) => a.groupId === g.id).length;
+      return `<div class="row" style="gap:8px; align-items:center; margin-bottom:8px;">
+        <input type="text" data-gname="${g.id}" value="${escapeHtml(g.name)}" style="flex:1;" />
+        <span class="time-ago">${count} 个账号</span>
+        <button class="btn small" data-grename="${g.id}">改名</button>
+        <button class="btn small danger" data-gdel="${g.id}">删除</button>
+      </div>`;
+    })
+    .join("");
+
+  $$("[data-grename]").forEach((el) =>
+    el.addEventListener("click", async () => {
+      const id = el.dataset.grename;
+      const name = $(`[data-gname="${id}"]`).value.trim();
+      try {
+        await api(`/groups/${id}`, { method: "PATCH", body: { name } });
+        toast("分组已改名", "success");
+        await loadGroups();
+        renderGroupList();
+        renderAccounts();
+      } catch (e) {
+        toast("改名失败: " + e.message, "error");
+      }
+    })
+  );
+
+  $$("[data-gdel]").forEach((el) =>
+    el.addEventListener("click", async () => {
+      const id = el.dataset.gdel;
+      const g = groupsCache.find((x) => x.id === id);
+      const count = accountsCache.filter((a) => a.groupId === id).length;
+      if (
+        !confirm(
+          `确定删除分组「${g?.name ?? id}」？\n组内 ${count} 个账号会变为「未分组」，账号本身不会被删除。`
+        )
+      )
+        return;
+      try {
+        await api(`/groups/${id}`, { method: "DELETE" });
+        toast("分组已删除", "success");
+        await loadGroups();
+        await loadAccounts();
+        renderGroupList();
+      } catch (e) {
+        toast("删除失败: " + e.message, "error");
+      }
+    })
+  );
+}
+
+function openGroupModal() {
+  $("#group-backdrop").hidden = false;
+  $("#group-modal").hidden = false;
+  renderGroupList();
+}
+
+function closeGroupModal() {
+  $("#group-backdrop").hidden = true;
+  $("#group-modal").hidden = true;
+}
+
+$("#manage-groups").addEventListener("click", openGroupModal);
+$("#group-close").addEventListener("click", closeGroupModal);
+$("#group-backdrop").addEventListener("click", closeGroupModal);
+
+$("#create-group").addEventListener("click", async () => {
+  const input = $("#new-group-name");
+  const name = input.value.trim();
+  if (!name) return toast("请填写分组名称", "error");
+  try {
+    await api("/groups", { method: "POST", body: { name } });
+    input.value = "";
+    toast("分组已创建", "success");
+    await loadGroups();
+    renderGroupList();
+    renderAccounts();
+  } catch (e) {
+    toast("创建失败: " + e.message, "error");
+  }
+});
+
+$("#new-group-name").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") $("#create-group").click();
+});
+
 $("#add-account").addEventListener("click", async () => {
   const btn = $("#add-account");
   setBtnLoading(btn, true, "添加中");
@@ -372,13 +613,25 @@ async function checkStatus(id) {
   const span = $(`[data-status="${id}"]`);
   if (span) span.innerHTML = `<span class="dot"></span><span>检查中…</span>`;
   try {
-    const { loggedIn, email } = await api(`/accounts/${id}/status?refresh=1`);
-    if (span) span.innerHTML = statusInner(loggedIn);
-    updateEmailCell(id, email);
+    const res = await api(`/accounts/${id}/status?refresh=1`);
+    if (span) span.innerHTML = statusInner(res);
+    updateEmailCell(id, res.email);
     const acc = accountsCache.find((x) => x.id === id);
-    if (acc) { acc.loggedIn = loggedIn; acc.email = email; }
+    if (acc) {
+      acc.loggedIn = res.loggedIn;
+      acc.state = res.state;
+      acc.statusDetail = res.detail ?? null;
+      acc.email = res.email;
+    }
     updateStats();
-    toast("状态检测完成", "success");
+    if (res.skipped) {
+      toast("账号窗口正在使用，当前状态由该窗口自动更新");
+    } else if (res.state === "reauth") {
+      toast("该账号会话已失效，请点「重新登录」", "error");
+      renderAccounts(); // 让“重新登录”按钮出现
+    } else {
+      toast("状态检测完成", "success");
+    }
   } catch (e) {
     if (span) span.innerHTML = `<span class="dot red"></span><span>错误</span>`;
     toast("检查失败: " + e.message, "error");
@@ -395,21 +648,27 @@ function updateEmailCell(id, email) {
 async function pollStatus() {
   try {
     const all = await api("/status");
+    let stateChanged = false;
     for (const [id, st] of Object.entries(all)) {
       const span = $(`[data-status="${id}"]`);
       if (span) {
-        span.innerHTML = statusInner(st.loggedIn) +
+        span.innerHTML = statusInner(st) +
           (st.checkedAt ? `<span class="time-ago" title="${fmtLocal(st.checkedAt)}"> · ${timeAgo(st.checkedAt)}</span>` : "");
       }
       if (st.email) updateEmailCell(id, st.email);
 
       const acc = accountsCache.find((x) => x.id === id);
       if (acc) {
+        if (acc.state !== st.state) stateChanged = true;
         acc.loggedIn = st.loggedIn;
+        acc.state = st.state;
+        acc.statusDetail = st.detail ?? null;
         if (st.email) acc.email = st.email;
       }
     }
     updateStats();
+    // 有账号刚变成/脱离“需重新登录”，重画一次让按钮同步。
+    if (stateChanged) renderAccounts();
   } catch {
     // 轮询静默失败
   }
@@ -430,7 +689,7 @@ async function runNow(id) {
 }
 
 // ---------- 登录流程与 Step 指示器 ----------
-async function doLogin(id) {
+async function doLogin(id, force = false) {
   const modalBackdrop = $("#login-backdrop");
   const modal = $("#login-modal");
   const msg = $("#login-msg");
@@ -445,11 +704,13 @@ async function doLogin(id) {
   spinner.hidden = false;
   step2.className = "step-dot";
   step3.className = "step-dot";
-  msg.textContent = "正在启动浏览器并载入 ChatGPT 登录页…";
+  msg.textContent = force
+    ? "正在清除失效的登录态并载入登录页…"
+    : "正在启动浏览器并载入 ChatGPT 登录页…";
 
   let task;
   try {
-    task = await api(`/accounts/${id}/login`, { method: "POST" });
+    task = await api(`/accounts/${id}/login${force ? "?force=1" : ""}`, { method: "POST" });
   } catch (e) {
     msg.textContent = "启动登录失败: " + e.message;
     closeBtn.hidden = false;
@@ -753,6 +1014,186 @@ $("#add-set").addEventListener("click", async () => {
   }
 });
 
+// ---------- 代理节点 ----------
+async function loadProxies() {
+  try {
+    const data = await api("/proxies");
+    proxyCache = data.nodes ?? [];
+    proxyStatus = data.status ?? {};
+    $("#badge-proxy-count").textContent = proxyCache.filter((p) => !p.missing).length;
+    // 订阅 URL 含令牌，后端不回传原文。已配置时只把输入框标注为“已保存”，
+    // 留空即表示沿用已保存的地址（点“手动刷新订阅”会用它）。
+    const sub = proxyStatus.subscription;
+    const input = $("#proxy-sub-url");
+    if (sub?.configured) {
+      input.placeholder = `已保存（${sub.host}）· 留空刷新即沿用，填新地址则覆盖`;
+    } else {
+      input.placeholder = "https://example.com/subscribe?token=…";
+    }
+    renderProxyStatusLine();
+    renderProxies();
+  } catch (e) {
+    toast("加载代理节点失败: " + e.message, "error");
+  }
+}
+
+function renderProxyStatusLine() {
+  const el = $("#proxy-status-line");
+  const parts = [];
+  const sub = proxyStatus.subscription;
+  parts.push(
+    sub?.updatedAt
+      ? `订阅（${sub.host}）上次更新：${fmtLocal(sub.updatedAt)}`
+      : "尚未导入订阅"
+  );
+  parts.push(`启用节点：${proxyStatus.nodeCount ?? 0}`);
+  parts.push(`代理进程：${proxyStatus.running ? "运行中" : "未运行（有账号绑定时自动启动）"}`);
+  if (proxyStatus.mihomo && !proxyStatus.mihomo.found) {
+    parts.push("⚠ 未找到 mihomo 内核，请安装 Clash Verge 或放置 bin/mihomo.exe");
+  }
+  el.textContent = parts.join(" · ");
+}
+
+function renderProxies() {
+  const tbody = $("#proxy-rows");
+  tbody.innerHTML = "";
+
+  let list = proxyCache;
+  if (proxySearchQuery) {
+    const q = proxySearchQuery.toLowerCase();
+    list = list.filter((p) => (p.name || "").toLowerCase().includes(q));
+  }
+  $("#proxy-empty").hidden = list.length > 0;
+
+  for (const p of list) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>
+        <div class="acc-info-cell">
+          <div class="acc-email">${escapeHtml(p.name)}${
+            p.missing ? ' <span class="time-ago">(已不在订阅中)</span>' : ""
+          }</div>
+        </div>
+      </td>
+      <td><span class="hist-topic-badge">${escapeHtml(p.type || "-")}</span></td>
+      <td><span class="time-ago">${escapeHtml(p.server || "-")}${
+        p.port ? ":" + escapeHtml(p.port) : ""
+      }</span></td>
+      <td><span class="time-ago">${p.localPort ?? "-"}</span></td>
+      <td>
+        <label class="switch">
+          <input type="checkbox" ${p.enabled ? "checked" : ""} data-pxen="${p.id}" />
+          <span class="slider round"></span>
+        </label>
+      </td>
+      <td style="text-align:right;">
+        <span data-delay="${p.id}" class="time-ago">${proxyDelays[p.id] ?? ""}</span>
+        <button class="btn small" data-pxtest="${p.id}">测速</button>
+      </td>`;
+    tbody.appendChild(tr);
+  }
+
+  $$("[data-pxen]").forEach((el) =>
+    el.addEventListener("change", async () => {
+      try {
+        await api(`/proxies/${el.dataset.pxen}`, {
+          method: "PATCH",
+          body: { enabled: el.checked },
+        });
+        toast(el.checked ? "节点已启用" : "节点已停用", "success");
+        loadProxies();
+      } catch (e) {
+        toast("更新失败: " + e.message, "error");
+        el.checked = !el.checked;
+      }
+    })
+  );
+
+  $$("[data-pxtest]").forEach((el) =>
+    el.addEventListener("click", () => testProxy(el.dataset.pxtest, el))
+  );
+}
+
+async function testProxy(id, btn) {
+  const cell = $(`[data-delay="${id}"]`);
+  if (cell) cell.textContent = "测试中…";
+  if (btn) setBtnLoading(btn, true);
+  try {
+    const res = await api(`/proxies/${id}/test`, { method: "POST" });
+    const text = res.ok ? `${res.delay ?? "?"} ms` : "失败";
+    proxyDelays[id] = text;
+    if (cell) {
+      cell.textContent = text;
+      cell.title = res.ok ? "" : res.message || "";
+    }
+  } catch (e) {
+    proxyDelays[id] = "错误";
+    if (cell) {
+      cell.textContent = "错误";
+      cell.title = e.message;
+    }
+  } finally {
+    if (btn) setBtnLoading(btn, false);
+  }
+}
+
+$("#proxy-search").addEventListener("input", (e) => {
+  proxySearchQuery = e.target.value;
+  renderProxies();
+});
+
+$("#proxy-import").addEventListener("click", async () => {
+  const btn = $("#proxy-import");
+  const url = $("#proxy-sub-url").value.trim();
+  // 已保存过订阅时允许留空 => 走 refresh 沿用已存地址
+  if (!url) {
+    if (proxyStatus.subscription?.configured) return $("#proxy-refresh").click();
+    return toast("请填写订阅地址", "error");
+  }
+  setBtnLoading(btn, true, "导入中");
+  try {
+    const res = await api("/proxies/import", { method: "POST", body: { url } });
+    toast(`导入完成：${res.count} 个节点`, "success");
+    await loadProxies();
+    renderAccounts();
+  } catch (e) {
+    toast("导入失败: " + e.message, "error");
+  } finally {
+    setBtnLoading(btn, false);
+  }
+});
+
+$("#proxy-refresh").addEventListener("click", async () => {
+  const btn = $("#proxy-refresh");
+  setBtnLoading(btn, true, "刷新中");
+  try {
+    const res = await api("/proxies/refresh", { method: "POST" });
+    toast(`刷新完成：${res.count} 个节点`, "success");
+    await loadProxies();
+    renderAccounts();
+  } catch (e) {
+    toast("刷新失败: " + e.message, "error");
+  } finally {
+    setBtnLoading(btn, false);
+  }
+});
+
+// 逐个测速，避免一次性把所有节点全打一遍造成瞬时压力。
+$("#proxy-test-all").addEventListener("click", async () => {
+  const btn = $("#proxy-test-all");
+  const targets = proxyCache.filter((p) => p.enabled && !p.missing);
+  if (targets.length === 0) return toast("没有可测试的启用节点", "error");
+  setBtnLoading(btn, true, "测试中");
+  try {
+    for (const p of targets) {
+      await testProxy(p.id, null);
+    }
+    toast("全部测试完成", "success");
+  } finally {
+    setBtnLoading(btn, false);
+  }
+});
+
 // ---------- 定时与风控设置 ----------
 async function loadSettings() {
   try {
@@ -761,6 +1202,7 @@ async function loadSettings() {
     f.intervalMinutes.value = s.intervalMinutes;
     f.jitterMinutes.value = s.jitterMinutes;
     f.statusCheckMinutes.value = s.statusCheckMinutes;
+    f.openPageTimeoutMinutes.value = s.openPageTimeoutMinutes ?? 0;
     f.headless.checked = !!s.headless;
   } catch (e) {
     toast("加载设置失败: " + e.message, "error");
@@ -780,6 +1222,7 @@ $("#settings-form").addEventListener("submit", async (e) => {
         intervalMinutes: Number(f.intervalMinutes.value),
         jitterMinutes: Number(f.jitterMinutes.value),
         statusCheckMinutes: Number(f.statusCheckMinutes.value),
+        openPageTimeoutMinutes: Number(f.openPageTimeoutMinutes.value) || 0,
         headless: f.headless.checked,
       },
     });
@@ -838,12 +1281,15 @@ window.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
     closeDrawer();
     closeLoginModal();
+    closeGroupModal();
   }
 });
 
 // ---------- 初始化 ----------
 async function init() {
   await loadConversations();
+  await loadGroups();
+  await loadProxies();
   await loadAccounts();
   loadSettings();
   loadScheduler();

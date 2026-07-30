@@ -5,23 +5,9 @@ import { getAccounts, getAccount, getSettings, displayName } from "./store.js";
 import { selectSetForAccount, commitWindow } from "./rotation.js";
 import { withAccountLock } from "./locks.js";
 import { recordConversation } from "./logger.js";
+import { checkSession, SESSION_OK, SESSION_REAUTH, SESSION_UNKNOWN } from "./health.js";
+import { setCachedStatus } from "./statusMonitor.js";
 import * as log from "./logger.js";
-
-// 登录判定的真相来源：ChatGPT /api/auth/session 返回带 email 的用户。
-async function sessionEmail(page) {
-  try {
-    const data = await page.evaluate(async () => {
-      const res = await fetch("/api/auth/session", {
-        headers: { accept: "application/json" },
-      });
-      if (!res.ok) return null;
-      return res.json();
-    });
-    return data?.user?.email ?? null;
-  } catch {
-    return null;
-  }
-}
 
 function secureRandom() {
   try {
@@ -52,13 +38,29 @@ export async function runOnce(account, opts = {}) {
     }
     const { setName, set } = picked;
 
-    const { context, page } = await launchForAccount(account, {
+    const { context, page } = await launchForAccount(fresh, {
       headless: opts.headless ?? true,
     });
     try {
       await page.goto(selectors.url, { waitUntil: "domcontentloaded" });
-      const email = await sessionEmail(page);
-      if (!email) return { ok: false, reason: "未登录，请先登录该账号" };
+      // 会话健康检查：只看 email 会把“令牌已失效”的账号误判为已登录，
+      // 结果白跑一轮浏览器最后死在“找不到输入框”。这里直接快速失败并说清原因。
+      const health = await checkSession(page);
+      setCachedStatus(account.id, health.state, health.email, health.detail);
+      if (health.state === SESSION_REAUTH) {
+        return {
+          ok: false,
+          reason: `会话已失效（${health.detail ?? "需重新登录"}），请点“重新登录”`,
+          needReauth: true,
+        };
+      }
+      if (health.state === SESSION_UNKNOWN) {
+        // 没能确认会话状态（网络抖动/限流）。不因此跳过本轮——真跑不动会在
+        // 后面发消息时失败并记下原因；但状态缓存里保持 unknown，不谎称已登录。
+        log.warn(`「${name}」${health.detail ?? "会话状态未确认"}，仍尝试继续`);
+      } else if (health.state !== SESSION_OK) {
+        return { ok: false, reason: "未登录，请先登录该账号" };
+      }
       log.info(`「${name}」开始 agent 对话，主题「${set.topic}」(${setName})`);
       const result = await runAgent(page, selectors, set);
       log.info(`「${name}」完成 ${result.totalRounds ?? 0} 轮对话`);

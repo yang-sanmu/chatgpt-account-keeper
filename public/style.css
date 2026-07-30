@@ -365,6 +365,15 @@ body {
   background: rgba(239, 68, 68, 0.25);
 }
 
+.btn.warn {
+  background: var(--color-warning-bg);
+  color: var(--color-warning);
+  border-color: rgba(245, 158, 11, 0.3);
+}
+.btn.warn:hover {
+  background: rgba(245, 158, 11, 0.25);
+}
+
 .btn.small {
   padding: 5px 10px;
   font-size: 12px;
@@ -587,6 +596,11 @@ body {
 .dot.red {
   background: var(--color-danger);
   box-shadow: 0 0 6px var(--color-danger);
+}
+/* 会话仍在但令牌已失效：需要重新登录 */
+.dot.orange {
+  background: var(--color-warning);
+  box-shadow: 0 0 6px var(--color-warning);
 }
 
 .time-ago {

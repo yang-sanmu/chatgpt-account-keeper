@@ -5,6 +5,7 @@ import { fromRoot, ensureDir } from "./paths.js";
 const ACCOUNTS_FILE = fromRoot("config/accounts.json");
 const CONV_FILE = fromRoot("config/conversations.json");
 const SETTINGS_FILE = fromRoot("config/settings.json");
+const GROUPS_FILE = fromRoot("config/groups.json");
 
 function readJsonFile(file, fallback) {
   try {
@@ -27,6 +28,9 @@ function normalizeAccount(a) {
     switchRule: "random",
     minWindows: 1,
     maxWindows: 3,
+    // 分组与定向代理都允许为空：空 = 未分组 / 跟随系统网络
+    groupId: null,
+    proxyId: null,
     ...rest,
     rotation: a.rotation ?? { currentSet: null, windowsDone: 0, windowsTarget: 0 },
   };
@@ -59,6 +63,8 @@ function slugId() {
 export function addAccount({
   note = "",
   proxy = null,
+  groupId = null,
+  proxyId = null,
   switchRule = "random",
   minWindows = 1,
   maxWindows = 3,
@@ -72,6 +78,8 @@ export function addAccount({
     gptName: null,
     profileDir: `profiles/${id}`,
     proxy,
+    groupId, // 所属分组，null = 未分组
+    proxyId, // 定向代理节点，null = 跟随系统网络
     enabled: true,
     // 主题轮换规则：在所有会话集之间动态切换
     switchRule, // "random" | "sequential"
@@ -104,6 +112,71 @@ export function removeAccount(id) {
   return true;
 }
 
+// ---------- groups (账号分组) ----------
+// 分组只是给账号加个可筛选的标签，允许为空（账号可以不属于任何分组）。
+
+export function getGroups() {
+  const data = readJsonFile(GROUPS_FILE, { groups: [] });
+  return Array.isArray(data.groups) ? data.groups : [];
+}
+
+function saveGroups(groups) {
+  writeJsonFile(GROUPS_FILE, { groups });
+}
+
+// 用户输入不合法：标记为 badRequest，让 API 层答 400 而不是 500。
+function badRequest(msg) {
+  const e = new Error(msg);
+  e.badRequest = true;
+  return e;
+}
+
+export function addGroup(name) {
+  const clean = String(name ?? "").trim();
+  if (!clean) throw badRequest("分组名称不能为空");
+  const groups = getGroups();
+  if (groups.some((g) => g.name === clean)) throw badRequest("分组名称已存在");
+  const arr = new Uint32Array(2);
+  globalThis.crypto.getRandomValues(arr);
+  const group = { id: "grp_" + arr[0].toString(36) + arr[1].toString(36), name: clean };
+  groups.push(group);
+  saveGroups(groups);
+  return group;
+}
+
+export function renameGroup(id, name) {
+  const clean = String(name ?? "").trim();
+  if (!clean) throw badRequest("分组名称不能为空");
+  const groups = getGroups();
+  const g = groups.find((x) => x.id === id);
+  if (!g) return null;
+  if (groups.some((x) => x.name === clean && x.id !== id)) throw badRequest("分组名称已存在");
+  g.name = clean;
+  saveGroups(groups);
+  return g;
+}
+
+/**
+ * 删除分组。只解绑成员账号（groupId 置空），不动账号本身。
+ */
+export function removeGroup(id) {
+  const groups = getGroups();
+  const next = groups.filter((g) => g.id !== id);
+  if (next.length === groups.length) return false;
+  saveGroups(next);
+
+  const accounts = getAccounts();
+  let touched = false;
+  for (const a of accounts) {
+    if (a.groupId === id) {
+      a.groupId = null;
+      touched = true;
+    }
+  }
+  if (touched) saveAccounts(accounts);
+  return true;
+}
+
 // ---------- conversations ----------
 export function getConversations() {
   const data = readJsonFile(CONV_FILE, { sets: {} });
@@ -131,6 +204,8 @@ const DEFAULT_SETTINGS = {
   jitterMinutes: 30,
   headless: true,
   statusCheckMinutes: 15,
+  // “打开网页”窗口的兜底自动关闭时间（分钟）。0 = 不限时，由用户手动关闭。
+  openPageTimeoutMinutes: 0,
 };
 
 export function getSettings() {

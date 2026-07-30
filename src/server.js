@@ -3,6 +3,8 @@ import { fromRoot } from "./paths.js";
 import * as store from "./store.js";
 import { runOnce, scheduler } from "./scheduler.js";
 import { startLogin, getLoginTask } from "./loginProvider.js";
+import { openPageForAccount, closePageForAccount, getOpenPages } from "./openPage.js";
+import * as proxies from "./proxyManager.js";
 import {
   getAllCachedStatus,
   getCachedStatus,
@@ -17,26 +19,41 @@ const app = express();
 app.use(express.json());
 app.use(express.static(fromRoot("public")));
 
-// 统一包裹异步处理，把异常转成 500 JSON。
+// 校验类错误（用户输入不合法）应答 400 且不打堆栈，避免日志被正常的表单校验刷满。
+class BadRequest extends Error {}
+
 const wrap = (fn) => (req, res) =>
   Promise.resolve(fn(req, res)).catch((e) => {
+    const msg = String(e.message || e);
+    if (e instanceof BadRequest || e?.badRequest) {
+      log.warn(msg);
+      return res.status(400).json({ error: msg });
+    }
     log.error(String(e.stack || e));
-    res.status(500).json({ error: String(e.message || e) });
+    res.status(500).json({ error: msg });
   });
 
 // ---------- 账号 ----------
 // 账号列表附带缓存的登录状态，前端刷新即可显示实时状态。
 app.get("/api/accounts", wrap(async (req, res) => {
+  const open = getOpenPages();
   const accounts = store.getAccounts().map((a) => {
     const st = getCachedStatus(a.id);
-    return { ...a, loggedIn: st.loggedIn, checkedAt: st.checkedAt };
+    return {
+      ...a,
+      state: st.state,
+      loggedIn: st.loggedIn,
+      statusDetail: st.detail ?? null,
+      checkedAt: st.checkedAt,
+      pageOpen: !!open[a.id],
+    };
   });
   res.json(accounts);
 }));
 
 app.post("/api/accounts", wrap(async (req, res) => {
-  const { note, proxy } = req.body ?? {};
-  const acc = store.addAccount({ note, proxy });
+  const { note, proxy, groupId, proxyId } = req.body ?? {};
+  const acc = store.addAccount({ note, proxy, groupId, proxyId });
   res.json(acc);
 }));
 
@@ -60,12 +77,22 @@ app.get("/api/accounts/:id/status", wrap(async (req, res) => {
     const result = await refreshAccount(acc);
     return res.json({
       id: acc.id,
+      state: result.state,
       loggedIn: result.loggedIn,
       email: result.email ?? null,
+      detail: result.detail ?? null,
+      skipped: !!result.skipped,
     });
   }
   const st = getCachedStatus(acc.id);
-  res.json({ id: acc.id, loggedIn: st.loggedIn, email: st.email, checkedAt: st.checkedAt });
+  res.json({
+    id: acc.id,
+    state: st.state,
+    loggedIn: st.loggedIn,
+    email: st.email,
+    detail: st.detail ?? null,
+    checkedAt: st.checkedAt,
+  });
 }));
 
 // 所有账号的缓存状态（前端轮询用）。
@@ -74,11 +101,76 @@ app.get("/api/status", wrap(async (req, res) => {
 }));
 
 // ---------- 登录 ----------
+// force=1 时先清掉旧会话再登录。用于改过密码/加过双重认证的账号：
+// 旧 cookie 会让程序误判“已登录”并秒关窗口，清掉才能真正看到登录页。
 app.post("/api/accounts/:id/login", wrap(async (req, res) => {
   const acc = store.getAccount(req.params.id);
   if (!acc) return res.status(404).json({ error: "账号不存在" });
-  const task = await startLogin(acc);
+  const force = req.query.force === "1" || req.body?.force === true;
+  const task = await startLogin(acc, { force });
   res.json(task);
+}));
+
+// ---------- 打开网页（不自动关闭，由用户手动关） ----------
+app.post("/api/accounts/:id/open-page", wrap(async (req, res) => {
+  const acc = store.getAccount(req.params.id);
+  if (!acc) return res.status(404).json({ error: "账号不存在" });
+  const result = await openPageForAccount(acc, req.body?.url);
+  res.json(result);
+}));
+
+app.post("/api/accounts/:id/close-page", wrap(async (req, res) => {
+  const ok = await closePageForAccount(req.params.id);
+  res.json({ ok });
+}));
+
+app.get("/api/open-pages", wrap(async (req, res) => {
+  res.json(getOpenPages());
+}));
+
+// ---------- 分组 ----------
+app.get("/api/groups", wrap(async (req, res) => {
+  res.json(store.getGroups());
+}));
+
+app.post("/api/groups", wrap(async (req, res) => {
+  res.json(store.addGroup(req.body?.name));
+}));
+
+app.patch("/api/groups/:id", wrap(async (req, res) => {
+  const g = store.renameGroup(req.params.id, req.body?.name);
+  if (!g) return res.status(404).json({ error: "分组不存在" });
+  res.json(g);
+}));
+
+app.delete("/api/groups/:id", wrap(async (req, res) => {
+  const ok = store.removeGroup(req.params.id);
+  if (!ok) return res.status(404).json({ error: "分组不存在" });
+  res.json({ ok: true });
+}));
+
+// ---------- 代理节点 ----------
+app.get("/api/proxies", wrap(async (req, res) => {
+  res.json({ nodes: proxies.getNodes(), status: proxies.status() });
+}));
+
+// 只有这里和 /refresh 会真的去拉订阅，不存在自动刷新。
+app.post("/api/proxies/import", wrap(async (req, res) => {
+  res.json(await proxies.importSubscription(req.body?.url));
+}));
+
+app.post("/api/proxies/refresh", wrap(async (req, res) => {
+  res.json(await proxies.refreshSubscription());
+}));
+
+app.patch("/api/proxies/:id", wrap(async (req, res) => {
+  const n = await proxies.setNodeEnabled(req.params.id, req.body?.enabled);
+  if (!n) return res.status(404).json({ error: "节点不存在" });
+  res.json(n);
+}));
+
+app.post("/api/proxies/:id/test", wrap(async (req, res) => {
+  res.json(await proxies.testNode(req.params.id));
 }));
 
 app.get("/api/login-tasks/:taskId", wrap(async (req, res) => {
@@ -144,7 +236,11 @@ app.get("/api/accounts/:id/history", wrap(async (req, res) => {
 }));
 
 const PORT = process.env.PORT || 5173;
-app.listen(PORT, () => {
-  log.info(`GPT 账号管理面板已启动: http://localhost:${PORT}`);
+// 只监听本机回环地址：面板没有任何鉴权，且能操作已登录的 ChatGPT 会话、
+// 读写代理节点配置。绑 0.0.0.0 会让同网段的人直接接管这些账号。
+// 确实要在别的机器访问，请自行加鉴权后再改 HOST。
+const HOST = process.env.HOST || "127.0.0.1";
+app.listen(PORT, HOST, () => {
+  log.info(`GPT 账号管理面板已启动: http://${HOST}:${PORT}`);
   startStatusMonitor(); // 后台定时检查各账号登录状态
 });

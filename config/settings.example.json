@@ -2,5 +2,6 @@
   "intervalMinutes": 180,
   "jitterMinutes": 30,
   "headless": true,
-  "statusCheckMinutes": 15
+  "statusCheckMinutes": 15,
+  "openPageTimeoutMinutes": 0
 }

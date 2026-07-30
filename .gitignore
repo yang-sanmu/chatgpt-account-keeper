@@ -8,6 +8,15 @@ profiles/
 config/accounts.json
 config/settings.json
 
+# 敏感：代理节点含服务器地址与密码，泄露即节点被盗用
+config/proxies.json
+
+# 账号分组（个人运行时数据）
+config/groups.json
+
+# 代理边车运行时目录（自动生成的 mihomo 配置与缓存）
+.mihomo/
+
 # 个人会话内容（运行时数据，用 .example 做模板）
 config/conversations.json
 

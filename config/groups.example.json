@@ -1,0 +1,7 @@
+{
+  "_comment": "账号分组。分组只是给账号加个可筛选的标签，账号可以不属于任何分组（groupId 为 null）。删除分组不会删除账号。",
+  "groups": [
+    { "id": "grp_example_us", "name": "美国注册" },
+    { "id": "grp_example_kr", "name": "韩国注册" }
+  ]
+}

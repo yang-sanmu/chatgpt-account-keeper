@@ -5,6 +5,8 @@
       "note": "示例账号（备注可选）",
       "profileDir": "profiles/acc_example",
       "proxy": null,
+      "groupId": null,
+      "proxyId": null,
       "enabled": true,
       "email": null,
       "gptName": null,

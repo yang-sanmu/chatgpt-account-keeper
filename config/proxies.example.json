@@ -1,0 +1,25 @@
+{
+  "_comment": "代理节点。正常由面板「代理节点」页填订阅地址导入生成，一般不需要手写。nodes[].raw 就是 Clash 节点原文（会传给 mihomo）。",
+  "subscription": {
+    "url": "https://example.com/subscribe?token=YOUR_TOKEN",
+    "updatedAt": "2026-01-01T00:00:00.000Z"
+  },
+  "mihomoPath": null,
+  "nodes": [
+    {
+      "id": "px_example",
+      "name": "[anytls]🇺🇸 示例节点",
+      "enabled": true,
+      "missing": false,
+      "raw": {
+        "name": "[anytls]🇺🇸 示例节点",
+        "type": "anytls",
+        "server": "node.example.com",
+        "port": 12345,
+        "password": "YOUR_NODE_PASSWORD",
+        "udp": true,
+        "skip-cert-verify": true
+      }
+    }
+  ]
+}

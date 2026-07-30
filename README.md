@@ -105,7 +105,7 @@ npm start
 不会重启或打断承载账号流量的主边车。
 Playwright 按账号连不同端口。**不会修改你的 Clash Verge 配置**。
 
-需要 mihomo 内核，按以下顺序自动查找：`config/proxies.json` 里的 `mihomoPath` → 项目 `bin/mihomo.exe` → Clash Verge 安装目录（`verge-mihomo.exe`）。找不到时会明确报错，不会静默直连。
+需要 mihomo 内核。“代理节点”页可配置 **Clash Verge 安装目录**，默认是 `C:\Program Files\Clash Verge`。程序优先检查该目录，随后检查项目 `bin/`、Windows 环境目录、`PATH` 和 Clash Verge / Clash Verge Rev 的安装注册信息。旧配置中的 `mihomoPath` 会继续兼容；用户在页面保存安装目录后，新目录会明确接管该旧覆盖项。找不到时会明确报错，不会静默直连。
 
 若分组绑定的节点已停用或已不在订阅中，组内账号会直接拒绝启动并提示，而不是悄悄用错误的出口 IP 访问。
 

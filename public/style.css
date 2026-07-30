@@ -863,6 +863,30 @@ input:checked + .slider:before {
   max-width: 680px;
 }
 
+.proxy-config-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.proxy-config-row input {
+  flex: 1;
+  min-width: 0;
+  padding: 9px 12px;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+  transition: var(--transition-fast);
+}
+
+.proxy-config-row input:focus {
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+}
+
 .storage-card {
   margin-top: 20px;
   max-width: 920px;
@@ -1458,6 +1482,15 @@ input:checked + .slider:before {
 
   .profile-summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .proxy-config-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .proxy-config-row .btn {
+    width: 100%;
   }
 }
 

@@ -258,6 +258,10 @@ app.post("/api/proxies/refresh", wrap(async (req, res) => {
   res.json(await proxies.refreshSubscription());
 }));
 
+app.put("/api/proxies/settings", wrap(async (req, res) => {
+  res.json(await proxies.setClashVergeDirectory(req.body?.clashVergeDir));
+}));
+
 app.post("/api/proxies/test-all", wrap(async (req, res) => {
   res.json(await proxies.testAllNodes());
 }));

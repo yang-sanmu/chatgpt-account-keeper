@@ -1295,6 +1295,11 @@ async function loadProxies() {
     } else {
       input.placeholder = "https://example.com/subscribe?token=…";
     }
+    const vergeDirInput = $("#proxy-verge-dir");
+    if (document.activeElement !== vergeDirInput) {
+      vergeDirInput.value =
+        proxyStatus.clashVergeDir || "C:\\Program Files\\Clash Verge";
+    }
     renderProxyStatusLine();
     renderProxies();
   } catch (e) {
@@ -1315,7 +1320,7 @@ function renderProxyStatusLine() {
   parts.push(`分组使用：${proxyStatus.routedNodeCount ?? 0}`);
   parts.push(`代理进程：${proxyStatus.running ? "运行中" : "未运行（有账号绑定时自动启动）"}`);
   if (proxyStatus.mihomo && !proxyStatus.mihomo.found) {
-    parts.push("⚠ 未找到 mihomo 内核，请安装 Clash Verge 或放置 bin/mihomo.exe");
+    parts.push("⚠ 未找到 mihomo 内核，请修改上方 Clash Verge 安装目录");
   }
   el.textContent = parts.join(" · ");
 }
@@ -1426,6 +1431,32 @@ $("#proxy-import").addEventListener("click", async () => {
     toast("导入失败: " + e.message, "error");
   } finally {
     setBtnLoading(btn, false);
+  }
+});
+
+$("#proxy-verge-save").addEventListener("click", async () => {
+  const button = $("#proxy-verge-save");
+  const clashVergeDir = $("#proxy-verge-dir").value.trim();
+  setBtnLoading(button, true, "保存中");
+  try {
+    const result = await api("/proxies/settings", {
+      method: "PUT",
+      body: { clashVergeDir },
+    });
+    if (
+      result.runtime?.running === false &&
+      result.runtime?.reason &&
+      result.runtime.reason !== "没有启用的代理节点"
+    ) {
+      toast("目录已保存，但代理启动失败: " + result.runtime.reason, "error");
+    } else {
+      toast("Clash Verge 安装目录已保存，mihomo 内核已找到", "success");
+    }
+    await loadProxies();
+  } catch (e) {
+    toast("保存失败: " + e.message, "error");
+  } finally {
+    setBtnLoading(button, false);
   }
 });
 

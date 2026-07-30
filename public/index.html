@@ -221,9 +221,19 @@
               <span class="label-title">Clash 订阅地址</span>
               <span class="label-desc">导入后节点仅在你点击“导入”或“手动刷新订阅”时才会更新，不会自动刷新</span>
             </label>
-            <div class="row" style="gap: 8px; align-items: center;">
-              <input type="text" id="proxy-sub-url" placeholder="https://example.com/subscribe?token=…" style="flex: 1;" />
+            <div class="proxy-config-row">
+              <input type="text" id="proxy-sub-url" placeholder="https://example.com/subscribe?token=…" />
               <button id="proxy-import" class="btn primary small">导入</button>
+            </div>
+          </div>
+          <div class="form-group" style="margin-top: 18px;">
+            <label for="proxy-verge-dir">
+              <span class="label-title">Clash Verge 安装目录</span>
+              <span class="label-desc">默认 C:\Program Files\Clash Verge；如果安装在其他位置，请填写包含 verge-mihomo.exe 或 mihomo.exe 的文件夹</span>
+            </label>
+            <div class="proxy-config-row">
+              <input type="text" id="proxy-verge-dir" placeholder="C:\Program Files\Clash Verge" />
+              <button id="proxy-verge-save" class="btn small">保存目录</button>
             </div>
           </div>
           <div id="proxy-status-line" class="hint-text" style="margin-top: 10px;"></div>

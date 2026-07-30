@@ -10,6 +10,11 @@ import {
   mergeProxyNodes,
   selectRuntimeProxyNodes,
 } from "./proxyUtils.js";
+import {
+  findMihomoExecutable,
+  findMihomoInDirectory,
+  validateMihomoExecutable,
+} from "./mihomoLocator.js";
 import * as log from "./logger.js";
 
 /**
@@ -34,15 +39,7 @@ const BASE_PORT = 21000;
 const API_PORT = 21999;
 // 测速使用完全独立的 mihomo，绝不重启承载账号流量的主边车。
 const TEST_API_PORT = 20999;
-
-// mihomo 可执行文件候选位置：优先项目自带，其次 Clash Verge 安装目录。
-const MIHOMO_CANDIDATES = [
-  fromRoot("bin/mihomo.exe"),
-  fromRoot("bin/verge-mihomo.exe"),
-  "C:\\Program Files\\Clash Verge\\verge-mihomo.exe",
-  "C:\\Program Files\\Clash Verge\\verge-mihomo-alpha.exe",
-  "C:\\Program Files (x86)\\Clash Verge\\verge-mihomo.exe",
-];
+export const DEFAULT_CLASH_VERGE_DIR = "C:\\Program Files\\Clash Verge";
 
 // 用户输入不合法：标记 badRequest，API 层答 400 而不是 500。
 function badRequest(msg) {
@@ -58,15 +55,30 @@ function readStore() {
       subscription: data.subscription ?? null,
       nodes: Array.isArray(data.nodes) ? data.nodes : [],
       mihomoPath: data.mihomoPath ?? null,
+      clashVergeDir: data.clashVergeDir ?? DEFAULT_CLASH_VERGE_DIR,
     };
   } catch {
-    return { subscription: null, nodes: [], mihomoPath: null };
+    return {
+      subscription: null,
+      nodes: [],
+      mihomoPath: null,
+      clashVergeDir: DEFAULT_CLASH_VERGE_DIR,
+    };
   }
 }
 
 function writeStore(data) {
   ensureDir(fromRoot("config"));
   fs.writeFileSync(PROXIES_FILE, JSON.stringify(data, null, 2), "utf8");
+}
+
+export function withClashVergeDirectory(store, directory) {
+  return {
+    ...store,
+    clashVergeDir: directory,
+    // 页面配置是当前明确选择，不能再被旧版隐藏字段覆盖。
+    mihomoPath: null,
+  };
 }
 
 // ---------- 对外：节点数据 ----------
@@ -125,16 +137,62 @@ export function getMihomoInfo() {
 }
 
 function resolveMihomo() {
-  const { mihomoPath } = readStore();
-  const list = mihomoPath ? [mihomoPath, ...MIHOMO_CANDIDATES] : MIHOMO_CANDIDATES;
-  for (const p of list) {
-    try {
-      if (p && fs.existsSync(p)) return p;
-    } catch {
-      // 忽略无权限路径
-    }
+  const { mihomoPath, clashVergeDir } = readStore();
+  return findMihomoExecutable({
+    configuredPath: mihomoPath,
+    configuredInstallDir: clashVergeDir,
+    projectRoot: fromRoot("."),
+  });
+}
+
+export async function setClashVergeDirectory(value) {
+  let directory = String(value ?? "").trim();
+  if (
+    (directory.startsWith('"') && directory.endsWith('"')) ||
+    (directory.startsWith("'") && directory.endsWith("'"))
+  ) {
+    directory = directory.slice(1, -1).trim();
   }
-  return null;
+  if (!directory) directory = DEFAULT_CLASH_VERGE_DIR;
+
+  const executable = findMihomoInDirectory(directory, {
+    projectRoot: fromRoot("."),
+  });
+  if (!executable) {
+    throw badRequest(
+      "该目录中未找到 mihomo 内核，请选择包含 verge-mihomo.exe 或 mihomo.exe 的 Clash Verge 安装目录"
+    );
+  }
+
+  const validation = validateMihomoExecutable(executable);
+  if (!validation.ok) {
+    throw badRequest(`找到的文件无法作为 mihomo 内核运行：${validation.message}`);
+  }
+
+  // 配置写入与进程切换共用生命周期队列，避免两个快速保存请求交叉停启。
+  return runLifecycleTransition(async () => {
+    writeStore(withClashVergeDirectory(readStore(), directory));
+
+    let runtime;
+    try {
+      runtime = await ensureRunningUnlocked();
+    } catch (error) {
+      const reason = String(error?.message || error);
+      log.warn("Clash Verge 目录已保存，但代理边车启动失败: " + reason);
+      runtime = { running: false, reason };
+    }
+
+    const activeExecutable = resolveMihomo();
+    return {
+      clashVergeDir: directory,
+      mihomo: {
+        path: activeExecutable,
+        found: !!activeExecutable,
+        version: validation.version,
+      },
+      runtime,
+    };
+  });
 }
 
 // ---------- 订阅导入 ----------
@@ -200,6 +258,7 @@ export async function importSubscription(url) {
     subscription: { url: target, updatedAt: new Date().toISOString() },
     nodes,
     mihomoPath: prev.mihomoPath,
+    clashVergeDir: prev.clashVergeDir,
   });
 
   log.info(`订阅导入完成：${nodes.filter((n) => !n.missing).length} 个节点`);
@@ -229,7 +288,13 @@ export async function setNodeEnabled(id, enabled) {
 }
 
 export async function clearNodes() {
-  writeStore({ subscription: null, nodes: [], mihomoPath: readStore().mihomoPath });
+  const previous = readStore();
+  writeStore({
+    subscription: null,
+    nodes: [],
+    mihomoPath: previous.mihomoPath,
+    clashVergeDir: previous.clashVergeDir,
+  });
   await runLifecycleTransition(() => stopAndWait());
 }
 
@@ -339,17 +404,17 @@ async function ensureRunningUnlocked() {
     return { running: false, reason: "没有启用的代理节点" };
   }
 
-  const fingerprint = JSON.stringify(cfg);
-  if (child && !child.killed && currentFingerprint === fingerprint) {
-    return { running: true, nodes: cfg.listeners.length, reused: true };
-  }
-
   const bin = resolveMihomo();
   if (!bin) {
     // 明确报错而不是静默直连：否则账号会以为在走代理，其实是裸奔。
     throw new Error(
-      "找不到 mihomo 可执行文件。请安装 Clash Verge，或把 mihomo.exe 放到项目 bin/ 目录"
+      "找不到可独立启动的 mihomo 内核。请到“代理节点”页修改 Clash Verge 安装目录；若使用便携版，也可把 mihomo.exe 放到项目 bin/ 目录"
     );
+  }
+  const executableKey = process.platform === "win32" ? bin.toLowerCase() : bin;
+  const fingerprint = JSON.stringify({ config: cfg, executable: executableKey });
+  if (child && !child.killed && currentFingerprint === fingerprint) {
+    return { running: true, nodes: cfg.listeners.length, reused: true };
   }
 
   ensureDir(RUNTIME_DIR);
@@ -365,6 +430,15 @@ async function ensureRunningUnlocked() {
     windowsHide: true,
   });
   child = proc;
+  let spawnError = null;
+  proc.once("error", (error) => {
+    spawnError = error;
+    log.warn("mihomo 进程无法启动: " + String(error?.message || error));
+    if (child === proc) {
+      child = null;
+      currentFingerprint = null;
+    }
+  });
   proc.stdout.on("data", (b) => {
     const s = String(b).trim();
     if (s) log.info("[mihomo] " + s.split("\n").slice(-1)[0]);
@@ -386,10 +460,14 @@ async function ensureRunningUnlocked() {
 
   // 等第一个监听端口就绪，确认真的起来了。
   const firstPort = cfg.listeners[0].port;
-  const ok = await waitPort(firstPort, 12000);
+  const ok = await waitPort(firstPort, 12000, () => !!spawnError);
   if (!ok) {
     await stopAndWait();
-    throw new Error("mihomo 启动后端口未就绪，请检查节点配置");
+    throw new Error(
+      spawnError
+        ? `mihomo 无法启动：${String(spawnError.message || spawnError)}`
+        : "mihomo 启动后端口未就绪，请检查节点配置"
+    );
   }
 
   currentFingerprint = fingerprint;
@@ -475,7 +553,7 @@ export async function restart() {
 }
 
 export function status() {
-  const { nodes } = readStore();
+  const { nodes, clashVergeDir } = readStore();
   const routedNodeCount = selectRuntimeProxyNodes(nodes, referencedProxyIds()).length;
   return {
     running: !!child && !child.killed,
@@ -483,19 +561,22 @@ export function status() {
     nodeCount: nodes.filter((n) => n.enabled !== false && !n.missing).length,
     routedNodeCount,
     subscription: getSubscriptionInfo(),
+    clashVergeDir,
   };
 }
 
-function waitPort(port, timeoutMs) {
+function waitPort(port, timeoutMs, shouldStop = () => false) {
   const deadline = Date.now() + timeoutMs;
   return new Promise((resolve) => {
     const tryOnce = () => {
+      if (shouldStop()) return resolve(false);
       const sock = net.connect({ host: "127.0.0.1", port }, () => {
         sock.destroy();
         resolve(true);
       });
       sock.on("error", () => {
         sock.destroy();
+        if (shouldStop()) return resolve(false);
         if (Date.now() > deadline) return resolve(false);
         setTimeout(tryOnce, 300);
       });
@@ -587,7 +668,7 @@ async function withTestSidecarUnlocked(nodes, fn) {
   const bin = resolveMihomo();
   if (!bin) {
     throw new Error(
-      "找不到 mihomo 可执行文件。请安装 Clash Verge，或把 mihomo.exe 放到项目 bin/ 目录"
+      "找不到可独立启动的 mihomo 内核。请到“代理节点”页修改 Clash Verge 安装目录；若使用便携版，也可把 mihomo.exe 放到项目 bin/ 目录"
     );
   }
 
@@ -601,6 +682,12 @@ async function withTestSidecarUnlocked(nodes, fn) {
     windowsHide: true,
   });
   testChild = proc;
+  let spawnError = null;
+  proc.once("error", (error) => {
+    spawnError = error;
+    log.warn("mihomo 测速进程无法启动: " + String(error?.message || error));
+    if (testChild === proc) testChild = null;
+  });
   proc.stdout.on("data", (b) => {
     const s = String(b).trim();
     if (s) log.info("[mihomo-test] " + s.split("\n").slice(-1)[0]);
@@ -615,8 +702,14 @@ async function withTestSidecarUnlocked(nodes, fn) {
   });
 
   try {
-    const ok = await waitPort(TEST_API_PORT, 12000);
-    if (!ok) throw new Error("mihomo 测速进程启动后控制端口未就绪");
+    const ok = await waitPort(TEST_API_PORT, 12000, () => !!spawnError);
+    if (!ok) {
+      throw new Error(
+        spawnError
+          ? `mihomo 测速进程无法启动：${String(spawnError.message || spawnError)}`
+          : "mihomo 测速进程启动后控制端口未就绪"
+      );
+    }
     return await fn();
   } finally {
     await stopTestAndWait();

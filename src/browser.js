@@ -5,24 +5,58 @@ import { getAccount, effectiveProxyId } from "./store.js";
 import { resolveRegionForAccount } from "./geo.js";
 import * as log from "./logger.js";
 
-// 一个真实 Chrome 的 UA，减少被判定为自动化的概率。
-const UA =
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-  "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+/**
+ * 用本机安装的真实 Google Chrome，而不是 Playwright 自带的 Chromium。
+ *
+ * 为什么必须这样：Chromium 的 userAgentData.brands 只有 "Chromium"，
+ * 真实 Chrome 会多一项 "Google Chrome"。Cloudflare 会交叉校验这个列表，
+ * 而它无法像 UA 字符串那样被伪造。实测同一节点、同一时间窗口下，
+ * 真实 Chrome/Edge（即使开无痕）都不弹验证，自带 Chromium 会弹。
+ *
+ * 同时**不再伪造 UA**：过去硬编码 Chrome/131 而内核实际是 149，
+ * UA 与 userAgentData 自相矛盾，反倒是比不改更强的自动化特征。
+ * 用真实 Chrome 自带的 UA，两者天然一致。
+ */
+const BROWSER_CHANNEL = "chrome";
 
 /**
  * WebRTC 的 UDP 不受 --proxy-server 约束，会绕过代理直接走系统网络。
  * 实测走节点的浏览器里，WebRTC 漏出的是系统 Clash 的出口 IP，与该浏览器
  * 的 HTTP 出口分属两个国家——同一会话出现两个国家的 IP 是明确的代理特征。
- * 只走代理通道、拿不到就不给候选地址，ChatGPT 用不到 WebRTC，无功能影响。
+ *
+ * 注意：品牌版 Chrome 会忽略 --force-webrtc-ip-handling-policy
+ * （该策略只认企业策略配置），自带 Chromium 才吃这个开关。所以保留开关做兜底，
+ * 真正生效的是下面在页面层清空 iceServers 的做法。
  */
 export const WEBRTC_NO_LEAK_FLAG =
   "--force-webrtc-ip-handling-policy=disable_non_proxied_udp";
 
+/**
+ * 页面层堵 WebRTC：保留 RTCPeerConnection 本身，只把 iceServers 清空。
+ *
+ * 不直接删掉这个 API——真实 Chrome 一定有它，删了反而是更明显的特征。
+ * 清空 STUN 服务器后页面仍能正常构造连接对象，但收集不到公网候选地址，
+ * 也就漏不出出口 IP。ChatGPT 不使用 WebRTC，无功能影响。
+ */
+export function webrtcGuardScript() {
+  const Native = window.RTCPeerConnection;
+  if (!Native) return;
+  const Patched = function (config, ...rest) {
+    return new Native({ ...(config || {}), iceServers: [] }, ...rest);
+  };
+  Patched.prototype = Native.prototype;
+  // 保持 name / toString 与原生一致，避免被指纹脚本看出是包装过的
+  Object.defineProperty(Patched, "name", { value: "RTCPeerConnection" });
+  Patched.toString = () => Native.toString();
+  window.RTCPeerConnection = Patched;
+  if (window.webkitRTCPeerConnection) window.webkitRTCPeerConnection = Patched;
+}
+
 export function baseLaunchArgs(headless) {
   return {
     headless,
-    userAgent: UA,
+    channel: BROWSER_CHANNEL,
+    // 不设 userAgent：让真实 Chrome 用它自己的 UA，避免与 userAgentData 矛盾
     viewport: { width: 1280, height: 900 },
     locale: "zh-CN",
     args: [
@@ -42,6 +76,15 @@ export function applyWebrtcPolicy(launchArgs, usingProxy) {
     launchArgs.args.push(WEBRTC_NO_LEAK_FLAG);
   }
   return launchArgs;
+}
+
+/**
+ * 判断启动失败是否因为本机没装对应的浏览器渠道。
+ * Playwright 找不到 channel 时报的是 "Chromium distribution 'chrome' is not found"。
+ */
+export function isMissingChannelError(err) {
+  const msg = String(err?.message || err);
+  return /distribution .*is not found|Failed to launch|executable doesn't exist/i.test(msg);
 }
 
 /**
@@ -87,12 +130,31 @@ export async function launchForAccount(account, opts = {}) {
     applyWebrtcPolicy(launchArgs, true);
   }
 
-  const context = await chromium.launchPersistentContext(userDataDir, launchArgs);
+  let context;
+  try {
+    context = await chromium.launchPersistentContext(userDataDir, launchArgs);
+  } catch (e) {
+    // 没装 Chrome 就退回自带 Chromium：指纹差一些（会更容易撞验证码），
+    // 但总比完全跑不起来好。明确警告，让用户知道该装 Chrome。
+    if (!isMissingChannelError(e)) throw e;
+    log.warn(
+      "未找到本机 Google Chrome，退回 Playwright 自带 Chromium。" +
+        "自带内核的 userAgentData 缺少 Google Chrome 品牌，更容易触发人机验证，" +
+        "建议安装 Chrome 后重试。"
+    );
+    delete launchArgs.channel;
+    context = await chromium.launchPersistentContext(userDataDir, launchArgs);
+  }
 
   // 抹掉最明显的自动化痕迹。
   await context.addInitScript(() => {
     Object.defineProperty(navigator, "webdriver", { get: () => undefined });
   });
+
+  // 走代理时才需要堵 WebRTC：未走代理的浏览器 HTTP 与 WebRTC 同源，无矛盾可暴露。
+  if (launchArgs.proxy) {
+    await context.addInitScript(webrtcGuardScript);
+  }
 
   const page = context.pages()[0] ?? (await context.newPage());
   return { context, page };

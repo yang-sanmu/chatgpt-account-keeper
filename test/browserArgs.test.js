@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import {
   baseLaunchArgs,
   applyWebrtcPolicy,
+  webrtcGuardScript,
+  isMissingChannelError,
   WEBRTC_NO_LEAK_FLAG,
 } from "../src/browser.js";
 
@@ -31,4 +33,44 @@ test("基础启动参数保留既有的反自动化开关", () => {
   const args = baseLaunchArgs(false);
   assert.equal(args.headless, false);
   assert.ok(args.args.includes("--disable-blink-features=AutomationControlled"));
+});
+
+test("默认用真实 Chrome 且不伪造 UA", () => {
+  // 自带 Chromium 的 userAgentData 缺少 Google Chrome 品牌，是弹验证码的关键差异；
+  // 同时伪造 UA 会与真实内核版本矛盾，反而更容易被识别。
+  const args = baseLaunchArgs(true);
+  assert.equal(args.channel, "chrome");
+  assert.equal("userAgent" in args, false);
+});
+
+test("WebRTC 防护清空 iceServers 但保留原生外观", () => {
+  // 在最小的 window/RTCPeerConnection 替身上跑守卫脚本
+  let seenConfig = null;
+  class FakeNative {
+    constructor(cfg) {
+      seenConfig = cfg;
+    }
+    static toString() {
+      return "function RTCPeerConnection() { [native code] }";
+    }
+  }
+  // 脚本在页面里以 window 为全局对象，这里用 globalThis.window 模拟
+  const win = { RTCPeerConnection: FakeNative };
+  globalThis.window = win;
+  webrtcGuardScript();
+
+  const Patched = win.RTCPeerConnection;
+  new Patched({ iceServers: [{ urls: "stun:example.com" }] });
+  assert.deepEqual(seenConfig.iceServers, [], "STUN 服务器必须被清空");
+  assert.equal(Patched.name, "RTCPeerConnection", "name 需与原生一致");
+  assert.match(Patched.toString(), /native code/, "toString 需伪装成原生");
+  delete globalThis.window;
+});
+
+test("识别缺少浏览器渠道的启动错误以便回退", () => {
+  assert.equal(
+    isMissingChannelError(new Error("Chromium distribution 'chrome' is not found")),
+    true
+  );
+  assert.equal(isMissingChannelError(new Error("net::ERR_PROXY_CONNECTION_FAILED")), false);
 });

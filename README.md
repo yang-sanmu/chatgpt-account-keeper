@@ -10,7 +10,8 @@
 - 账号分组：给账号打分组标签并按分组过滤，分组可为空
 - 定向代理：**按分组**绑定代理节点（VPN），组内账号统一走该出口；未分组或分组未绑节点的走系统默认网络
 - 时区跟随出口：绑了节点的分组，浏览器时区/语言按节点出口地区自动探测，避免境外 IP 配本机时区
-- WebRTC 防泄露：走节点时强制 WebRTC 只用代理通道，避免漏出系统网络的真实出口 IP
+- WebRTC 防泄露：走节点时清空 WebRTC 的 STUN 配置，避免漏出系统网络的真实出口 IP
+- 真实浏览器：使用本机安装的 Google Chrome 而非自带 Chromium，且不伪造 UA，避免指纹自相矛盾触发人机验证
 - 账号身份：登录后自动抓取并显示 ChatGPT 账号邮箱
 - 会话内容集：可配置多组 prompt，随机或顺序抽取
 - 定时调度：按可配置间隔（带随机抖动）自动为各账号跑对话
@@ -111,13 +112,35 @@ Playwright 按账号连不同端口。**不会修改你的 Clash Verge 配置**�
 
 若分组绑定的节点已停用或已不在订阅中，组内账号会直接拒绝启动并提示，而不是悄悄用错误的出口 IP 访问。
 
+## 用本机真实 Chrome（人机验证的关键）
+
+程序**不使用 Playwright 自带的 Chromium，而是启动你本机安装的 Google Chrome**（`channel: "chrome"`），并且**不伪造 UA**。
+
+原因是自带 Chromium 有两处无法伪造的破绽，实测对比：
+
+| | 自带 Chromium（旧） | 真实 Chrome（现在） |
+| --- | --- | --- |
+| UA 声称版本 | Chrome/131 | Chrome/151 |
+| 实际内核版本 | 149 —— **与 UA 矛盾** | 151 —— 一致 |
+| `userAgentData.brands` | 只有 `Chromium` | 含 **`Google Chrome`** |
+
+`userAgentData.brands` 是 Cloudflare 会交叉校验的字段，而它不像 UA 字符串那样可以随便改。这解释了为什么同一节点、同一时间窗口下，真实 Chrome/Edge（**即使开无痕**）都不弹人机验证，而本工具会弹——与节点是否"干净"、profile 有没有历史信誉都无关。
+
+顺带说明：过去硬编码 `Chrome/131` 的 UA 反而**加重**了问题，因为它与真实内核 149 自相矛盾，比不改更像自动化。现在用 Chrome 自带的 UA，两者天然一致。
+
+若本机没装 Chrome，会自动退回自带 Chromium 并打印警告——能跑，但更容易撞验证码，建议装上 Chrome。
+
 ## WebRTC 泄露防护
 
 Playwright 的 `--proxy-server` **只代理 HTTP/HTTPS，不管 WebRTC 的 UDP**。所以走节点的浏览器会通过 WebRTC 直接漏出系统网络的出口 IP：实测走韩国节点时，HTTP 出口是韩国 `152.67.216.73`，而 WebRTC 漏出的是系统 Clash 的美国出口 `64.181.240.59`——同一次会话里出现两个国家的 IP，是非常明确的代理特征。
 
 这也解释了「同一个节点，系统浏览器不弹验证码、本工具却经常弹」：系统浏览器的 HTTP 与 WebRTC 都走同一个 Clash 出口，天然一致；而本工具此前两者分属不同出口。
 
-现在绑了节点的浏览器会强制 WebRTC 只走代理通道（拿不到就不给候选地址），实测修复后 WebRTC 不再暴露任何 IP，HTTP 出口不受影响。ChatGPT 用不到 WebRTC，关掉非代理 UDP 没有功能影响。未绑节点的账号不做改动——它的 HTTP 本来就走系统网络，与 WebRTC 一致，没有需要隐藏的矛盾。
+现在绑了节点的浏览器会在页面层清空 WebRTC 的 `iceServers`，页面仍能正常构造 `RTCPeerConnection`，但收集不到公网候选地址，也就漏不出出口 IP。实测修复后 WebRTC 不再暴露任何 IP，HTTP 出口不受影响。ChatGPT 用不到 WebRTC，无功能影响。
+
+注意**不能只靠命令行开关**：`--force-webrtc-ip-handling-policy` 只有 Playwright 自带的 Chromium 认，品牌版 Chrome 会忽略它（该策略只认企业策略配置）。实测在真实 Chrome 下加了这个开关仍会漏 IP，所以真正生效的是页面层的 `iceServers` 清空。也刻意**不删除** `RTCPeerConnection`——真实 Chrome 一定有这个 API，删掉反而是更明显的自动化特征；补丁保持了 `name` 与 `toString()` 的原生外观。
+
+未绑节点的账号不做改动——它的 HTTP 本来就走系统网络，与 WebRTC 一致，没有需要隐藏的矛盾。
 
 ## 时区跟随节点出口
 

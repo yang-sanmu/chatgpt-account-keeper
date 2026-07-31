@@ -900,13 +900,15 @@ async function checkStatus(id) {
   try {
     const res = await api(`/accounts/${id}/status?refresh=1`);
     if (span) span.innerHTML = statusInner(res);
-    updateEmailCell(id, res.email);
+    // 状态检查遇到验证页/网络抖动时可能暂时拿不到 email。
+    // 账号标识来自已保存的绑定信息，不能被一次空结果清掉。
+    if (res.email) updateEmailCell(id, res.email);
     const acc = accountsCache.find((x) => x.id === id);
     if (acc) {
       acc.loggedIn = res.loggedIn;
       acc.state = res.state;
       acc.statusDetail = res.detail ?? null;
-      acc.email = res.email;
+      if (res.email) acc.email = res.email;
     }
     updateStats();
     if (res.skipped) {

@@ -18,6 +18,7 @@ import * as log from "./logger.js";
  * 用真实 Chrome 自带的 UA，两者天然一致。
  */
 const BROWSER_CHANNEL = "chrome";
+const FORCE_TRUE_HEADLESS_ENV = "CHATGPT_ACCOUNT_KEEPER_FORCE_HEADLESS";
 
 /**
  * WebRTC 的 UDP 不受 --proxy-server 约束，会绕过代理直接走系统网络。
@@ -52,9 +53,43 @@ export function webrtcGuardScript() {
   if (window.webkitRTCPeerConnection) window.webkitRTCPeerConnection = Patched;
 }
 
-export function baseLaunchArgs(headless) {
+// 把窗口挪到屏幕外的坐标。用于"本该无头"的后台任务：
+// Cloudflare 看到的是真实有头浏览器，而用户看不到窗口。
+const OFFSCREEN_ARGS = ["--window-position=-32000,-32000", "--window-size=1280,900"];
+
+/**
+ * 判断当前进程能否使用图形桌面。
+ *
+ * Linux/容器没有 DISPLAY 或 Wayland socket 时，有头 Chrome 无法启动；
+ * Windows 服务会话同样没有可交互桌面。其余平台默认允许，并保留环境变量
+ * 作为无法自动识别的后台环境（例如特殊计划任务）的显式兜底。
+ */
+export function hasGraphicalDesktop(platform = process.platform, env = process.env) {
+  const forced = String(env?.[FORCE_TRUE_HEADLESS_ENV] ?? "").toLowerCase();
+  if (["1", "true", "yes"].includes(forced)) return false;
+  if (platform === "linux") return !!(env?.DISPLAY || env?.WAYLAND_DISPLAY);
+  if (platform === "win32" && /^services$/i.test(String(env?.SESSIONNAME ?? ""))) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * 构造启动参数。
+ *
+ * headless 语义变了：真实 Chrome 的无头模式会被 Cloudflare 稳定拦下
+ * （实测无头必 403 挑战页、有头必 200），所以这里**不真的开无头**，
+ * 而是在图形桌面中启动有头浏览器并把窗口移到屏幕外。没有图形桌面时
+ * 必须退回真正的无头模式，否则浏览器根本无法启动。
+ */
+export function baseLaunchArgs(headless, runtime = {}) {
+  const desktopAvailable = hasGraphicalDesktop(
+    runtime.platform ?? process.platform,
+    runtime.env ?? process.env
+  );
+  const trueHeadless = !!headless && !desktopAvailable;
   return {
-    headless,
+    headless: trueHeadless,
     channel: BROWSER_CHANNEL,
     // 不设 userAgent：让真实 Chrome 用它自己的 UA，避免与 userAgentData 矛盾
     viewport: { width: 1280, height: 900 },
@@ -63,6 +98,8 @@ export function baseLaunchArgs(headless) {
       "--disable-blink-features=AutomationControlled",
       "--no-first-run",
       "--no-default-browser-check",
+      // 有图形桌面时优先用"移出屏幕"代替真正的 Headless。
+      ...(headless && !trueHeadless ? OFFSCREEN_ARGS : []),
     ],
   };
 }
@@ -84,7 +121,12 @@ export function applyWebrtcPolicy(launchArgs, usingProxy) {
  */
 export function isMissingChannelError(err) {
   const msg = String(err?.message || err);
-  return /distribution .*is not found|Failed to launch|executable doesn't exist/i.test(msg);
+  return (
+    /Chromium distribution ['"]?chrome['"]? is not found/i.test(msg) ||
+    /channel ['"]?chrome['"]? is not installed/i.test(msg) ||
+    (/executable doesn't exist/i.test(msg) &&
+      /(?:Google[\\/ ]Chrome|chrome(?:\.exe)?)/i.test(msg))
+  );
 }
 
 /**

@@ -307,7 +307,7 @@
             <div class="form-group">
               <label for="input-statuscheck">
                 <span class="label-title">登录状态巡检间隔 (分钟)</span>
-                <span class="label-desc">后台自动无头检测账号 Cookie 有效期的间隔</span>
+                <span class="label-desc">后台自动使用隐藏窗口检测账号 Session 的间隔</span>
               </label>
               <div class="input-with-unit">
                 <input type="number" id="input-statuscheck" name="statusCheckMinutes" min="1" required />
@@ -328,8 +328,8 @@
 
             <div class="form-group checkbox-card">
               <div class="checkbox-text">
-                <span class="label-title">无头模式运行 (Headless Mode)</span>
-                <span class="label-desc">勾选后将在后台隐藏浏览器界面，降低 CPU/GPU 内存开销</span>
+                <span class="label-title">后台隐藏窗口运行</span>
+                <span class="label-desc">勾选后在桌面环境中把真实 Chrome 窗口移到屏幕外；无图形桌面时自动退回 Headless</span>
               </div>
               <label class="switch">
                 <input type="checkbox" name="headless" />

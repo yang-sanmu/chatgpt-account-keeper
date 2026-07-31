@@ -44,7 +44,7 @@ export async function startLogin(account, opts = {}) {
   const taskId = newTaskId();
   const task = {
     accountId: account.id,
-    status: "opening", // opening -> waiting -> success | failed | timeout
+    status: "opening", // opening -> waiting -> saving -> success | failed | timeout
     message: "正在打开浏览器…",
     startedAt: new Date().toISOString(),
   };
@@ -76,6 +76,10 @@ export async function startLogin(account, opts = {}) {
         current = await checkSession(page);
       } else if (current.state === SESSION_OK) {
         // 本来就是好的，直接完成，不折腾用户。
+        task.status = "saving";
+        task.message = "正在确认并保存登录状态…";
+        await context.close();
+        context = null;
         finishSuccess(task, account, current);
         return;
       }
@@ -95,6 +99,13 @@ export async function startLogin(account, opts = {}) {
 
       if (health?.state === SESSION_OK) {
         await page.waitForTimeout(1000); // 确保登录态落盘
+        // 必须等持久化 Profile 完全关闭后才能向前端报告成功。
+        // 否则用户立刻点“运行”时，新浏览器可能赶在 Cookie 落盘前启动，
+        // 看起来就是“登录显示成功，但立即运行仍提示未登录”。
+        task.status = "saving";
+        task.message = "登录成功，正在保存 Session…";
+        await context.close();
+        context = null;
         finishSuccess(task, account, health);
       } else {
         task.status = "timeout";
@@ -167,7 +178,12 @@ export async function checkLoggedIn(account) {
       detail: health.detail,
     };
   } catch (e) {
-    return { state: "out", loggedIn: false, email: null, detail: String(e.message || e) };
+    return {
+      state: "unknown",
+      loggedIn: false,
+      email: null,
+      detail: `状态检查失败：${String(e.message || e)}`,
+    };
   } finally {
     if (context) await context.close().catch(() => {});
   }

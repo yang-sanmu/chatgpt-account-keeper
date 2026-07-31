@@ -162,7 +162,9 @@ app.get("/api/accounts/:id/status", wrap(async (req, res) => {
       id: acc.id,
       state: result.state,
       loggedIn: result.loggedIn,
-      email: result.email ?? null,
+      // 当前会话暂时读不到 email 时仍保留已绑定的账号标识。
+      // 登录状态和账号身份是两件事，刷新不能把后者清成“未绑定账号”。
+      email: result.email ?? store.getAccount(acc.id)?.email ?? null,
       detail: result.detail ?? null,
       skipped: !!result.skipped,
     });
@@ -172,7 +174,7 @@ app.get("/api/accounts/:id/status", wrap(async (req, res) => {
     id: acc.id,
     state: st.state,
     loggedIn: st.loggedIn,
-    email: st.email,
+    email: st.email ?? acc.email ?? null,
     detail: st.detail ?? null,
     checkedAt: st.checkedAt,
   });

@@ -33,12 +33,28 @@ export async function checkSession(page) {
   try {
     probe = await page.evaluate(async () => {
       const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-      const out = { sessionOk: false };
+      const out = { sessionOk: false, sessionAttempts: 0, sessionJsonCount: 0 };
       let sess = null;
+
+      // 挑战页有时也会让 session 接口返回 200 + 空 JSON，不能只看接口结果。
+      // 记录页面标记，避免把“正在做人机验证”误判成真实退出。
+      try {
+        const marker = `${document.title ?? ""}\n${document.body?.innerText?.slice(0, 1000) ?? ""}`;
+        out.challengePage =
+          /just a moment|verify you are human|checking your browser|security verification|验证您是真人|安全验证/i.test(
+            marker
+          ) ||
+          !!document.querySelector(
+            'iframe[src*="challenges.cloudflare.com"], input[name="cf-turnstile-response"]'
+          );
+      } catch {
+        out.challengePage = false;
+      }
 
       // 刚导航完就查，偶尔会赶在会话态就绪之前，导致 session 返回空用户 ——
       // 那会把正常账号误判成“未登录”。所以拿不到用户时重试几次再下结论。
       for (let attempt = 0; attempt < 3; attempt++) {
+        out.sessionAttempts++;
         try {
           const res = await fetch("/api/auth/session", {
             headers: { accept: "application/json" },
@@ -49,6 +65,7 @@ export async function checkSession(page) {
             try {
               sess = JSON.parse(text);
               out.sessionOk = true;
+              out.sessionJsonCount++;
             } catch {
               // 返回了非 JSON（多半是被登录墙/风控页拦截）
               out.notJson = text.slice(0, 120);
@@ -85,16 +102,45 @@ export async function checkSession(page) {
       return out;
     });
   } catch (e) {
-    // 页面直接不可用（导航失败/被关闭）
-    return { state: SESSION_OUT, email: null, name: null, detail: String(e.message || e) };
+    // 页面不可用只能说明本次无法检查，不能据此断言 Cookie 已丢失。
+    // 浏览器启动/导航失败若被记成 out，会让所有正常账号瞬间显示“未登录”。
+    return {
+      state: SESSION_UNKNOWN,
+      email: null,
+      name: null,
+      detail: `会话检查失败：${String(e.message || e)}`,
+    };
   }
 
   const email = probe.email ?? null;
   const name = probe.name ?? null;
 
-  // 没有 email：从未登录，或 cookie 已被完全清掉。
+  // 只有成功拿到合法 session JSON 且其中明确没有用户，才能判定未登录。
+  // Cloudflare 挑战页、403/5xx、非 JSON 响应和网络错误都只是“无法确认”；
+  // 若把它们算成 out，正处于登录状态的账号会被误报为未登录。
   if (!email) {
-    return { state: SESSION_OUT, email: null, name: null, detail: "session 无用户信息" };
+    if (
+      !probe.challengePage &&
+      probe.sessionAttempts > 0 &&
+      probe.sessionJsonCount === probe.sessionAttempts
+    ) {
+      return { state: SESSION_OUT, email: null, name: null, detail: "session 无用户信息" };
+    }
+    const reason = probe.challengePage
+      ? "当前页面仍处于人机验证"
+      : probe.notJson
+        ? "会话接口被验证页拦截"
+        : probe.sessionStatus
+          ? `会话接口返回 ${probe.sessionStatus}`
+          : probe.sessionError
+            ? `会话接口请求失败：${probe.sessionError}`
+            : "未能读取会话接口";
+    return {
+      state: SESSION_UNKNOWN,
+      email: null,
+      name: null,
+      detail: `${reason}，暂不能确认登录状态`,
+    };
   }
 
   // 有 email 但没有 accessToken：会话不完整，需要重新认证。

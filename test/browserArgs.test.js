@@ -43,6 +43,38 @@ test("默认用真实 Chrome 且不伪造 UA", () => {
   assert.equal("userAgent" in args, false);
 });
 
+test("后台任务使用屏幕外的有头 Chrome，避免无头模式触发验证页", () => {
+  const desktopRuntime = { platform: "win32", env: {} };
+  const background = baseLaunchArgs(true, desktopRuntime);
+  assert.equal(background.headless, false);
+  assert.ok(background.args.includes("--window-position=-32000,-32000"));
+
+  const interactive = baseLaunchArgs(false, desktopRuntime);
+  assert.equal(interactive.headless, false);
+  assert.equal(interactive.args.includes("--window-position=-32000,-32000"), false);
+});
+
+test("无图形桌面时后台任务退回真正的无头模式", () => {
+  const linuxWithoutDisplay = baseLaunchArgs(true, { platform: "linux", env: {} });
+  assert.equal(linuxWithoutDisplay.headless, true);
+  assert.equal(
+    linuxWithoutDisplay.args.includes("--window-position=-32000,-32000"),
+    false
+  );
+
+  const windowsService = baseLaunchArgs(true, {
+    platform: "win32",
+    env: { SESSIONNAME: "Services" },
+  });
+  assert.equal(windowsService.headless, true);
+
+  const explicitlyForced = baseLaunchArgs(true, {
+    platform: "darwin",
+    env: { CHATGPT_ACCOUNT_KEEPER_FORCE_HEADLESS: "1" },
+  });
+  assert.equal(explicitlyForced.headless, true);
+});
+
 test("WebRTC 防护清空 iceServers 但保留原生外观", () => {
   // 在最小的 window/RTCPeerConnection 替身上跑守卫脚本
   let seenConfig = null;
@@ -72,5 +104,13 @@ test("识别缺少浏览器渠道的启动错误以便回退", () => {
     isMissingChannelError(new Error("Chromium distribution 'chrome' is not found")),
     true
   );
+  assert.equal(
+    isMissingChannelError(
+      new Error("browserType.launch: Executable doesn't exist at C:\\Program Files\\Google\\Chrome\\chrome.exe")
+    ),
+    true
+  );
+  // Profile 锁、进程崩溃等普通启动失败绝不能切换到另一种浏览器读取同一 Profile。
+  assert.equal(isMissingChannelError(new Error("browserType.launch: Failed to launch browser")), false);
   assert.equal(isMissingChannelError(new Error("net::ERR_PROXY_CONNECTION_FAILED")), false);
 });

@@ -32,7 +32,7 @@ GPT 账号会话工具
   node src/cli.js list                    列出配置的账号
 
 选项:
-  --headless=false    显示浏览器窗口（调试用；once/run 默认无头）
+  --headless=false    显示浏览器窗口（调试用；once/run 有桌面时默认移到屏幕外）
   --interval=180      run: 每轮间隔分钟数
   --jitter=30         run: 随机抖动分钟数
 `;

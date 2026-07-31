@@ -130,6 +130,8 @@ Playwright 按账号连不同端口。**不会修改你的 Clash Verge 配置**�
 
 若本机没装 Chrome，会自动退回自带 Chromium 并打印警告——能跑，但更容易撞验证码，建议装上 Chrome。
 
+后台巡检和自动运行在有图形桌面时也会使用真实的**有头 Chrome**。设置中的“后台隐藏窗口”会把窗口移到屏幕外，不会启用 Chrome Headless；实测同一 Profile 在有头模式能正常读取登录态，而 Headless 会落到 Cloudflare 挑战页，造成“登录成功后立即运行仍提示未登录”的假象。Linux/容器没有 `DISPLAY`/Wayland、Windows 服务会话等无图形桌面环境会自动退回真正的 Headless；其他无法自动识别的后台环境可设置 `CHATGPT_ACCOUNT_KEEPER_FORCE_HEADLESS=1`。登录完成后程序会先关闭浏览器、等待 Session 写入 Profile，再向面板报告成功；关闭失败会明确标记登录任务失败，不会伪报 Session 已保存。
+
 ## WebRTC 泄露防护
 
 Playwright 的 `--proxy-server` **只代理 HTTP/HTTPS，不管 WebRTC 的 UDP**。所以走节点的浏览器会通过 WebRTC 直接漏出系统网络的出口 IP：实测走韩国节点时，HTTP 出口是韩国 `152.67.216.73`，而 WebRTC 漏出的是系统 Clash 的美国出口 `64.181.240.59`——同一次会话里出现两个国家的 IP，是非常明确的代理特征。

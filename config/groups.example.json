@@ -1,7 +1,7 @@
 {
-  "_comment": "账号分组。分组既是可筛选的标签，也是代理归属的单位：组内账号统一走该组绑定的节点（proxyId 为 null 时跟随系统网络）。账号可以不属于任何分组（groupId 为 null）。删除分组不会删除账号。",
+  "_comment": "账号分组。分组既是可筛选的标签，也是代理归属的单位：组内账号统一走该组绑定的节点（proxyId 为 null 时跟随系统网络）。timezone/locale 为 null 时按节点出口 IP 自动探测并回写；手动填写则视为覆盖，换节点也不会被清掉。账号可以不属于任何分组（groupId 为 null）。删除分组不会删除账号。",
   "groups": [
-    { "id": "grp_example_us", "name": "美国注册", "proxyId": null },
-    { "id": "grp_example_kr", "name": "韩国注册", "proxyId": null }
+    { "id": "grp_example_us", "name": "美国注册", "proxyId": null, "timezone": null, "locale": null },
+    { "id": "grp_example_kr", "name": "韩国注册", "proxyId": null, "timezone": null, "locale": null }
   ]
 }

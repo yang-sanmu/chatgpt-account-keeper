@@ -2,6 +2,7 @@ import { chromium } from "playwright";
 import { fromRoot, ensureDir } from "./paths.js";
 import { proxyForAccount, ensureRunning } from "./proxyManager.js";
 import { getAccount, effectiveProxyId } from "./store.js";
+import { resolveRegionForAccount } from "./geo.js";
 import * as log from "./logger.js";
 
 // 一个真实 Chrome 的 UA，减少被判定为自动化的概率。
@@ -52,6 +53,12 @@ export async function launchForAccount(account, opts = {}) {
         `账号所属分组绑定的代理节点不可用（可能已停用或不在订阅中），请到分组管理里重新选择节点`
       );
     }
+
+    // 时区/语言跟着出口走：境外 IP 配本机东八区时区是明显的不一致信号。
+    // 探测失败就沿用默认，不阻断登录。
+    const region = await resolveRegionForAccount(liveAccount);
+    if (region.timezoneId) launchArgs.timezoneId = region.timezoneId;
+    if (region.locale) launchArgs.locale = region.locale;
   }
 
   const context = await chromium.launchPersistentContext(userDataDir, launchArgs);

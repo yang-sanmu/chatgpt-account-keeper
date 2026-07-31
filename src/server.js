@@ -5,6 +5,7 @@ import { runOnce, scheduler } from "./scheduler.js";
 import { startLogin, getLoginTask } from "./loginProvider.js";
 import { openPageForAccount, closePageForAccount, getOpenPages } from "./openPage.js";
 import * as proxies from "./proxyManager.js";
+import { clearRegionCache } from "./geo.js";
 import {
   getAllCachedStatus,
   getCachedStatus,
@@ -221,13 +222,16 @@ app.post("/api/groups", wrap(async (req, res) => {
   res.json(group);
 }));
 
-// 分组的 name / proxyId 都可单独更新。代理绑在分组上，组内账号统一走该节点。
+// 分组的 name / proxyId / timezone / locale 都可单独更新。
+// 代理绑在分组上，组内账号统一走该节点，时区也跟着该节点的出口地区。
 app.patch("/api/groups/:id", wrap(async (req, res) => {
-  const { name, proxyId } = req.body ?? {};
+  const { name, proxyId, timezone, locale } = req.body ?? {};
   const previous = store.getGroup(req.params.id);
   const patch = {};
   if (name !== undefined) patch.name = name;
   if (proxyId !== undefined) patch.proxyId = proxyId;
+  if (timezone !== undefined) patch.timezone = timezone;
+  if (locale !== undefined) patch.locale = locale;
   const g = store.updateGroup(req.params.id, patch);
   if (!g) return res.status(404).json({ error: "分组不存在" });
   if (proxyId !== undefined && previous?.proxyId !== g.proxyId) {
@@ -251,11 +255,15 @@ app.get("/api/proxies", wrap(async (req, res) => {
 
 // 只有这里和 /refresh 会真的去拉订阅，不存在自动刷新。
 app.post("/api/proxies/import", wrap(async (req, res) => {
-  res.json(await proxies.importSubscription(req.body?.url));
+  const result = await proxies.importSubscription(req.body?.url);
+  clearRegionCache(); // 节点可能换了服务器，出口归属要重新探测
+  res.json(result);
 }));
 
 app.post("/api/proxies/refresh", wrap(async (req, res) => {
-  res.json(await proxies.refreshSubscription());
+  const result = await proxies.refreshSubscription();
+  clearRegionCache();
+  res.json(result);
 }));
 
 app.put("/api/proxies/settings", wrap(async (req, res) => {

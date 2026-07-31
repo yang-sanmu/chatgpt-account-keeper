@@ -640,9 +640,33 @@ function renderGroupList() {
           <span class="group-field-label">代理节点</span>
           ${proxyPickerHtml("g:" + g.id, g.proxyId)}
         </div>
+        <div class="group-item-row">
+          <span class="group-field-label">时区</span>
+          <input type="text" class="group-name-input" data-gtz="${g.id}"
+            value="${escapeHtml(g.timezone || "")}"
+            placeholder="${g.proxyId ? "留空 = 按节点出口自动探测" : "未绑节点，跟随本机"}"
+            title="如 Asia/Seoul。留空则首次开浏览器时按节点出口 IP 自动探测" />
+          <button class="btn small" data-gtzsave="${g.id}">保存</button>
+        </div>
       </div>`;
     })
     .join("");
+
+  // 时区手动覆盖。留空 = 恢复自动探测。
+  $$("[data-gtzsave]").forEach((el) =>
+    el.addEventListener("click", async () => {
+      const id = el.dataset.gtzsave;
+      const timezone = $(`[data-gtz="${id}"]`).value.trim();
+      try {
+        await api(`/groups/${id}`, { method: "PATCH", body: { timezone: timezone || null } });
+        toast(timezone ? "时区已保存" : "已改为按节点自动探测", "success");
+        await loadGroups();
+        renderGroupList();
+      } catch (e) {
+        toast("保存时区失败: " + e.message, "error");
+      }
+    })
+  );
 
   // 分组代理选好后立即落盘，并由后端同步主边车配置。
   bindProxyPickers(async (key, proxyId) => {

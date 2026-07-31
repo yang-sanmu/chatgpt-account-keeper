@@ -116,7 +116,9 @@ export function removeAccount(id) {
 // 允许为空（账号可以不属于任何分组，此时跟随系统网络）。
 
 function normalizeGroup(g) {
-  return { proxyId: null, ...g }; // 旧数据没有 proxyId，补 null = 跟随系统网络
+  // 旧数据没有这些字段：proxyId 补 null = 跟随系统网络；
+  // timezone/locale 补 null = 由节点出口 IP 自动探测（探测失败则用浏览器默认）。
+  return { proxyId: null, timezone: null, locale: null, ...g };
 }
 
 export function getGroups() {
@@ -295,7 +297,7 @@ function badRequest(msg) {
   return e;
 }
 
-export function addGroup(name, proxyId = null) {
+export function addGroup(name, proxyId = null, extra = {}) {
   const clean = String(name ?? "").trim();
   if (!clean) throw badRequest("分组名称不能为空");
   const groups = getGroups();
@@ -306,6 +308,9 @@ export function addGroup(name, proxyId = null) {
     id: "grp_" + arr[0].toString(36) + arr[1].toString(36),
     name: clean,
     proxyId: proxyId || null, // 绑定的代理节点，null = 组内账号跟随系统网络
+    // 浏览器时区/语言。null = 按节点出口 IP 自动探测，避免境外 IP 配本机时区。
+    timezone: extra.timezone || null,
+    locale: extra.locale || null,
   };
   groups.push(group);
   saveGroups(groups);
@@ -313,8 +318,9 @@ export function addGroup(name, proxyId = null) {
 }
 
 /**
- * 更新分组。name / proxyId 都是可选：只传 proxyId 就只改代理。
+ * 更新分组。name / proxyId / timezone / locale 都是可选：只传其中一个就只改那个。
  * proxyId 传 null（或空串）表示解绑，改为跟随系统网络。
+ * timezone / locale 传 null 表示恢复"自动按节点探测"。
  */
 export function updateGroup(id, patch = {}) {
   const groups = getGroups();
@@ -328,9 +334,39 @@ export function updateGroup(id, patch = {}) {
     g.name = clean;
   }
   if (patch.proxyId !== undefined) {
-    g.proxyId = patch.proxyId || null;
+    const next = patch.proxyId || null;
+    // 换了节点，之前探测出来的时区就不再对应了。显式设过的值（手动覆盖）保留，
+    // 自动探测出来的要清掉，否则韩国节点会继续套用美国时区。
+    if (next !== g.proxyId && !g.tzManual) {
+      g.timezone = null;
+      g.locale = null;
+    }
+    g.proxyId = next;
+  }
+  if (patch.timezone !== undefined) {
+    g.timezone = patch.timezone || null;
+    // 手动清空 = 恢复自动探测
+    g.tzManual = patch.timezone ? true : undefined;
+    if (!g.tzManual) delete g.tzManual;
+  }
+  if (patch.locale !== undefined) {
+    g.locale = patch.locale || null;
   }
 
+  saveGroups(groups);
+  return g;
+}
+
+/**
+ * 记录自动探测到的地区。只在用户没手动指定过时写入，
+ * 且不覆盖已有值——探测是尽力而为，不该反复改写用户配置。
+ */
+export function saveDetectedRegion(id, { timezone, locale } = {}) {
+  const groups = getGroups();
+  const g = groups.find((x) => x.id === id);
+  if (!g || g.tzManual) return null;
+  if (timezone) g.timezone = timezone;
+  if (locale && !g.locale) g.locale = locale;
   saveGroups(groups);
   return g;
 }

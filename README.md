@@ -11,7 +11,7 @@
 - 定向代理：**按分组**绑定代理节点（VPN），组内账号统一走该出口；未分组或分组未绑节点的走系统默认网络
 - 时区跟随出口：绑了节点的分组，浏览器时区/语言按节点出口地区自动探测，避免境外 IP 配本机时区
 - WebRTC 防泄露：走节点时清空 WebRTC 的 STUN 配置，避免漏出系统网络的真实出口 IP
-- 真实浏览器：使用本机安装的 Google Chrome 而非自带 Chromium，且不伪造 UA，避免指纹自相矛盾触发人机验证
+- 真实浏览器：优先使用本机安装的 Google Chrome；后台动态还原同版本的有头浏览器身份，不写死版本
 - 账号身份：登录后自动抓取并显示 ChatGPT 账号邮箱
 - 会话内容集：可配置多组 prompt，随机或顺序抽取
 - 定时调度：按可配置间隔（带随机抖动）自动为各账号跑对话
@@ -21,7 +21,7 @@
 
 - 后端：Node.js + Express（REST API + 内置调度器 + 状态监控）
 - 前端：原生 HTML/CSS/JS（无构建步骤）
-- 自动化：Playwright（Chromium）
+- 自动化：Playwright（优先本机 Google Chrome，缺失时回退自带 Chromium）
 
 ## 安装
 
@@ -114,23 +114,25 @@ Playwright 按账号连不同端口。**不会修改你的 Clash Verge 配置**�
 
 ## 用本机真实 Chrome（人机验证的关键）
 
-程序**不使用 Playwright 自带的 Chromium，而是启动你本机安装的 Google Chrome**（`channel: "chrome"`），并且**不伪造 UA**。
+程序优先启动本机安装的 Google Chrome（`channel: "chrome"`），不写死浏览器版本。
 
-原因是自带 Chromium 有两处无法伪造的破绽，实测对比：
+旧实现与当前实现的实测对比：
 
 | | 自带 Chromium（旧） | 真实 Chrome（现在） |
 | --- | --- | --- |
-| UA 声称版本 | Chrome/131 | Chrome/151 |
-| 实际内核版本 | 149 —— **与 UA 矛盾** | 151 —— 一致 |
-| `userAgentData.brands` | 只有 `Chromium` | 含 **`Google Chrome`** |
+| UA | 写死 Chrome/131 | 跟随当前实际 Chrome |
+| 实际内核版本 | 当时为 Chromium 149 —— **与 UA 矛盾** | 与安装的 Chrome 一致 |
+| `userAgentData.brands` | Chromium/HeadlessChrome | 含 **`Google Chrome`**，版本一致 |
 
-`userAgentData.brands` 是 Cloudflare 会交叉校验的字段，而它不像 UA 字符串那样可以随便改。这解释了为什么同一节点、同一时间窗口下，真实 Chrome/Edge（**即使开无痕**）都不弹人机验证，而本工具会弹——与节点是否"干净"、profile 有没有历史信誉都无关。
+`userAgentData` 与 UA、平台、架构会被交叉校验。旧版只覆盖最外层 UA，虽然遮住了最直接的 `HeadlessChrome`，但内部仍暴露 Chromium 149，因而会偶发验证。当前 Headless 模式从同一浏览器动态读取 UA/UA-CH，只移除 Headless 专属产品名，并把同一组实际版本和平台值覆盖到页面、跨站验证 iframe、弹窗和 Worker。
 
-顺带说明：过去硬编码 `Chrome/131` 的 UA 反而**加重**了问题，因为它与真实内核 149 自相矛盾，比不改更像自动化。现在用 Chrome 自带的 UA，两者天然一致。
+若本机没装 Chrome，会自动退回自带 Chromium，并同步移除 legacy UA 与 UA-CH 中的 `HeadlessChrome` 产品名；但它仍没有 `Google Chrome` 品牌，遇到验证的概率更高，因此仍建议安装 Chrome。
 
-若本机没装 Chrome，会自动退回自带 Chromium 并打印警告——能跑，但更容易撞验证码，建议装上 Chrome。
+后台巡检使用真正的 Headless Chrome；设置中启用“无头模式运行”后，立即跑和自动调度也不会创建可见窗口或任务栏图标。设置中的“启动时立即巡检”可控制项目启动后是否立刻检查所有账号，关闭后会等待一个完整的巡检间隔。登录完成后程序会先关闭浏览器、等待 Session 写入 Profile，再向面板报告成功；关闭失败会明确标记登录任务失败，不会伪报 Session 已保存。
 
-后台巡检和自动运行在有图形桌面时也会使用真实的**有头 Chrome**。设置中的“后台隐藏窗口”会把窗口移到屏幕外，不会启用 Chrome Headless；实测同一 Profile 在有头模式能正常读取登录态，而 Headless 会落到 Cloudflare 挑战页，造成“登录成功后立即运行仍提示未登录”的假象。Linux/容器没有 `DISPLAY`/Wayland、Windows 服务会话等无图形桌面环境会自动退回真正的 Headless；其他无法自动识别的后台环境可设置 `CHATGPT_ACCOUNT_KEEPER_FORCE_HEADLESS=1`。登录完成后程序会先关闭浏览器、等待 Session 写入 Profile，再向面板报告成功；关闭失败会明确标记登录任务失败，不会伪报 Session 已保存。
+状态判断只在 Session 与鉴权接口都返回相互一致的用户 JSON 时确认“已登录”；验证页、WAF、429/5xx 或格式异常都不会被当成令牌失效，更不会据此清 Cookie。只要已有一次明确结论，后续检查异常就只显示“待复核”并永久保留该结论，直到服务端再次明确返回“已登录”“需重新登录”或“未登录”。最近明确状态会写入本地缓存，项目重启后也不会因一次验证页或网络抖动丢失。
+
+Headless 身份覆盖需要 Chrome DevTools Protocol，因此任务运行期间会开放一个随机的 `127.0.0.1` 调试端口，Context 关闭时同步回收。该设计以单用户桌面为信任边界；不要在有不受信任本机用户或进程的主机上运行已登录 Profile。
 
 ## WebRTC 泄露防护
 
@@ -160,17 +162,21 @@ Playwright 的 `--proxy-server` **只代理 HTTP/HTTPS，不管 WebRTC 的 UDP**
 | 状态 | 含义 |
 | --- | --- |
 | 已登录 | 鉴权接口明确验证通过，会话完全可用 |
+| 已登录 · 待复核 | 最近一次检查被验证页、WAF 或网络抖动打断；仍显示上次明确确认时间，不会因一次失败抹掉登录态 |
 | 需重新登录 | cookie 还在、看着像已登录，但令牌已被服务端作废（常见于在别处改了密码或新增双重认证）。点该行的“重新登录”会先清掉失效会话再打开登录页，**不必删除账号**，备注/分组配置都会保留 |
-| 待确认 | 没能验证成功也没明确失败（网络抖动、限流、5xx）。不会当成已登录对外显示；调度仍会尝试跑，跑不动会记下原因 |
+| 待确认 | 尚无任何明确基线，且当前也没能确认（网络抖动、限流、5xx）。不会当成已登录对外显示；调度仍会尝试跑，跑不动会记下原因 |
 | 未登录 | 没有有效会话 |
 
 ## 命令行（可选）
 
 ```bash
-npm run login <accountId>   # 手动登录某账号
-npm run once <accountId>    # 立即跑一次
+npm run login -- <accountId>          # 手动登录某账号
+npm run login -- <accountId> --force  # 明确清除旧 Session 后强制重登
+npm run once -- <accountId>           # 立即跑一次
 npm run run                 # 启动常驻定时调度
 ```
+
+“重新登录”与 `--force` 都是显式的不可逆操作：会清除该 Profile 中 ChatGPT 及相关认证域的 Cookie 和站点登录数据，再打开全新的登录页。普通“登录”、自动巡检和运行任务不会自动清理这些数据。
 
 ## 安全说明
 

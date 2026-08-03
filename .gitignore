@@ -14,6 +14,10 @@ profiles-archive/
 config/accounts.json
 config/settings.json
 
+# 登录状态巡检缓存（含账号邮箱及最近确认状态）
+config/status-cache.json
+config/.status-cache.json.*.tmp
+
 # 敏感：代理节点含服务器地址与密码，泄露即节点被盗用
 config/proxies.json
 

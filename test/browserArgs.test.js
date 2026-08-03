@@ -5,8 +5,39 @@ import {
   applyWebrtcPolicy,
   webrtcGuardScript,
   isMissingChannelError,
+  isMissingCdpSessionError,
+  initializeLaunchedContext,
+  normalizeHeadlessIdentity,
+  normalizeHeadlessUserAgent,
   WEBRTC_NO_LEAK_FLAG,
 } from "../src/browser.js";
+
+test("只忽略已经消失的精确 CDP child session 错误", () => {
+  const gone = Object.assign(new Error("gone"), {
+    code: -32001,
+    cdpMessage: "Session with given id not found.",
+  });
+  assert.equal(isMissingCdpSessionError(gone), true);
+
+  assert.equal(
+    isMissingCdpSessionError(
+      Object.assign(new Error("other"), {
+        code: -32001,
+        cdpMessage: "Another error",
+      })
+    ),
+    false
+  );
+  assert.equal(
+    isMissingCdpSessionError(
+      Object.assign(new Error("method"), {
+        code: -32601,
+        cdpMessage: "Session with given id not found.",
+      })
+    ),
+    false
+  );
+});
 
 test("走代理的浏览器必须堵住 WebRTC 泄露", () => {
   // 实测：不加这个开关时，走韩国节点的浏览器会通过 WebRTC 漏出系统 Clash
@@ -35,44 +66,120 @@ test("基础启动参数保留既有的反自动化开关", () => {
   assert.ok(args.args.includes("--disable-blink-features=AutomationControlled"));
 });
 
-test("默认用真实 Chrome 且不伪造 UA", () => {
+test("默认用真实 Chrome 且不硬编码 UA", () => {
   // 自带 Chromium 的 userAgentData 缺少 Google Chrome 品牌，是弹验证码的关键差异；
-  // 同时伪造 UA 会与真实内核版本矛盾，反而更容易被识别。
+  // 启动参数本身不写死任何版本，Headless 的实际 UA 会在运行时读取。
   const args = baseLaunchArgs(true);
   assert.equal(args.channel, "chrome");
   assert.equal("userAgent" in args, false);
 });
 
-test("后台任务使用屏幕外的有头 Chrome，避免无头模式触发验证页", () => {
-  const desktopRuntime = { platform: "win32", env: {} };
-  const background = baseLaunchArgs(true, desktopRuntime);
-  assert.equal(background.headless, false);
-  assert.ok(background.args.includes("--window-position=-32000,-32000"));
+test("Headless UA 只移除产品标记并保留实际 Chrome 版本", () => {
+  const native =
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+    "(KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36";
+  const normalized = normalizeHeadlessUserAgent(native);
+  assert.equal(normalized.includes("HeadlessChrome"), false);
+  assert.match(normalized, /Chrome\/151\.0\.0\.0/);
 
-  const interactive = baseLaunchArgs(false, desktopRuntime);
+  const headed = native.replace("HeadlessChrome", "Chrome");
+  assert.equal(normalizeHeadlessUserAgent(headed), headed);
+});
+
+test("Chromium 回退身份同时移除 UA-CH 中的 HeadlessChrome 品牌", () => {
+  const native = {
+    userAgent:
+      "Mozilla/5.0 HeadlessChrome/149.0.7827.55 Safari/537.36",
+    platform: "Win32",
+    metadata: {
+      brands: [
+        { brand: "HeadlessChrome", version: "149" },
+        { brand: "Chromium", version: "149" },
+        { brand: "Not)A;Brand", version: "24" },
+      ],
+      fullVersionList: [
+        { brand: "HeadlessChrome", version: "149.0.7827.55" },
+        { brand: "Chromium", version: "149.0.7827.55" },
+        { brand: "Not)A;Brand", version: "24.0.0.0" },
+      ],
+      platform: "Windows",
+      platformVersion: "19.0.0",
+      architecture: "x86",
+      bitness: "64",
+      mobile: false,
+    },
+  };
+
+  const normalized = normalizeHeadlessIdentity(native);
+  assert.doesNotMatch(normalized.userAgent, /HeadlessChrome/);
+  assert.equal(
+    normalized.metadata.brands.some((item) => item.brand === "HeadlessChrome"),
+    false
+  );
+  assert.equal(
+    normalized.metadata.fullVersionList.some(
+      (item) => item.brand === "HeadlessChrome"
+    ),
+    false
+  );
+  assert.equal(
+    normalized.metadata.brands.filter((item) => item.brand === "Chromium")
+      .length,
+    1,
+    "已有 Chromium 品牌时不能制造重复项"
+  );
+  assert.equal(
+    normalized.metadata.fullVersionList.find(
+      (item) => item.brand === "Chromium"
+    ).version,
+    "149.0.7827.55"
+  );
+  assert.equal(
+    native.metadata.brands[0].brand,
+    "HeadlessChrome",
+    "规范化不能修改探测结果原对象"
+  );
+});
+
+test("后台任务使用真正的 Headless，不创建屏幕外窗口", () => {
+  const background = baseLaunchArgs(true);
+  assert.equal(background.headless, true);
+  assert.equal(background.args.includes("--window-position=-32000,-32000"), false);
+
+  const interactive = baseLaunchArgs(false);
   assert.equal(interactive.headless, false);
   assert.equal(interactive.args.includes("--window-position=-32000,-32000"), false);
 });
 
-test("无图形桌面时后台任务退回真正的无头模式", () => {
-  const linuxWithoutDisplay = baseLaunchArgs(true, { platform: "linux", env: {} });
-  assert.equal(linuxWithoutDisplay.headless, true);
-  assert.equal(
-    linuxWithoutDisplay.args.includes("--window-position=-32000,-32000"),
-    false
+test("浏览器启动后的初始化失败会关闭 Context 且保留原始错误", async (t) => {
+  const initError = new Error("identity init failed");
+  const close = t.mock.fn(async () => {});
+  const page = {};
+  const context = {
+    addInitScript: t.mock.fn(async () => {}),
+    pages: () => [page],
+    on: t.mock.fn(),
+    close,
+  };
+
+  await assert.rejects(
+    () =>
+      initializeLaunchedContext(context, {
+        headless: true,
+        headlessIdentity: {
+          userAgent:
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/151.0.0.0",
+          platform: "Win32",
+          metadata: null,
+        },
+        userDataDir: "test-profile",
+        targetIdentityInstaller: async () => {
+          throw initError;
+        },
+      }),
+    (error) => error === initError
   );
-
-  const windowsService = baseLaunchArgs(true, {
-    platform: "win32",
-    env: { SESSIONNAME: "Services" },
-  });
-  assert.equal(windowsService.headless, true);
-
-  const explicitlyForced = baseLaunchArgs(true, {
-    platform: "darwin",
-    env: { CHATGPT_ACCOUNT_KEEPER_FORCE_HEADLESS: "1" },
-  });
-  assert.equal(explicitlyForced.headless, true);
+  assert.equal(close.mock.callCount(), 1);
 });
 
 test("WebRTC 防护清空 iceServers 但保留原生外观", () => {

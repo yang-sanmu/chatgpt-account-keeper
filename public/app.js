@@ -180,6 +180,12 @@ function renderAccounts() {
     const progress = topicText
       ? `当前：<strong>${escapeHtml(topicText)}</strong> (${rot.windowsDone ?? 0}/${rot.windowsTarget ?? 0})`
       : "<span class='time-ago'>未开始</span>";
+    const reloginFromConfirmedState =
+      a.state === "unknown" && a.confirmedState === "reauth";
+    const needsRelogin = a.state === "reauth" || reloginFromConfirmedState;
+    const reloginTitle = reloginFromConfirmedState
+      ? "根据上次明确检查，清除旧会话后重新登录"
+      : "清除失效会话后重新登录，不必删除账号";
 
     tr.innerHTML = `
       <td>
@@ -234,8 +240,10 @@ function renderAccounts() {
         <div class="actions">
           <button class="btn small" data-login="${a.id}" title="打开浏览器登录该账号">登录</button>
           ${
-            a.state === "reauth"
-              ? `<button class="btn small warn" data-relogin="${a.id}" title="清除失效会话后重新登录，不必删除账号">重新登录</button>`
+            needsRelogin
+              ? `<button class="btn small warn" data-relogin="${a.id}" title="${escapeHtml(
+                  reloginTitle
+                )}">重新登录</button>`
               : ""
           }
           <button class="btn small" data-open="${a.id}" title="打开网页，窗口不会自动关闭">${
@@ -269,34 +277,97 @@ function groupProxyLabel(groupId) {
 }
 
 function statusHtml(id, st, checkedAt) {
-  const when = checkedAt
-    ? `<span class="time-ago" title="${fmtLocal(checkedAt)}"> · ${timeAgo(checkedAt)}</span>`
-    : "";
+  const when = statusTimeHtml(st, checkedAt);
   return `<span class="status-dot" data-status="${id}">${statusInner(st)}${when}</span>`;
 }
 
+function statusTimeHtml(st, checkedAt) {
+  if (st?.stale) {
+    if (st.confirmedAt) {
+      return `<span class="time-ago" title="${escapeHtml(
+        `上次明确确认：${fmtLocal(st.confirmedAt)}`
+      )}"> · 上次确认 ${timeAgo(st.confirmedAt)}</span>`;
+    }
+    return checkedAt
+      ? `<span class="time-ago" title="${escapeHtml(
+          `最近检查异常：${fmtLocal(checkedAt)}`
+        )}"> · 检查异常 ${timeAgo(checkedAt)}</span>`
+      : "";
+  }
+  return checkedAt
+    ? `<span class="time-ago" title="${escapeHtml(fmtLocal(checkedAt))}"> · ${timeAgo(
+        checkedAt
+      )}</span>`
+    : "";
+}
+
+function applyStatusSnapshot(acc, st) {
+  const stateChanged = acc.state !== st.state;
+  acc.loggedIn = st.loggedIn;
+  acc.state = st.state;
+  acc.statusDetail = st.detail ?? null;
+  acc.checkedAt = st.checkedAt ?? null;
+  acc.stale = !!st.stale;
+  acc.lastCheckState = st.lastCheckState ?? null;
+  acc.lastCheckDetail = st.lastCheckDetail ?? null;
+  acc.confirmedState = st.confirmedState ?? null;
+  acc.confirmedAt = st.confirmedAt ?? null;
+  acc.consecutiveUnknowns = st.consecutiveUnknowns ?? 0;
+  acc.unknownSince = st.unknownSince ?? null;
+  if (st.email) acc.email = st.email;
+  return stateChanged;
+}
+
 /**
- * 三态状态显示。reauth 是关键的一类：cookie 还在、看着像已登录，
+ * 四态状态显示。reauth 是关键的一类：cookie 还在、看着像已登录，
  * 但令牌已失效（改了密码或加了双重认证），必须重新登录才能跑对话。
  */
 function statusInner(st) {
   const state = st && typeof st === "object" ? st.state : null;
   const loggedIn = st && typeof st === "object" ? st.loggedIn : st;
   const detail = st && typeof st === "object" ? st.statusDetail || st.detail : null;
+  const stale = !!(st && typeof st === "object" && st.stale);
+  const lastCheckDetail =
+    st && typeof st === "object" ? st.lastCheckDetail || detail : detail;
+  const confirmedAt =
+    st && typeof st === "object" ? st.confirmedAt || null : null;
+  const staleTitle = stale
+    ? `${lastCheckDetail || "最近一次检查未能确认"}${
+        confirmedAt ? `；上次明确确认：${fmtLocal(confirmedAt)}` : ""
+      }`
+    : detail;
 
   if (state === "reauth") {
     return `<span class="dot orange"></span><span title="${escapeHtml(
-      detail || "令牌已失效"
-    )}">需重新登录</span>`;
+      staleTitle || "令牌已失效"
+    )}">需重新登录${stale ? " · 待复核" : ""}</span>`;
   }
   // unknown：没能确认（网络抖动/限流）。不显示成“已登录”，避免误导。
   if (state === "unknown") {
+    const lastKnown =
+      stale && st.confirmedState
+        ? `；上次明确状态：${
+            st.confirmedState === "ok"
+              ? "已登录"
+              : st.confirmedState === "reauth"
+                ? "需重新登录"
+                : "未登录"
+          }${confirmedAt ? `（${fmtLocal(confirmedAt)}）` : ""}`
+        : "";
     return `<span class="dot"></span><span title="${escapeHtml(
-      detail || "未能确认会话状态"
+      (lastCheckDetail || "未能确认会话状态") + lastKnown
     )}">待确认</span>`;
   }
-  if (state === "ok") return `<span class="dot green"></span><span>已登录</span>`;
-  if (state === "out") return `<span class="dot red"></span><span>未登录</span>`;
+  if (state === "ok") {
+    return `<span class="dot green"></span><span${
+      stale ? ` title="${escapeHtml(staleTitle)}"` : ""
+    }>已登录${stale ? " · 待复核" : ""}</span>`;
+  }
+  if (state === "out") {
+    return `<span class="dot red"></span><span${
+      stale ? ` title="${escapeHtml(staleTitle)}"` : ""
+    }>未登录${stale ? " · 待复核" : ""}</span>`;
+  }
   // 无 state 字段时（旧缓存）退回布尔判断
   if (loggedIn === true) return `<span class="dot green"></span><span>已登录</span>`;
   if (loggedIn === false) return `<span class="dot red"></span><span>未登录</span>`;
@@ -899,26 +970,26 @@ async function checkStatus(id) {
   if (span) span.innerHTML = `<span class="dot"></span><span>检查中…</span>`;
   try {
     const res = await api(`/accounts/${id}/status?refresh=1`);
-    if (span) span.innerHTML = statusInner(res);
+    if (span) {
+      span.innerHTML = statusInner(res) + statusTimeHtml(res, res.checkedAt);
+    }
     // 状态检查遇到验证页/网络抖动时可能暂时拿不到 email。
     // 账号标识来自已保存的绑定信息，不能被一次空结果清掉。
     if (res.email) updateEmailCell(id, res.email);
     const acc = accountsCache.find((x) => x.id === id);
-    if (acc) {
-      acc.loggedIn = res.loggedIn;
-      acc.state = res.state;
-      acc.statusDetail = res.detail ?? null;
-      if (res.email) acc.email = res.email;
-    }
+    const stateChanged = acc ? applyStatusSnapshot(acc, res) : false;
     updateStats();
     if (res.skipped) {
-      toast("账号窗口正在使用，当前状态由该窗口自动更新");
+      toast(res.skipReason || res.detail || "账号正在使用，已保留最近状态");
     } else if (res.state === "reauth") {
       toast("该账号会话已失效，请点「重新登录」", "error");
-      renderAccounts(); // 让“重新登录”按钮出现
+    } else if (res.stale) {
+      toast("本次检查暂未确认，已保留上次明确状态");
     } else {
       toast("状态检测完成", "success");
     }
+    // 无论进入还是离开“需重新登录”，都同步操作按钮。
+    if (stateChanged) renderAccounts();
   } catch (e) {
     if (span) span.innerHTML = `<span class="dot red"></span><span>错误</span>`;
     toast("检查失败: " + e.message, "error");
@@ -939,23 +1010,31 @@ async function pollStatus() {
     for (const [id, st] of Object.entries(all)) {
       const span = $(`[data-status="${id}"]`);
       if (span) {
-        span.innerHTML = statusInner(st) +
-          (st.checkedAt ? `<span class="time-ago" title="${fmtLocal(st.checkedAt)}"> · ${timeAgo(st.checkedAt)}</span>` : "");
+        span.innerHTML = statusInner(st) + statusTimeHtml(st, st.checkedAt);
       }
       if (st.email) updateEmailCell(id, st.email);
 
       const acc = accountsCache.find((x) => x.id === id);
-      if (acc) {
-        if (acc.state !== st.state) stateChanged = true;
-        acc.loggedIn = st.loggedIn;
-        acc.state = st.state;
-        acc.statusDetail = st.detail ?? null;
-        if (st.email) acc.email = st.email;
+      if (acc && applyStatusSnapshot(acc, st)) stateChanged = true;
+    }
+    // 用户直接关闭浏览器窗口时没有按钮点击事件可回传；同步轻量的打开窗口
+    // 列表，避免“已打开”标签一直残留到下一次整页刷新。
+    let pageOpenChanged = false;
+    try {
+      const openPages = await api("/open-pages");
+      for (const acc of accountsCache) {
+        const next = !!openPages[acc.id];
+        if (!!acc.pageOpen !== next) {
+          acc.pageOpen = next;
+          pageOpenChanged = true;
+        }
       }
+    } catch {
+      // 状态轮询仍然有效；打开窗口列表失败时保留当前标签。
     }
     updateStats();
     // 有账号刚变成/脱离“需重新登录”，重画一次让按钮同步。
-    if (stateChanged) renderAccounts();
+    if (stateChanged || pageOpenChanged) renderAccounts();
   } catch {
     // 轮询静默失败
   }
@@ -1011,6 +1090,22 @@ async function doLogin(id, force = false, groupIdOverride = undefined) {
 
   step2.className = "step-dot active";
 
+  // busy/held/force 冲突会由后端立即返回终态，无需再让用户盯着两秒钟的
+  // “正在启动浏览器”假进度。
+  if (["success", "failed", "timeout"].includes(task.status)) {
+    msg.textContent = task.message || task.status;
+    closeBtn.hidden = false;
+    spinner.hidden = true;
+    if (task.status === "success") {
+      step3.className = "step-dot active";
+      checkStatus(id);
+      toast("账号登录成功，Session 已保存", "success");
+    } else {
+      toast("登录未完成: " + (task.message || task.status), "error");
+    }
+    return;
+  }
+
   const poll = setInterval(async () => {
     try {
       const t = await api(`/login-tasks/${task.taskId}`);
@@ -1026,7 +1121,7 @@ async function doLogin(id, force = false, groupIdOverride = undefined) {
           checkStatus(id);
           toast("账号登录成功，Session 已保存", "success");
         } else {
-          toast("登录未完成: " + t.status, "error");
+          toast("登录未完成: " + (t.message || t.status), "error");
         }
       }
     } catch (e) {
@@ -1552,6 +1647,7 @@ async function loadSettings() {
     f.statusCheckMinutes.value = s.statusCheckMinutes;
     f.openPageTimeoutMinutes.value = s.openPageTimeoutMinutes ?? 0;
     f.headless.checked = !!s.headless;
+    f.statusCheckOnStartup.checked = s.statusCheckOnStartup !== false;
   } catch (e) {
     toast("加载设置失败: " + e.message, "error");
   }
@@ -1572,6 +1668,7 @@ $("#settings-form").addEventListener("submit", async (e) => {
         statusCheckMinutes: Number(f.statusCheckMinutes.value),
         openPageTimeoutMinutes: Number(f.openPageTimeoutMinutes.value) || 0,
         headless: f.headless.checked,
+        statusCheckOnStartup: f.statusCheckOnStartup.checked,
       },
     });
     toast("设置参数已成功保存", "success");

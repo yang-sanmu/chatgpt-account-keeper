@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import { createHash } from "node:crypto";
 import { fromRoot, ensureDir } from "./paths.js";
+import { normalizeSettings } from "./statusSettings.js";
 import * as log from "./logger.js";
 
 // 可读写的配置存储。account/conversation 增删改都经过这里并落盘。
@@ -414,21 +415,12 @@ export function removeConversationSet(name) {
 }
 
 // ---------- settings (调度参数等) ----------
-const DEFAULT_SETTINGS = {
-  intervalMinutes: 180,
-  jitterMinutes: 30,
-  headless: true,
-  statusCheckMinutes: 15,
-  // “打开网页”窗口的兜底自动关闭时间（分钟）。0 = 不限时，由用户手动关闭。
-  openPageTimeoutMinutes: 0,
-};
-
 export function getSettings() {
-  return { ...DEFAULT_SETTINGS, ...readJsonFile(SETTINGS_FILE, {}) };
+  return normalizeSettings(readJsonFile(SETTINGS_FILE, {}));
 }
 
 export function saveSettings(patch) {
-  const next = { ...getSettings(), ...patch };
+  const next = normalizeSettings({ ...getSettings(), ...patch });
   writeJsonFile(SETTINGS_FILE, next);
   return next;
 }

@@ -3,5 +3,6 @@
   "jitterMinutes": 30,
   "headless": true,
   "statusCheckMinutes": 15,
+  "statusCheckOnStartup": true,
   "openPageTimeoutMinutes": 0
 }

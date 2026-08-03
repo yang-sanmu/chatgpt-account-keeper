@@ -9,6 +9,7 @@ import { clearRegionCache } from "./geo.js";
 import {
   getAllCachedStatus,
   getCachedStatus,
+  deleteCachedStatus,
   refreshAccount,
   startStatusMonitor,
   restartStatusMonitor,
@@ -16,6 +17,7 @@ import {
 import { recordConversation, readHistory } from "./logger.js";
 import { profileManager } from "./profileManager.js";
 import { isBusy, isHeld } from "./locks.js";
+import { validateSettingsPatch } from "./statusSettings.js";
 import * as log from "./logger.js";
 
 const app = express();
@@ -65,6 +67,13 @@ app.get("/api/accounts", wrap(async (req, res) => {
       loggedIn: st.loggedIn,
       statusDetail: st.detail ?? null,
       checkedAt: st.checkedAt,
+      stale: !!st.stale,
+      lastCheckState: st.lastCheckState ?? null,
+      lastCheckDetail: st.lastCheckDetail ?? null,
+      confirmedState: st.confirmedState ?? null,
+      confirmedAt: st.confirmedAt ?? null,
+      consecutiveUnknowns: st.consecutiveUnknowns ?? 0,
+      unknownSince: st.unknownSince ?? null,
       pageOpen: !!open[a.id],
     };
   });
@@ -122,7 +131,11 @@ app.delete("/api/accounts/:id", wrap(async (req, res) => {
   const profile = profileManager.removeAccountWithProfile(
     account,
     profileAction,
-    () => store.removeAccount(account.id),
+    () => {
+      const removed = store.removeAccount(account.id);
+      if (removed) deleteCachedStatus(account.id);
+      return removed;
+    },
     store.getAccounts()
   );
   res.json({ ok: true, profile });
@@ -166,7 +179,17 @@ app.get("/api/accounts/:id/status", wrap(async (req, res) => {
       // 登录状态和账号身份是两件事，刷新不能把后者清成“未绑定账号”。
       email: result.email ?? store.getAccount(acc.id)?.email ?? null,
       detail: result.detail ?? null,
+      checkedAt: result.checkedAt ?? null,
+      stale: !!result.stale,
+      lastCheckState: result.lastCheckState ?? result.state ?? null,
+      lastCheckDetail: result.lastCheckDetail ?? result.detail ?? null,
+      confirmedState: result.confirmedState ?? null,
+      confirmedAt: result.confirmedAt ?? null,
+      consecutiveUnknowns: result.consecutiveUnknowns ?? 0,
+      unknownSince: result.unknownSince ?? null,
       skipped: !!result.skipped,
+      skipKind: result.skipKind ?? null,
+      skipReason: result.skipReason ?? null,
     });
   }
   const st = getCachedStatus(acc.id);
@@ -177,6 +200,13 @@ app.get("/api/accounts/:id/status", wrap(async (req, res) => {
     email: st.email ?? acc.email ?? null,
     detail: st.detail ?? null,
     checkedAt: st.checkedAt,
+    stale: !!st.stale,
+    lastCheckState: st.lastCheckState ?? null,
+    lastCheckDetail: st.lastCheckDetail ?? null,
+    confirmedState: st.confirmedState ?? null,
+    confirmedAt: st.confirmedAt ?? null,
+    consecutiveUnknowns: st.consecutiveUnknowns ?? 0,
+    unknownSince: st.unknownSince ?? null,
   });
 }));
 
@@ -296,6 +326,15 @@ app.get("/api/login-tasks/:taskId", wrap(async (req, res) => {
 app.post("/api/accounts/:id/run", wrap(async (req, res) => {
   const acc = store.getAccount(req.params.id);
   if (!acc) return res.status(404).json({ error: "账号不存在" });
+  if (isBusy(acc.id) || isHeld(acc.id)) {
+    const error = new Error(
+      isHeld(acc.id)
+        ? "该账号的网页窗口仍在使用中，请先关闭窗口后再运行"
+        : "该账号正在执行其它浏览器操作，请稍后重试"
+    );
+    error.statusCode = 409;
+    throw error;
+  }
   const headless = store.getSettings().headless;
   const result = await runOnce(acc, { headless });
   recordConversation(acc.id, result);
@@ -337,7 +376,10 @@ app.get("/api/settings", wrap(async (req, res) => {
 }));
 
 app.put("/api/settings", wrap(async (req, res) => {
-  const saved = store.saveSettings(req.body ?? {});
+  const patch = req.body ?? {};
+  const validationError = validateSettingsPatch(patch);
+  if (validationError) return res.status(400).json({ error: validationError });
+  const saved = store.saveSettings(patch);
   restartStatusMonitor(); // 间隔可能改了，重置定时器
   res.json(saved);
 }));

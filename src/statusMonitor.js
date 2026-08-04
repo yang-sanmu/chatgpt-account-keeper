@@ -400,3 +400,10 @@ export function restartStatusMonitor() {
   // 保存设置不算“项目启动”，只从此刻重新计算下一次巡检时间。
   resetStatusMonitor(false);
 }
+
+export function stopStatusMonitor() {
+  if (!timer) return false;
+  clearInterval(timer);
+  timer = null;
+  return true;
+}

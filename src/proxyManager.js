@@ -765,10 +765,12 @@ function stopTest() {
   testChild = null;
 }
 
-// 进程退出时收掉主边车和测速边车，别留孤儿进程。
-for (const sig of ["exit", "SIGINT", "SIGTERM"]) {
-  process.on(sig, () => {
-    stop();
-    stopTest();
-  });
+export function stopAll() {
+  stop();
+  stopTest();
 }
+
+// exit 事件不能执行异步工作，但同步发出终止信号仍可避免边车变成孤儿进程。
+// SIGINT/SIGTERM 由 server 的统一关闭流程处理；不能在这里拦截后只清理不退出，
+// 否则 Node 会取消 Ctrl+C 的默认退出行为，HTTP 端口将一直被占用。
+process.on("exit", stopAll);

@@ -141,6 +141,14 @@ export async function closePageForAccount(accountId) {
   return true;
 }
 
+export async function closeAllOpenPages() {
+  const accountIds = [...openSessions.keys()];
+  await Promise.all(
+    accountIds.map((accountId) => closePageForAccount(accountId))
+  );
+  return accountIds.length;
+}
+
 function waitForContextCloseOrTimeout(context, timeoutMs) {
   return new Promise((resolve) => {
     let timer;

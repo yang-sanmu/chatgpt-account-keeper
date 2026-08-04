@@ -2,8 +2,17 @@ import express from "express";
 import { fromRoot } from "./paths.js";
 import * as store from "./store.js";
 import { runOnce, scheduler } from "./scheduler.js";
-import { startLogin, getLoginTask } from "./loginProvider.js";
-import { openPageForAccount, closePageForAccount, getOpenPages } from "./openPage.js";
+import {
+  startLogin,
+  getLoginTask,
+  closeAllLoginTasks,
+} from "./loginProvider.js";
+import {
+  openPageForAccount,
+  closePageForAccount,
+  closeAllOpenPages,
+  getOpenPages,
+} from "./openPage.js";
 import * as proxies from "./proxyManager.js";
 import { clearRegionCache } from "./geo.js";
 import {
@@ -13,12 +22,14 @@ import {
   refreshAccount,
   startStatusMonitor,
   restartStatusMonitor,
+  stopStatusMonitor,
 } from "./statusMonitor.js";
 import { recordConversation, readHistory } from "./logger.js";
 import { profileManager } from "./profileManager.js";
 import { startProfileMaintenance } from "./profileMaintenance.js";
 import { isBusy, isHeld } from "./locks.js";
 import { validateSettingsPatch } from "./statusSettings.js";
+import { installShutdownHandlers } from "./shutdown.js";
 import * as log from "./logger.js";
 
 const app = express();
@@ -399,8 +410,31 @@ const PORT = process.env.PORT || 5173;
 // 读写代理节点配置。绑 0.0.0.0 会让同网段的人直接接管这些账号。
 // 确实要在别的机器访问，请自行加鉴权后再改 HOST。
 const HOST = process.env.HOST || "127.0.0.1";
-app.listen(PORT, HOST, () => {
+const server = app.listen(PORT, HOST, () => {
   log.info(`GPT 账号管理面板已启动: http://${HOST}:${PORT}`);
   startStatusMonitor(); // 后台定时检查各账号登录状态
   startProfileMaintenance(); // 低优先级补扫；后续浏览器关窗也会触发按阈值维护
+});
+
+function closeHttpServer() {
+  return new Promise((resolve, reject) => {
+    if (!server.listening) return resolve();
+    server.close((error) => (error ? reject(error) : resolve()));
+  });
+}
+
+installShutdownHandlers({
+  logger: log,
+  shutdown: async () => {
+    // 先停止新工作和后台触发源，再回收浏览器与代理子进程。
+    const httpClosing = closeHttpServer();
+    stopStatusMonitor();
+    await scheduler.stop();
+    proxies.stopAll();
+    await Promise.all([
+      httpClosing,
+      closeAllLoginTasks(),
+      closeAllOpenPages(),
+    ]);
+  },
 });

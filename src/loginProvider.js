@@ -90,6 +90,14 @@ export function getLoginTask(taskId) {
   return pub;
 }
 
+export async function closeAllLoginTasks() {
+  const contexts = [...tasks.values()]
+    .map((task) => task.context)
+    .filter(Boolean);
+  await Promise.all(contexts.map((context) => context.close().catch(() => {})));
+  return contexts.length;
+}
+
 /**
  * 发起某账号的登录。立即返回 taskId，浏览器窗口在后台打开。
  * 用户登录成功后，任务状态变为 success。

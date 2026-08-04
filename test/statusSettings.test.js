@@ -18,11 +18,12 @@ test("设置接口只接受已知字段、严格布尔值和安全的有限间�
       statusCheckOnStartup: false,
       statusCheckMinutes: 15,
       openPageTimeoutMinutes: MAX_STATUS_CHECK_MINUTES,
+      profileAutoCleanEnabled: true,
     }),
     null
   );
 
-  for (const key of ["headless", "statusCheckOnStartup"]) {
+  for (const key of ["headless", "statusCheckOnStartup", "profileAutoCleanEnabled"]) {
     assert.match(validateSettingsPatch({ [key]: "false" }), /布尔值/);
   }
 
@@ -37,7 +38,6 @@ test("设置接口只接受已知字段、严格布尔值和安全的有限间�
     }
     assert.equal(validateSettingsPatch({ [key]: 0 }), null);
   }
-
   assert.match(validateSettingsPatch({ typo: true }), /未知设置字段/);
   assert.match(validateSettingsPatch([]), /JSON 对象/);
 });
@@ -61,6 +61,7 @@ test("旧版或手工损坏的本地设置在读取时统一恢复为安全值",
       statusCheckMinutes: 0,
       statusCheckOnStartup: 0,
       openPageTimeoutMinutes: -20,
+      profileAutoCleanEnabled: "true",
       legacyUnknownField: true,
     }),
     {
@@ -70,6 +71,7 @@ test("旧版或手工损坏的本地设置在读取时统一恢复为安全值",
       statusCheckMinutes: 1,
       statusCheckOnStartup: DEFAULT_SETTINGS.statusCheckOnStartup,
       openPageTimeoutMinutes: 0,
+      profileAutoCleanEnabled: DEFAULT_SETTINGS.profileAutoCleanEnabled,
     }
   );
 

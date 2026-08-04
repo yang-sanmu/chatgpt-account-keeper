@@ -7,6 +7,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   statusCheckMinutes: DEFAULT_STATUS_CHECK_MINUTES,
   statusCheckOnStartup: true,
   openPageTimeoutMinutes: 0,
+  profileAutoCleanEnabled: true,
 });
 
 const hasOwn = (value, key) =>
@@ -18,6 +19,7 @@ const KNOWN_SETTINGS = new Set([
   "statusCheckMinutes",
   "statusCheckOnStartup",
   "openPageTimeoutMinutes",
+  "profileAutoCleanEnabled",
 ]);
 
 export function safeStatusCheckMinutes(value) {
@@ -58,6 +60,10 @@ export function normalizeSettings(value) {
       0,
       DEFAULT_SETTINGS.openPageTimeoutMinutes
     ),
+    profileAutoCleanEnabled:
+      typeof input.profileAutoCleanEnabled === "boolean"
+        ? input.profileAutoCleanEnabled
+        : DEFAULT_SETTINGS.profileAutoCleanEnabled,
   };
 }
 
@@ -83,7 +89,11 @@ export function validateSettingsPatch(patch) {
   const unknownKey = Object.keys(patch).find((key) => !KNOWN_SETTINGS.has(key));
   if (unknownKey) return `未知设置字段：${unknownKey}`;
 
-  for (const key of ["headless", "statusCheckOnStartup"]) {
+  for (const key of [
+    "headless",
+    "statusCheckOnStartup",
+    "profileAutoCleanEnabled",
+  ]) {
     if (hasOwn(patch, key) && typeof patch[key] !== "boolean") {
       return `${key} 必须是布尔值`;
     }

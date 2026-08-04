@@ -66,6 +66,12 @@ test("基础启动参数保留既有的反自动化开关", () => {
   assert.ok(args.args.includes("--disable-blink-features=AutomationControlled"));
 });
 
+test("浏览器启动参数限制磁盘与媒体缓存", () => {
+  const args = baseLaunchArgs(false);
+  assert.ok(args.args.includes(`--disk-cache-size=${64 * 1024 * 1024}`));
+  assert.ok(args.args.includes(`--media-cache-size=${16 * 1024 * 1024}`));
+});
+
 test("默认用真实 Chrome 且不硬编码 UA", () => {
   // 自带 Chromium 的 userAgentData 缺少 Google Chrome 品牌，是弹验证码的关键差异；
   // 启动参数本身不写死任何版本，Headless 的实际 UA 会在运行时读取。

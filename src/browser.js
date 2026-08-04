@@ -6,6 +6,7 @@ import { fromRoot, ensureDir } from "./paths.js";
 import { proxyForAccount, ensureRunning } from "./proxyManager.js";
 import { getAccount, effectiveProxyId } from "./store.js";
 import { resolveRegionForAccount } from "./geo.js";
+import { scheduleProfileCacheMaintenance } from "./profileMaintenance.js";
 import * as log from "./logger.js";
 
 /**
@@ -623,6 +624,8 @@ export function baseLaunchArgs(headless) {
       "--disable-blink-features=AutomationControlled",
       "--no-first-run",
       "--no-default-browser-check",
+      `--disk-cache-size=${64 * 1024 * 1024}`,
+      `--media-cache-size=${16 * 1024 * 1024}`,
     ],
   };
 }
@@ -776,6 +779,10 @@ export async function launchForAccount(account, opts = {}) {
     debugPortNotBefore = Date.now();
     context = await chromium.launchPersistentContext(userDataDir, launchArgs);
   }
+
+  context.once("close", () => {
+    scheduleProfileCacheMaintenance(liveAccount.id);
+  });
 
   return initializeLaunchedContext(context, {
     headless,

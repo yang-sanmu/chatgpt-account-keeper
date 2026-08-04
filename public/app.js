@@ -494,7 +494,7 @@ function bindAccountActions() {
         } else {
           toast(res.message || "打开失败", "error");
         }
-        loadAccounts();
+        await loadAccounts();
       } catch (e) {
         toast("打开失败: " + e.message, "error");
       } finally {
@@ -1017,26 +1017,31 @@ async function pollStatus() {
       const acc = accountsCache.find((x) => x.id === id);
       if (acc && applyStatusSnapshot(acc, st)) stateChanged = true;
     }
-    // 用户直接关闭浏览器窗口时没有按钮点击事件可回传；同步轻量的打开窗口
-    // 列表，避免“已打开”标签一直残留到下一次整页刷新。
-    let pageOpenChanged = false;
-    try {
-      const openPages = await api("/open-pages");
-      for (const acc of accountsCache) {
-        const next = !!openPages[acc.id];
-        if (!!acc.pageOpen !== next) {
-          acc.pageOpen = next;
-          pageOpenChanged = true;
-        }
-      }
-    } catch {
-      // 状态轮询仍然有效；打开窗口列表失败时保留当前标签。
-    }
     updateStats();
     // 有账号刚变成/脱离“需重新登录”，重画一次让按钮同步。
-    if (stateChanged || pageOpenChanged) renderAccounts();
+    if (stateChanged) renderAccounts();
   } catch {
     // 轮询静默失败
+  }
+}
+
+// 打开窗口状态独立轮询，不受登录状态接口延迟或失败影响。这里只更新按钮和缓存，
+// 避免为了一个标签重画整张表、打断用户正在编辑的备注或选择框。
+async function pollOpenPages() {
+  try {
+    const openPages = await api("/open-pages");
+    for (const acc of accountsCache) {
+      const next = !!openPages[acc.id];
+      if (!!acc.pageOpen === next) continue;
+      acc.pageOpen = next;
+
+      const button = $(`[data-open="${acc.id}"]`);
+      if (button && !button.disabled) {
+        button.textContent = next ? "已打开" : "打开网页";
+      }
+    }
+  } catch {
+    // 静默失败，下一轮继续同步。
   }
 }
 
@@ -1648,6 +1653,7 @@ async function loadSettings() {
     f.openPageTimeoutMinutes.value = s.openPageTimeoutMinutes ?? 0;
     f.headless.checked = !!s.headless;
     f.statusCheckOnStartup.checked = s.statusCheckOnStartup !== false;
+    f.profileAutoCleanEnabled.checked = s.profileAutoCleanEnabled !== false;
   } catch (e) {
     toast("加载设置失败: " + e.message, "error");
   }
@@ -1667,6 +1673,7 @@ $("#settings-form").addEventListener("submit", async (e) => {
         jitterMinutes: Number(f.jitterMinutes.value),
         statusCheckMinutes: Number(f.statusCheckMinutes.value),
         openPageTimeoutMinutes: Number(f.openPageTimeoutMinutes.value) || 0,
+        profileAutoCleanEnabled: f.profileAutoCleanEnabled.checked,
         headless: f.headless.checked,
         statusCheckOnStartup: f.statusCheckOnStartup.checked,
       },
@@ -1872,8 +1879,10 @@ async function init() {
   loadSettings();
   loadScheduler();
   pollStatus();
+  pollOpenPages();
 }
 
 init();
 setInterval(loadScheduler, 8000);
 setInterval(pollStatus, 10000);
+setInterval(pollOpenPages, 2000);

@@ -4,5 +4,6 @@
   "headless": true,
   "statusCheckMinutes": 15,
   "statusCheckOnStartup": true,
-  "openPageTimeoutMinutes": 0
+  "openPageTimeoutMinutes": 0,
+  "profileAutoCleanEnabled": true
 }

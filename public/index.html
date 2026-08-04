@@ -326,6 +326,19 @@
               </div>
             </div>
 
+            <div class="settings-section-label">Profile 存储</div>
+
+            <div class="form-group checkbox-card">
+              <div class="checkbox-text">
+                <span class="label-title">自动维护 Profile 缓存</span>
+                <span class="label-desc">浏览器关闭后检查缓存，超过 128 MB 时自动清理；Cookie、登录态和站点存储不会被删除</span>
+              </div>
+              <label class="switch">
+                <input type="checkbox" name="profileAutoCleanEnabled" />
+                <span class="slider round"></span>
+              </label>
+            </div>
+
             <div class="form-group checkbox-card">
               <div class="checkbox-text">
                 <span class="label-title">无头模式运行 (Headless Mode)</span>
@@ -371,7 +384,7 @@
           <div class="storage-head">
             <div>
               <h3>Profile 存储维护</h3>
-              <p class="hint-text">扫描未被账号引用的浏览器 Profile，或清理可安全重建的网页、代码与 GPU 缓存。Cookie、登录态和站点存储不会被缓存清理删除。</p>
+              <p class="hint-text">扫描未被账号引用的浏览器 Profile，或清理可安全重建的网页、代码与 GPU 缓存。Cookie、登录态、Local Storage 和 IndexedDB 不会被删除；手动清理会删除 CacheStorage。</p>
             </div>
             <div class="storage-actions">
               <button id="profile-clean-cache" class="btn">清理全部缓存</button>

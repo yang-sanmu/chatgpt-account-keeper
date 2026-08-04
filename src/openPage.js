@@ -39,7 +39,7 @@ export function isPageOpen(accountId) {
  * 这样 mihomo 缺失／代理配置错误／浏览器起不来时，用户能立刻看到真实错误，
  * 而不是收到一个假的“已打开”。返回后窗口继续保持打开，直到用户手动关闭。
  */
-export async function openPageForAccount(account, url) {
+export async function openPageForAccount(account, url, runtime = {}) {
   if (openSessions.has(account.id)) {
     return { ok: false, alreadyOpen: true, message: "该账号已有打开的窗口" };
   }
@@ -71,7 +71,8 @@ export async function openPageForAccount(account, url) {
     let context;
     try {
       const liveAccount = getAccount(account.id) ?? account;
-      const res = await launchForAccount(liveAccount, { headless: false });
+      const launch = runtime.launchForAccount ?? launchForAccount;
+      const res = await launch(liveAccount, { headless: false });
       context = res.context;
       session.context = context;
       const page = res.page;
@@ -82,18 +83,17 @@ export async function openPageForAccount(account, url) {
       // 到这里才算真的开起来了，通知调用方成功。
       settle({ ok: true, url: target, message: "窗口已打开，用完请手动关闭浏览器窗口" });
 
-      // 用户关掉窗口 => context 触发 close。用它作为退出信号。
+      // 用户关掉窗口 => context 触发 close。让看守循环立即醒来，
+      // 不必等满一次状态采样间隔才清除 openSessions。
       let closed = false;
-      context.on("close", () => {
-        closed = true;
-      });
 
       // 默认不限时；设置里配了正数才启用兜底超时。
       const limitMin = Number(getSettings().openPageTimeoutMinutes) || 0;
       const deadline = limitMin > 0 ? Date.now() + limitMin * 60000 : Infinity;
 
       while (!closed && Date.now() < deadline) {
-        await sleep(SAMPLE_INTERVAL_MS);
+        const waitMs = Math.min(SAMPLE_INTERVAL_MS, deadline - Date.now());
+        closed = await waitForContextCloseOrTimeout(context, waitMs);
         if (closed) break;
         // 从这个活页面采样登录状态：用户刚在窗口里重新登录，面板能马上看到。
         try {
@@ -141,4 +141,19 @@ export async function closePageForAccount(accountId) {
   return true;
 }
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+function waitForContextCloseOrTimeout(context, timeoutMs) {
+  return new Promise((resolve) => {
+    let timer;
+    let settled = false;
+    const finish = (closed) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      context.off("close", onClose);
+      resolve(closed);
+    };
+    const onClose = () => finish(true);
+    context.once("close", onClose);
+    timer = setTimeout(() => finish(false), timeoutMs);
+  });
+}

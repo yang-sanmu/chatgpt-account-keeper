@@ -3,19 +3,23 @@ import path from "node:path";
 import { ROOT, fromRoot, ensureDir } from "./paths.js";
 import { isBusy, isHeld } from "./locks.js";
 
+const SERVICE_WORKER_CACHE_PATH = ["Default", "Service Worker", "CacheStorage"];
 const CACHE_PATHS = [
   ["Default", "Cache"],
   ["Default", "Code Cache"],
   ["Default", "GPUCache"],
   ["Default", "DawnGraphiteCache"],
   ["Default", "DawnWebGPUCache"],
-  ["Default", "Service Worker", "CacheStorage"],
+  SERVICE_WORKER_CACHE_PATH,
   ["GrShaderCache"],
   ["ShaderCache"],
   ["GPUPersistentCache"],
   ["component_crx_cache"],
   ["extensions_crx_cache"],
 ];
+const AUTOMATIC_CACHE_PATHS = CACHE_PATHS.filter(
+  (parts) => parts !== SERVICE_WORKER_CACHE_PATH
+);
 
 const BROWSER_LOCK_NAMES = new Set(["SingletonLock", "SingletonCookie", "SingletonSocket"]);
 
@@ -320,12 +324,12 @@ export function createProfileManager({
     return target;
   }
 
-  function cleanCacheAt(target, accountIds = null) {
+  function cleanCacheAt(target, accountIds = null, cachePaths = CACHE_PATHS) {
     if (!assertRealDirectory(target)) return { freedBytes: 0, freedFiles: 0, removed: [] };
     assertAvailable(target, accountIds);
     const result = { freedBytes: 0, freedFiles: 0, removed: [] };
 
-    for (const parts of CACHE_PATHS) {
+    for (const parts of cachePaths) {
       const cachePath = path.resolve(target, ...parts);
       assertCachePathIsLocal(target, cachePath);
       if (!fs.existsSync(cachePath)) continue;
@@ -342,6 +346,40 @@ export function createProfileManager({
       result.removed.push(parts.join("/"));
     }
     return result;
+  }
+
+  function inspectCacheAt(target, accountIds = null, cachePaths = CACHE_PATHS) {
+    if (!assertRealDirectory(target)) {
+      return { missing: true, cacheBytes: 0, cacheFiles: 0 };
+    }
+    assertAvailable(target, accountIds);
+    const result = { missing: false, cacheBytes: 0, cacheFiles: 0 };
+
+    for (const parts of cachePaths) {
+      const cachePath = path.resolve(target, ...parts);
+      assertCachePathIsLocal(target, cachePath);
+      if (!fs.existsSync(cachePath)) continue;
+      const stats = statTree(cachePath);
+      result.cacheBytes += stats.bytes;
+      result.cacheFiles += stats.files;
+    }
+    return result;
+  }
+
+  function inspectAccountCache(account) {
+    const target = accountProfilePath(account);
+    return inspectCacheAt(target, account.id, AUTOMATIC_CACHE_PATHS);
+  }
+
+  function cleanAccountCache(account) {
+    const target = accountProfilePath(account);
+    if (!assertRealDirectory(target)) {
+      return { missing: true, freedBytes: 0, freedFiles: 0, removed: [] };
+    }
+    return {
+      missing: false,
+      ...cleanCacheAt(target, account.id, AUTOMATIC_CACHE_PATHS),
+    };
   }
 
   function cleanCaches(accounts = [], { scope = "all", name = null } = {}) {
@@ -583,6 +621,8 @@ export function createProfileManager({
   return {
     scan,
     cleanCaches,
+    inspectAccountCache,
+    cleanAccountCache,
     archiveAccount,
     archiveOrphan,
     purgeAccount,

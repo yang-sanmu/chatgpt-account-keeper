@@ -892,6 +892,14 @@ input:checked + .slider:before {
   max-width: 920px;
 }
 
+.settings-section-label {
+  padding-top: 4px;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
 .storage-head,
 .profile-list-head,
 .profile-row {

@@ -16,6 +16,7 @@ import {
 } from "./statusMonitor.js";
 import { recordConversation, readHistory } from "./logger.js";
 import { profileManager } from "./profileManager.js";
+import { startProfileMaintenance } from "./profileMaintenance.js";
 import { isBusy, isHeld } from "./locks.js";
 import { validateSettingsPatch } from "./statusSettings.js";
 import * as log from "./logger.js";
@@ -401,4 +402,5 @@ const HOST = process.env.HOST || "127.0.0.1";
 app.listen(PORT, HOST, () => {
   log.info(`GPT 账号管理面板已启动: http://${HOST}:${PORT}`);
   startStatusMonitor(); // 后台定时检查各账号登录状态
+  startProfileMaintenance(); // 低优先级补扫；后续浏览器关窗也会触发按阈值维护
 });

@@ -98,6 +98,7 @@ test("cache cleanup removes only allowlisted cache and preserves login storage",
   try {
     fx.write("profiles/active/Default/Cache/data", 100);
     fx.write("profiles/active/Default/Code Cache/js/data", 200);
+    fx.write("profiles/active/Default/Service Worker/CacheStorage/data", 400);
     fx.write("profiles/active/Default/Cookies", 25);
     fx.write("profiles/active/Default/Local Storage/data", 50);
     const manager = createProfileManager(fx);
@@ -106,10 +107,16 @@ test("cache cleanup removes only allowlisted cache and preserves login storage",
       name: "active",
     });
 
-    assert.equal(result.freedBytes, 300);
+    assert.equal(result.freedBytes, 700);
     assert.equal(fs.existsSync(path.join(fx.profilesRoot, "active", "Default", "Cache")), false);
     assert.equal(
       fs.existsSync(path.join(fx.profilesRoot, "active", "Default", "Code Cache")),
+      false
+    );
+    assert.equal(
+      fs.existsSync(
+        path.join(fx.profilesRoot, "active", "Default", "Service Worker", "CacheStorage")
+      ),
       false
     );
     assert.equal(
@@ -118,6 +125,49 @@ test("cache cleanup removes only allowlisted cache and preserves login storage",
     );
     assert.equal(
       fs.existsSync(path.join(fx.profilesRoot, "active", "Default", "Local Storage", "data")),
+      true
+    );
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test("自动清理保留 CacheStorage 与登录相关站点存储", () => {
+  const fx = fixture();
+  try {
+    fx.write("profiles/active/Default/Cache/data", 100);
+    fx.write("profiles/active/Default/Code Cache/js/data", 200);
+    fx.write("profiles/active/Default/Service Worker/CacheStorage/data", 400);
+    fx.write("profiles/active/Default/Network/Cookies", 25);
+    fx.write("profiles/active/Default/IndexedDB/data", 50);
+    const manager = createProfileManager(fx);
+    const account = { id: "a1", profileDir: "profiles/active" };
+
+    const before = manager.inspectAccountCache(account);
+    const cleaned = manager.cleanAccountCache(account);
+
+    assert.equal(before.cacheBytes, 300);
+    assert.equal(before.cacheFiles, 2);
+    assert.equal(cleaned.freedBytes, 300);
+    assert.equal(
+      fs.existsSync(
+        path.join(
+          fx.profilesRoot,
+          "active",
+          "Default",
+          "Service Worker",
+          "CacheStorage",
+          "data"
+        )
+      ),
+      true
+    );
+    assert.equal(
+      fs.existsSync(path.join(fx.profilesRoot, "active", "Default", "Network", "Cookies")),
+      true
+    );
+    assert.equal(
+      fs.existsSync(path.join(fx.profilesRoot, "active", "Default", "IndexedDB", "data")),
       true
     );
   } finally {

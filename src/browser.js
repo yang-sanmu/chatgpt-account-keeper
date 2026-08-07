@@ -642,6 +642,26 @@ export function applyWebrtcPolicy(launchArgs, usingProxy) {
 }
 
 /**
+ * 给 Playwright 的代理配置追加直连域名。
+ *
+ * bypass 是逗号分隔字符串；这里保留调用方已有规则并去重，避免后续新增兼容域名时
+ * 覆盖节点自身的配置。域名列表只来自程序内常量，不接收页面或用户输入。
+ */
+export function applyProxyBypass(proxy, domains = []) {
+  if (!proxy) return proxy;
+
+  const entries = [
+    ...String(proxy.bypass ?? "").split(","),
+    ...(Array.isArray(domains) ? domains : []),
+  ]
+    .map((entry) => String(entry ?? "").trim())
+    .filter(Boolean);
+
+  if (!entries.length) return proxy;
+  return { ...proxy, bypass: [...new Set(entries)].join(",") };
+}
+
+/**
  * 判断启动失败是否因为本机没装对应的浏览器渠道。
  * Playwright 找不到 channel 时报的是 "Chromium distribution 'chrome' is not found"。
  */
@@ -737,7 +757,7 @@ export async function launchForAccount(account, opts = {}) {
     await ensureRunning();
     const p = proxyForAccount(liveAccount);
     if (p) {
-      launchArgs.proxy = p;
+      launchArgs.proxy = applyProxyBypass(p, opts.proxyBypass);
       log.info(`账号 ${liveAccount.id} 使用代理节点 -> ${p.server}`);
     } else {
       // 绑了节点却拿不到端口（节点被停用/已从订阅移除）。宁可报错也不静默裸奔，

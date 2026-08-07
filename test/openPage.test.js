@@ -2,7 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { isHeld } from "../src/locks.js";
-import { isPageOpen, openPageForAccount } from "../src/openPage.js";
+import {
+  isPageOpen,
+  OPEN_PAGE_PROXY_BYPASS,
+  openPageForAccount,
+} from "../src/openPage.js";
 
 class FakeContext extends EventEmitter {
   constructor(page) {
@@ -29,6 +33,10 @@ async function waitUntil(predicate, timeoutMs = 500) {
   }
 }
 
+test("打开网页只直连 GCash 必需的静态脚本域名", () => {
+  assert.deepEqual(OPEN_PAGE_PROXY_BYPASS, ["gw.alipayobjects.com"]);
+});
+
 test("手动关窗后立即清除打开状态并释放账号占用", async (t) => {
   const account = {
     id: `open-page-close-${Date.now()}`,
@@ -39,13 +47,21 @@ test("手动关窗后立即清除打开状态并释放账号占用", async (t) =
     url: () => "https://example.com/",
   };
   const context = new FakeContext(page);
+  let launchOptions;
   t.after(() => context.close());
 
   const result = await openPageForAccount(account, "https://example.com/", {
-    launchForAccount: async () => ({ context, page }),
+    launchForAccount: async (_account, options) => {
+      launchOptions = options;
+      return { context, page };
+    },
   });
 
   assert.equal(result.ok, true);
+  assert.deepEqual(launchOptions, {
+    headless: false,
+    proxyBypass: OPEN_PAGE_PROXY_BYPASS,
+  });
   assert.equal(isPageOpen(account.id), true);
   assert.equal(isHeld(account.id), true);
 

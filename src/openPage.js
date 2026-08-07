@@ -22,6 +22,16 @@ const openSessions = new Map();
 
 const SAMPLE_INTERVAL_MS = 10000;
 
+/**
+ * GCash 的授权页把 Alipay IWP Tracker 当作启动期硬依赖。部分境外节点会直接重置
+ * 该静态资源域名的连接，页面随后因 initiTracker 未定义而永远停在加载文案；同一台
+ * 机器直连则可正常访问。只让这个脚本 CDN 直连，GCash、Alipay 风控上报、Adyen、
+ * ChatGPT 和其它页面流量仍继续使用账号所属节点。
+ */
+export const OPEN_PAGE_PROXY_BYPASS = [
+  "gw.alipayobjects.com",
+];
+
 export function getOpenPages() {
   const out = {};
   for (const [id, s] of openSessions) {
@@ -72,7 +82,10 @@ export async function openPageForAccount(account, url, runtime = {}) {
     try {
       const liveAccount = getAccount(account.id) ?? account;
       const launch = runtime.launchForAccount ?? launchForAccount;
-      const res = await launch(liveAccount, { headless: false });
+      const res = await launch(liveAccount, {
+        headless: false,
+        proxyBypass: OPEN_PAGE_PROXY_BYPASS,
+      });
       context = res.context;
       session.context = context;
       const page = res.page;

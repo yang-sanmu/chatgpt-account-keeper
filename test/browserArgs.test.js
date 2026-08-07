@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   baseLaunchArgs,
+  applyProxyBypass,
   applyWebrtcPolicy,
   webrtcGuardScript,
   isMissingChannelError,
@@ -11,6 +12,29 @@ import {
   normalizeHeadlessUserAgent,
   WEBRTC_NO_LEAK_FLAG,
 } from "../src/browser.js";
+
+test("代理直连域名会保留已有规则、去重且不修改原对象", () => {
+  const proxy = {
+    server: "http://127.0.0.1:21001",
+    bypass: "localhost,gw.alipayobjects.com",
+  };
+
+  const result = applyProxyBypass(proxy, [
+    "gw.alipayobjects.com",
+    " cdn.example.com ",
+    "",
+  ]);
+
+  assert.deepEqual(result, {
+    server: proxy.server,
+    bypass: "localhost,gw.alipayobjects.com,cdn.example.com",
+  });
+  assert.equal(proxy.bypass, "localhost,gw.alipayobjects.com");
+});
+
+test("没有代理时不创建直连配置", () => {
+  assert.equal(applyProxyBypass(null, ["gw.alipayobjects.com"]), null);
+});
 
 test("只忽略已经消失的精确 CDP child session 错误", () => {
   const gone = Object.assign(new Error("gone"), {

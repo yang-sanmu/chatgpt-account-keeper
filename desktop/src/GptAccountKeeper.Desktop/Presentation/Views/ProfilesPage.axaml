@@ -1,0 +1,73 @@
+<UserControl
+    x:Class="GptAccountKeeper.Desktop.Presentation.Views.ProfilesPage"
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:models="using:GptAccountKeeper.Desktop.Models"
+    xmlns:pages="using:GptAccountKeeper.Desktop.Presentation.Pages"
+    x:DataType="pages:ProfilesPageViewModel">
+
+  <Grid Margin="26,0,26,20" ColumnDefinitions="1.35*,1*" ColumnSpacing="14">
+
+    <Border CornerRadius="10" Background="White" BorderBrush="#EAECF0" BorderThickness="1">
+      <Grid Margin="14" RowDefinitions="Auto,*">
+        <StackPanel Spacing="9" Margin="0,0,0,9">
+          <TextBlock Text="{Binding Summary}" FontSize="12" Foreground="#475467" TextWrapping="Wrap" />
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <Button Content="重新扫描" Padding="9,5" FontSize="11" Command="{Binding ScanCommand}" />
+            <Button Content="清理全部可重建缓存" Padding="9,5" FontSize="11" Command="{Binding CleanAllCommand}" />
+            <CheckBox Content="只看孤儿 Profile" IsChecked="{Binding OnlyOrphans, Mode=TwoWay}"
+                      VerticalAlignment="Center" />
+          </StackPanel>
+        </StackPanel>
+
+        <Panel Grid.Row="1">
+          <ListBox ItemsSource="{Binding Items}" SelectedItem="{Binding Selected, Mode=TwoWay}">
+            <ListBox.ItemTemplate>
+              <DataTemplate x:DataType="models:ProfileEntryDto">
+                <Grid Margin="4,6" ColumnDefinitions="*,Auto" ColumnSpacing="10">
+                  <StackPanel Spacing="2">
+                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="12" />
+                    <TextBlock Text="{Binding SizeText}" FontSize="10" Foreground="#667085" />
+                  </StackPanel>
+                  <TextBlock Grid.Column="1" Text="{Binding StateText}" FontSize="11" Foreground="#175CD3"
+                             VerticalAlignment="Center" />
+                </Grid>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+
+          <StackPanel IsVisible="{Binding IsEmpty}" VerticalAlignment="Center" HorizontalAlignment="Center"
+                      Spacing="8" MaxWidth="330">
+            <TextBlock Text="▣" FontSize="32" Foreground="#D0D5DD" HorizontalAlignment="Center" />
+            <TextBlock Text="{Binding EmptyText}" TextWrapping="Wrap" TextAlignment="Center"
+                       FontSize="12" Foreground="#667085" />
+          </StackPanel>
+        </Panel>
+      </Grid>
+    </Border>
+
+    <Border Grid.Column="1" CornerRadius="10" Background="White" BorderBrush="#EAECF0" BorderThickness="1">
+      <ScrollViewer Padding="16">
+        <StackPanel Spacing="10">
+          <TextBlock Text="所选 Profile" FontSize="15" FontWeight="SemiBold" />
+          <TextBlock Text="{Binding Selected.Name}" FontSize="18" FontWeight="SemiBold" TextWrapping="Wrap" />
+          <TextBlock Text="{Binding Selected.StateText}" FontSize="12" Foreground="#475467" />
+          <TextBlock Text="{Binding Selected.SizeText}" FontSize="12" Foreground="#475467" />
+          <TextBlock Text="{Binding OrphanHint}" FontSize="11" Foreground="#B54708" TextWrapping="Wrap" />
+
+          <Button Content="清理所选缓存" HorizontalAlignment="Stretch"
+                  Command="{Binding CleanSelectedCommand}" />
+          <Button Content="归档孤儿 Profile…" HorizontalAlignment="Stretch"
+                  Command="{Binding ArchiveOrphanCommand}" />
+          <Button Content="永久删除孤儿 Profile…" HorizontalAlignment="Stretch" Foreground="#B42318"
+                  Command="{Binding PurgeOrphanCommand}" />
+
+          <Border Padding="11" Background="#FFFAEB" CornerRadius="7">
+            <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#7A2E0E"
+                       Text="缓存清理只删可重建的数据，保留 Cookie、Local Storage、IndexedDB 和 Service Worker，登录态不受影响。归档会保留完整登录数据但移动目录；永久删除不可恢复，执行前会再次确认。关联账号或正在被 Chrome 使用的 Profile 不能做孤儿操作。" />
+          </Border>
+        </StackPanel>
+      </ScrollViewer>
+    </Border>
+  </Grid>
+</UserControl>

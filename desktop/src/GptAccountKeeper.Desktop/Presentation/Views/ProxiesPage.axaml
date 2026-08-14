@@ -1,0 +1,156 @@
+<UserControl
+    x:Class="GptAccountKeeper.Desktop.Presentation.Views.ProxiesPage"
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:models="using:GptAccountKeeper.Desktop.Models"
+    xmlns:vm="using:GptAccountKeeper.Desktop.Presentation"
+    xmlns:pages="using:GptAccountKeeper.Desktop.Presentation.Pages"
+    x:DataType="pages:ProxiesPageViewModel">
+
+  <Grid Margin="26,0,26,20" ColumnDefinitions="360,*" ColumnSpacing="14">
+
+    <!-- 分组：列表 + 与之明确对应的表单 -->
+    <Grid RowDefinitions="*,Auto" RowSpacing="12">
+      <Border CornerRadius="10" Background="White" BorderBrush="#EAECF0" BorderThickness="1">
+        <Grid Margin="14" RowDefinitions="Auto,*">
+          <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,9">
+            <StackPanel>
+              <TextBlock Text="账号分组" FontSize="15" FontWeight="SemiBold" />
+              <TextBlock Text="{Binding GroupSummary}" FontSize="11" Foreground="#667085" />
+            </StackPanel>
+            <Button Grid.Column="1" Content="新建分组" Padding="9,5" FontSize="11"
+                    Command="{Binding BeginNewGroupCommand}" />
+          </Grid>
+          <Panel Grid.Row="1">
+            <ListBox ItemsSource="{Binding Groups}" SelectedItem="{Binding SelectedGroup, Mode=TwoWay}">
+              <ListBox.ItemTemplate>
+                <DataTemplate x:DataType="models:GroupDto">
+                  <StackPanel Margin="4,6" Spacing="2">
+                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="12" />
+                    <TextBlock Text="{Binding SummaryText}" FontSize="10" Foreground="#667085" />
+                  </StackPanel>
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+            <StackPanel IsVisible="{Binding !HasGroups}" VerticalAlignment="Center" HorizontalAlignment="Center"
+                        Spacing="7" MaxWidth="280">
+              <TextBlock Text="◎" FontSize="30" Foreground="#D0D5DD" HorizontalAlignment="Center" />
+              <TextBlock Text="还没有账号分组。点右上角“新建分组”配置账号出口。"
+                         TextWrapping="Wrap" TextAlignment="Center" FontSize="12" Foreground="#667085" />
+            </StackPanel>
+          </Panel>
+        </Grid>
+      </Border>
+
+      <Border CornerRadius="10" Background="White" BorderBrush="#EAECF0" BorderThickness="1">
+        <StackPanel Margin="14" Spacing="9">
+          <!-- 标题明确说明当前是新建还是在编辑哪个分组，不再靠"选中为空=新建"猜 -->
+          <TextBlock Text="{Binding GroupFormTitle}" FontSize="15" FontWeight="SemiBold" />
+          <TextBox PlaceholderText="分组名称" Text="{Binding GroupName, Mode=TwoWay}"
+                   IsEnabled="{Binding CanEditGroup}" />
+          <TextBlock Text="出口节点" FontSize="10" Foreground="#667085" />
+          <ComboBox HorizontalAlignment="Stretch" ItemsSource="{Binding ProxyChoices}"
+                    SelectedItem="{Binding GroupProxy, Mode=TwoWay}"
+                    IsEnabled="{Binding CanEditGroup}">
+            <ComboBox.ItemTemplate>
+              <DataTemplate x:DataType="vm:RouteChoiceViewModel">
+                <TextBlock Text="{Binding Title}" />
+              </DataTemplate>
+            </ComboBox.ItemTemplate>
+          </ComboBox>
+          <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
+            <TextBox PlaceholderText="时区（留空自动检测）" Text="{Binding GroupTimezone, Mode=TwoWay}"
+                     IsEnabled="{Binding CanEditGroup}" />
+            <TextBox Grid.Column="1" PlaceholderText="Locale" Text="{Binding GroupLocale, Mode=TwoWay}"
+                     IsEnabled="{Binding CanEditGroup}" />
+          </Grid>
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <Button Content="{Binding GroupSaveText}" Background="#175CD3" Foreground="White"
+                    IsEnabled="{Binding CanEditGroup}" Command="{Binding SaveGroupCommand}" />
+            <Button Content="删除分组…" Foreground="#B42318" Command="{Binding RemoveGroupCommand}" />
+          </StackPanel>
+        </StackPanel>
+      </Border>
+    </Grid>
+
+    <!-- 代理节点 -->
+    <Grid Grid.Column="1" RowDefinitions="Auto,*,Auto" RowSpacing="12">
+      <Border Padding="14" CornerRadius="10" Background="White" BorderBrush="#EAECF0" BorderThickness="1">
+        <StackPanel Spacing="9">
+          <TextBlock Text="{Binding SubscriptionSummary}" FontSize="12" Foreground="#475467" />
+          <TextBlock Text="{Binding RuntimeSummary}" FontSize="11" Foreground="#667085" TextWrapping="Wrap" />
+          <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+            <TextBox PlaceholderText="Clash 订阅地址（不会回显，也不写入普通日志）"
+                     Text="{Binding SubscriptionUrl, Mode=TwoWay}" PasswordChar="•" />
+            <Button Grid.Column="1" Content="导入订阅" Command="{Binding ImportSubscriptionCommand}" />
+            <Button Grid.Column="2" Content="刷新订阅" Command="{Binding RefreshSubscriptionCommand}" />
+          </Grid>
+          <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+            <TextBox PlaceholderText="Clash Verge / mihomo 安装目录"
+                     Text="{Binding RuntimeDirectory, Mode=TwoWay}" />
+            <Button Grid.Column="1" Content="保存目录" Command="{Binding SaveRuntimeDirectoryCommand}" />
+          </Grid>
+        </StackPanel>
+      </Border>
+
+      <Border Grid.Row="1" CornerRadius="10" Background="White" BorderBrush="#EAECF0" BorderThickness="1">
+        <Grid Margin="14" RowDefinitions="Auto,*">
+          <Grid ColumnDefinitions="*,240" ColumnSpacing="8" Margin="0,0,0,9">
+            <TextBlock Text="{Binding NodeSummary}" FontSize="12" Foreground="#475467" VerticalAlignment="Center" />
+            <TextBox Grid.Column="1" PlaceholderText="搜索节点名、类型或服务器"
+                     Text="{Binding NodeSearch, Mode=TwoWay}" />
+          </Grid>
+
+          <Panel Grid.Row="1">
+            <ListBox ItemsSource="{Binding Nodes}" SelectedItem="{Binding SelectedNode, Mode=TwoWay}">
+              <ListBox.ItemTemplate>
+                <DataTemplate x:DataType="models:ProxyNodeDto">
+                  <!-- 服务器、分组端口和延迟直接显示在行上，不必去任务中心翻结果 -->
+                  <Grid Margin="4,6" ColumnDefinitions="*,110,150,110,90" ColumnSpacing="10">
+                    <StackPanel Spacing="2">
+                      <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="12"
+                                 TextTrimming="CharacterEllipsis" />
+                      <TextBlock Text="{Binding ServerText}" FontSize="10" Foreground="#667085" />
+                    </StackPanel>
+                    <TextBlock Grid.Column="1" Text="{Binding Type}" FontSize="11" Foreground="#475467"
+                               VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="2" Text="{Binding LocalPortText}" FontSize="10" Foreground="#667085"
+                               VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="3" Text="{Binding LatencyText}" FontSize="12" FontWeight="SemiBold"
+                               Foreground="{Binding LatencyColor}" VerticalAlignment="Center"
+                               ToolTip.Tip="{Binding LatencyTooltip}" />
+                    <StackPanel Grid.Column="4" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                      <Ellipse Width="7" Height="7" Fill="{Binding StateColor}" VerticalAlignment="Center" />
+                      <TextBlock Text="{Binding StateText}" FontSize="10" Foreground="{Binding StateColor}" />
+                    </StackPanel>
+                  </Grid>
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+
+            <StackPanel IsVisible="{Binding IsNodeListEmpty}" VerticalAlignment="Center" HorizontalAlignment="Center"
+                        Spacing="8" MaxWidth="380">
+              <TextBlock Text="⇄" FontSize="32" Foreground="#D0D5DD" HorizontalAlignment="Center" />
+              <TextBlock TextWrapping="Wrap" TextAlignment="Center" FontSize="12" Foreground="#667085"
+                         Text="{Binding NodeEmptyText}" />
+            </StackPanel>
+          </Panel>
+        </Grid>
+      </Border>
+
+      <Border Grid.Row="2" Padding="12" CornerRadius="10" Background="White"
+              BorderBrush="#EAECF0" BorderThickness="1">
+        <Grid ColumnDefinitions="*,Auto">
+          <TextBlock VerticalAlignment="Center" FontSize="11" Foreground="#667085" TextWrapping="Wrap"
+                     Text="测速使用完全独立的临时 mihomo 进程，不会打断承载账号流量的主边车。批量测速会逐个回填延迟。" />
+          <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="7">
+            <Button Content="测速所选" Padding="10,6" FontSize="11" Command="{Binding TestNodeCommand}" />
+            <Button Content="全部测速" Padding="10,6" FontSize="11" Command="{Binding TestAllCommand}" />
+            <Button Content="{Binding ToggleNodeText}" Padding="10,6" FontSize="11"
+                    Command="{Binding ToggleNodeCommand}" />
+          </StackPanel>
+        </Grid>
+      </Border>
+    </Grid>
+  </Grid>
+</UserControl>

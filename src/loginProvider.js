@@ -1,5 +1,5 @@
 import { launchForAccount } from "./browser.js";
-import { readJson } from "./paths.js";
+import { readResourceJson } from "./paths.js";
 import { getAccount, updateAccount } from "./store.js";
 import { isBusy, isHeld, withAccountLock } from "./locks.js";
 import { setCachedStatus } from "./statusMonitor.js";
@@ -204,7 +204,7 @@ export async function startLogin(account, opts = {}, runtime = {}) {
     };
   }
 
-  const selectors = readJson("config/selectors.json");
+  const selectors = readResourceJson("config/selectors.json");
   tasks.set(taskId, task);
   activeTaskByAccount.set(account.id, taskId);
   pruneLoginTasks();
@@ -301,6 +301,7 @@ export async function startLogin(account, opts = {}, runtime = {}) {
     } catch (e) {
       task.status = "failed";
       task.finishedAt = new Date().toISOString();
+      if (e?.code) task.code = String(e.code);
       task.message = String(e.message || e);
       log.error(`账号 ${account.id} 登录出错: ${task.message}`);
     } finally {
@@ -340,7 +341,7 @@ export async function checkLoggedIn(account, runtime = {}) {
   const launchBrowser = runtime.launchForAccount ?? launchForAccount;
   const inspectSession = runtime.checkSession ?? checkSession;
   const persistAccount = runtime.updateAccount ?? updateAccount;
-  const selectors = readJson("config/selectors.json");
+  const selectors = readResourceJson("config/selectors.json");
   let context;
   try {
     const liveAccount = findAccount(account.id);

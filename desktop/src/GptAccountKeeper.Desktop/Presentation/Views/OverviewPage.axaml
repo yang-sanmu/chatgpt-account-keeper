@@ -1,0 +1,118 @@
+<UserControl
+    x:Class="GptAccountKeeper.Desktop.Presentation.Views.OverviewPage"
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:pages="using:GptAccountKeeper.Desktop.Presentation.Pages"
+    x:DataType="pages:OverviewPageViewModel">
+
+  <ScrollViewer>
+    <StackPanel Margin="26,0,26,24" Spacing="14">
+
+      <Border Padding="18" CornerRadius="10" Background="White" BorderBrush="#EAECF0" BorderThickness="1">
+        <Grid RowDefinitions="Auto,Auto" RowSpacing="14">
+          <StackPanel Spacing="3">
+            <TextBlock Text="{Binding ConnectionStatus}" FontSize="20" FontWeight="SemiBold" Foreground="#101828" />
+            <TextBlock Text="{Binding ConnectionDetail}" FontSize="12" TextWrapping="Wrap" Foreground="#667085" />
+          </StackPanel>
+          <Grid Grid.Row="1" ColumnDefinitions="*,*,*">
+            <StackPanel>
+              <TextBlock Text="Agent 版本" FontSize="10" Foreground="#667085" />
+              <TextBlock Text="{Binding AgentVersion}" FontWeight="SemiBold" />
+            </StackPanel>
+            <StackPanel Grid.Column="1">
+              <TextBlock Text="实例 ID" FontSize="10" Foreground="#667085" />
+              <TextBlock Text="{Binding InstanceId}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+            </StackPanel>
+            <StackPanel Grid.Column="2">
+              <TextBlock Text="最近事件" FontSize="10" Foreground="#667085" />
+              <TextBlock Text="{Binding LastEvent}" FontWeight="SemiBold" />
+            </StackPanel>
+          </Grid>
+        </Grid>
+      </Border>
+
+      <!-- 首次启动引导 -->
+      <Border IsVisible="{Binding NeedsFirstRun}" Padding="20" CornerRadius="10"
+              Background="#EFF8FF" BorderBrush="#B2DDFF" BorderThickness="1">
+        <StackPanel Spacing="11">
+          <TextBlock Text="首次启动：创建新数据或导入旧项目" FontSize="17" FontWeight="SemiBold" Foreground="#175CD3" />
+          <TextBlock TextWrapping="Wrap" Foreground="#344054"
+                     Text="导入时请选择旧项目根目录；如果选择 profiles 文件夹，程序会自动识别父目录。扫描完成后会先展示账号、Profile、历史、所需空间和运行锁，确认后才复制。旧数据只会被复制，迁移失败不会修改旧项目。" />
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <Button Content="预览并导入旧项目" Background="#175CD3" Foreground="White"
+                    Command="{Binding ImportLegacyCommand}" />
+            <Button Content="创建全新数据" Command="{Binding CreateFreshDataCommand}" />
+            <Button Content="选择其他数据目录" Command="{Binding ChooseDataDirectoryCommand}" />
+          </StackPanel>
+          <ProgressBar Minimum="0" Maximum="1" Value="{Binding MigrationProgress}" Height="7" />
+          <TextBlock Text="{Binding MigrationStage}" TextWrapping="Wrap" FontSize="11" Foreground="#475467" />
+        </StackPanel>
+      </Border>
+
+      <!-- 概览指标 -->
+      <Grid ColumnDefinitions="*,*,*,*" ColumnSpacing="12">
+        <Border Padding="16" CornerRadius="10" Background="White" BorderBrush="#EAECF0" BorderThickness="1">
+          <StackPanel Spacing="4">
+            <TextBlock Text="账号总数" FontSize="11" Foreground="#667085" />
+            <TextBlock Text="{Binding AccountCount}" FontSize="26" FontWeight="SemiBold" Foreground="#101828" />
+            <TextBlock FontSize="11" Foreground="#667085">
+              <Run Text="{Binding EnabledCount}" /><Run Text=" 个参与调度" />
+            </TextBlock>
+          </StackPanel>
+        </Border>
+        <Border Grid.Column="1" Padding="16" CornerRadius="10" Background="White" BorderBrush="#EAECF0" BorderThickness="1">
+          <StackPanel Spacing="4">
+            <TextBlock Text="已登录" FontSize="11" Foreground="#667085" />
+            <TextBlock Text="{Binding LoggedInCount}" FontSize="26" FontWeight="SemiBold" Foreground="#027A48" />
+            <TextBlock FontSize="11" Foreground="#B54708" IsVisible="{Binding HasNeedsReauth}">
+              <Run Text="{Binding NeedsReauthCount}" /><Run Text=" 个需重新登录" />
+            </TextBlock>
+          </StackPanel>
+        </Border>
+        <Border Grid.Column="2" Padding="16" CornerRadius="10" Background="White" BorderBrush="#EAECF0" BorderThickness="1">
+          <StackPanel Spacing="4">
+            <TextBlock Text="打开的 Chrome" FontSize="11" Foreground="#667085" />
+            <TextBlock Text="{Binding OpenPageCount}" FontSize="26" FontWeight="SemiBold" Foreground="#175CD3" />
+            <TextBlock Text="窗口开着时会阻止退出全部" FontSize="11" Foreground="#667085" />
+          </StackPanel>
+        </Border>
+        <Border Grid.Column="3" Padding="16" CornerRadius="10" Background="White" BorderBrush="#EAECF0" BorderThickness="1">
+          <StackPanel Spacing="4">
+            <TextBlock Text="进行中的任务" FontSize="11" Foreground="#667085" />
+            <TextBlock Text="{Binding ActiveOperationCount}" FontSize="26" FontWeight="SemiBold" Foreground="#101828" />
+            <TextBlock Text="详情见“任务”页" FontSize="11" Foreground="#667085" />
+          </StackPanel>
+        </Border>
+      </Grid>
+
+      <Grid ColumnDefinitions="*,*" ColumnSpacing="14">
+        <Border Padding="18" CornerRadius="10" Background="White" BorderBrush="#EAECF0" BorderThickness="1">
+          <StackPanel Spacing="11">
+            <TextBlock Text="自动调度" FontSize="16" FontWeight="SemiBold" />
+            <TextBlock Text="{Binding SchedulerStatusText}" FontSize="24" FontWeight="SemiBold"
+                       Foreground="{Binding SchedulerStatusColor}" />
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <Button Content="启动调度" Command="{Binding StartSchedulerCommand}" />
+              <Button Content="停止调度" Command="{Binding StopSchedulerCommand}" />
+            </StackPanel>
+            <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#667085"
+                       Text="隐藏到托盘后，自动对话和状态巡检仍由独立 Agent 执行。停止调度时正在运行的账号会先完成本次对话。" />
+          </StackPanel>
+        </Border>
+
+        <Border Grid.Column="1" Padding="18" CornerRadius="10" Background="White" BorderBrush="#EAECF0" BorderThickness="1">
+          <StackPanel Spacing="9">
+            <TextBlock Text="数据与诊断" FontSize="16" FontWeight="SemiBold" />
+            <TextBlock Text="{Binding RuntimeMode}" FontSize="11" Foreground="#175CD3" TextWrapping="Wrap" />
+            <TextBlock Text="数据目录" FontSize="10" Foreground="#667085" />
+            <SelectableTextBlock Text="{Binding DataDirectory}" TextWrapping="Wrap" FontSize="12" />
+            <TextBlock Text="Agent 日志" FontSize="10" Foreground="#667085" />
+            <SelectableTextBlock Text="{Binding AgentLogFile}" TextWrapping="Wrap" FontSize="12" />
+            <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#667085"
+                       Text="在“设置”页可以直接打开这两个位置或复制路径。" />
+          </StackPanel>
+        </Border>
+      </Grid>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

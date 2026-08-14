@@ -1,4 +1,4 @@
-import { chromium } from "playwright";
+import { chromium } from "playwright-core";
 import fs from "node:fs/promises";
 import path from "node:path";
 import WebSocket from "ws";
@@ -93,7 +93,21 @@ export function normalizeHeadlessIdentity(native = {}) {
 }
 
 const headlessIdentityCache = new Map();
-let warnedMissingChrome = false;
+
+export class ChromeNotFoundError extends Error {
+  constructor(cause) {
+    super("未找到可用的 Google Chrome。请先安装 Google Chrome 后重试。", {
+      cause,
+    });
+    this.name = "ChromeNotFoundError";
+    this.code = "CHROME_NOT_FOUND";
+    this.retryable = false;
+  }
+}
+
+export function normalizeChromeLaunchError(error) {
+  return isMissingChannelError(error) ? new ChromeNotFoundError(error) : error;
+}
 
 /**
  * Headless Chrome 会把自身暴露为 HeadlessChrome，ChatGPT/Cloudflare 会据此
@@ -104,8 +118,8 @@ let warnedMissingChrome = false;
  * UA-CH。启动参数先确保所有首包的 legacy UA 不暴露 HeadlessChrome；随后
  * 通过浏览器级 CDP 为每个 Target 带回完整原值，使 JavaScript、后续请求头、
  * 平台和架构一致。branded Chrome 的原生 UA-CH 不含 HeadlessChrome；
- * bundled Chromium 的 popup 首个 document Client Hint 可能早于 Target 覆盖，
- * 因此降级路径仍不等价于 Chrome。
+ * 生产路径只允许 branded Chrome。channel 参数保留在探测函数上，仅用于
+ * 隔离测试；账号启动始终传入 chrome 渠道，绝不降级到 bundled Chromium。
  */
 export async function probeHeadlessIdentity(channel) {
   let browser;
@@ -163,7 +177,7 @@ export async function probeHeadlessIdentity(channel) {
 }
 
 async function getHeadlessIdentity(channel) {
-  const key = channel || "__bundled_chromium__";
+  const key = channel || "__test_browser__";
   const now = Date.now();
   let entry = headlessIdentityCache.get(key);
   if (!entry || entry.expiresAt <= now) {
@@ -185,28 +199,14 @@ async function getHeadlessIdentity(channel) {
   }
 }
 
-function warnMissingChrome() {
-  if (warnedMissingChrome) return;
-  warnedMissingChrome = true;
-  log.warn(
-    "未找到本机 Google Chrome，退回 Playwright 自带 Chromium。" +
-      "自带内核的 userAgentData 缺少 Google Chrome 品牌，更容易触发人机验证，" +
-      "建议安装 Chrome 后重试。"
-  );
-}
-
 async function configureHeadlessLaunch(launchArgs) {
-  let identity;
   try {
-    identity = await getHeadlessIdentity(BROWSER_CHANNEL);
+    const identity = await getHeadlessIdentity(BROWSER_CHANNEL);
+    configureHeadlessLaunchArgs(launchArgs, identity);
+    return identity;
   } catch (error) {
-    if (!isMissingChannelError(error)) throw error;
-    warnMissingChrome();
-    delete launchArgs.channel;
-    identity = await getHeadlessIdentity(null);
+    throw normalizeChromeLaunchError(error);
   }
-  configureHeadlessLaunchArgs(launchArgs, identity);
-  return identity;
 }
 
 function configureHeadlessLaunchArgs(launchArgs, identity) {
@@ -781,23 +781,11 @@ export async function launchForAccount(account, opts = {}) {
   }
 
   let context;
-  let debugPortNotBefore = Date.now();
+  const debugPortNotBefore = Date.now();
   try {
     context = await chromium.launchPersistentContext(userDataDir, launchArgs);
   } catch (e) {
-    // 没装 Chrome 就退回自带 Chromium：指纹差一些（会更容易撞验证码），
-    // 但总比完全跑不起来好。明确警告，让用户知道该装 Chrome。
-    if (!isMissingChannelError(e)) throw e;
-    warnMissingChrome();
-    delete launchArgs.channel;
-    if (headless) {
-      // Chrome 可能在探测成功后被升级/移除。回退时必须同步换成自带内核的
-      // 动态身份，绝不能把 Chrome 的版本信息套到另一个 Chromium 上。
-      headlessIdentity = await getHeadlessIdentity(null);
-      configureHeadlessLaunchArgs(launchArgs, headlessIdentity);
-    }
-    debugPortNotBefore = Date.now();
-    context = await chromium.launchPersistentContext(userDataDir, launchArgs);
+    throw normalizeChromeLaunchError(e);
   }
 
   context.once("close", () => {

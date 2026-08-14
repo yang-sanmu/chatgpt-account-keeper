@@ -5,8 +5,27 @@ import os from "node:os";
 import path from "node:path";
 import {
   findMihomoExecutable,
+  platformInstallDirectories,
   validateMihomoExecutable,
 } from "../src/mihomoLocator.js";
+
+test("cross-platform mihomo search includes macOS and Linux standard locations", () => {
+  const mac = platformInstallDirectories({
+    platform: "darwin",
+    env: {},
+    homeDir: "/Users/keeper",
+  });
+  assert.ok(mac.some((item) => item.replaceAll("\\", "/").includes("/Applications/Clash Verge.app/Contents/MacOS")));
+  assert.ok(mac.some((item) => item.replaceAll("\\", "/").includes("/opt/homebrew/bin")));
+
+  const linux = platformInstallDirectories({
+    platform: "linux",
+    env: {},
+    homeDir: "/home/keeper",
+  });
+  assert.ok(linux.some((item) => item.replaceAll("\\", "/").includes("/usr/local/bin")));
+  assert.ok(linux.some((item) => item.replaceAll("\\", "/").includes("/home/keeper/.local/bin")));
+});
 
 const MIHOMO_NAME = process.platform === "win32" ? "mihomo.exe" : "mihomo";
 const ALPHA_NAME =

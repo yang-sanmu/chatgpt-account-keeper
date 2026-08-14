@@ -1,0 +1,166 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/yang-sanmu/chatgpt-account-keeper/contracts/ipc-v1.schema.json",
+  "title": "GptAccount Keeper IPC v1",
+  "description": "Canonical envelopes and shared DTOs for the local Keeper.Desktop to Keeper.Agent protocol.",
+  "oneOf": [
+    { "$ref": "#/$defs/request" },
+    { "$ref": "#/$defs/successResponse" },
+    { "$ref": "#/$defs/errorResponse" },
+    { "$ref": "#/$defs/event" }
+  ],
+  "$defs": {
+    "jsonValue": true,
+    "protocolVersion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["major", "minor"],
+      "properties": {
+        "major": { "type": "integer", "minimum": 1 },
+        "minor": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "method": {
+      "type": "string",
+      "enum": [
+        "system.hello", "system.bootstrap", "system.getActivity", "system.prepareUpdate", "system.shutdown",
+        "accounts.list", "accounts.create", "accounts.update", "accounts.remove", "accounts.getStatus", "accounts.refreshStatus", "accounts.runNow",
+        "browser.startLogin", "browser.getTask", "browser.openPage", "browser.closePage", "browser.listOpenPages",
+        "accounts.history", "history.query", "history.listAccounts",
+        "groups.list", "groups.create", "groups.update", "groups.remove",
+        "proxies.getState", "proxies.importSubscription", "proxies.refreshSubscription", "proxies.setRuntimeDirectory", "proxies.setNodeEnabled", "proxies.testNode", "proxies.testAll",
+        "profiles.scan", "profiles.cleanCache", "profiles.archiveOrphan", "profiles.purgeOrphan",
+        "conversations.list", "conversations.upsert", "conversations.remove",
+        "scheduler.getState", "scheduler.start", "scheduler.stop",
+        "settings.get", "settings.update",
+        "operations.get", "operations.listActive", "operations.list"
+      ]
+    },
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "method", "params"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "method": { "$ref": "#/$defs/method" },
+        "params": { "type": "object" },
+        "commandId": { "type": "string", "format": "uuid" }
+      }
+    },
+    "successResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "result"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "result": { "$ref": "#/$defs/jsonValue" }
+      }
+    },
+    "errorCode": {
+      "type": "string",
+      "enum": [
+        "VALIDATION_FAILED", "NOT_FOUND", "RESOURCE_BUSY", "PROFILE_IN_USE",
+        "PROXY_UNAVAILABLE", "ALREADY_OPEN", "LOGIN_FORCE_CONFLICT", "CHROME_NOT_FOUND",
+        "AGENT_DRAINING", "PROTOCOL_MISMATCH", "FRAME_TOO_LARGE", "INTERNAL"
+      ]
+    },
+    "ipcError": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message", "retryable"],
+      "properties": {
+        "code": { "$ref": "#/$defs/errorCode" },
+        "message": { "type": "string", "minLength": 1 },
+        "retryable": { "type": "boolean" },
+        "details": { "$ref": "#/$defs/jsonValue" }
+      }
+    },
+    "errorResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "error"],
+      "properties": {
+        "id": { "type": ["string", "null"], "maxLength": 128 },
+        "error": { "$ref": "#/$defs/ipcError" }
+      }
+    },
+    "eventName": {
+      "type": "string",
+      "enum": [
+        "account.changed", "account.removed", "accountStatus.changed", "openPage.changed",
+        "operation.changed", "group.changed", "proxyState.changed", "proxyNode.tested",
+        "profile.changed", "conversation.changed", "scheduler.changed",
+        "scheduler.accountChanged", "history.appended", "settings.changed",
+        "agent.draining", "agent.readyForUpdate"
+      ]
+    },
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["event", "seq", "instanceId", "revision", "occurredAt", "payload"],
+      "properties": {
+        "event": { "$ref": "#/$defs/eventName" },
+        "seq": { "type": "integer", "minimum": 1 },
+        "instanceId": { "type": "string", "format": "uuid" },
+        "revision": { "type": "integer", "minimum": 0 },
+        "occurredAt": { "type": "string", "format": "date-time" },
+        "payload": { "$ref": "#/$defs/jsonValue" }
+      }
+    },
+    "helloParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol", "clientVersion", "capabilities"],
+      "properties": {
+        "protocol": { "$ref": "#/$defs/protocolVersion" },
+        "clientVersion": { "type": "string", "minLength": 1 },
+        "capabilities": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "authToken": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "dataRoot": { "type": "string", "minLength": 1 }
+      }
+    },
+    "helloResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol", "agentVersion", "buildId", "dataSchemaVersion", "instanceId", "capabilities", "dataRoot"],
+      "properties": {
+        "protocol": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["major", "minMinor", "maxMinor"],
+          "properties": {
+            "major": { "const": 1 },
+            "minMinor": { "type": "integer", "minimum": 0 },
+            "maxMinor": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "agentVersion": { "type": "string", "minLength": 1 },
+        "buildId": { "type": "string", "minLength": 1 },
+        "dataSchemaVersion": { "type": "integer", "minimum": 0 },
+        "instanceId": { "type": "string", "format": "uuid" },
+        "dataRoot": { "type": ["string", "null"] },
+        "capabilities": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
+      }
+    },
+    "operation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "state", "startedAt", "updatedAt", "blocksUpdate"],
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+        "kind": { "type": "string", "minLength": 1 },
+        "resourceId": { "type": ["string", "null"] },
+        "state": { "enum": ["queued", "running", "waiting_user", "succeeded", "failed", "timed_out", "cancelled"] },
+        "stage": { "type": ["string", "null"] },
+        "message": { "type": ["string", "null"] },
+        "progress": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "startedAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "finishedAt": { "type": ["string", "null"], "format": "date-time" },
+        "result": { "$ref": "#/$defs/jsonValue" },
+        "error": { "oneOf": [{ "$ref": "#/$defs/ipcError" }, { "type": "null" }] },
+        "blocksUpdate": { "type": "boolean" }
+      }
+    }
+  }
+}

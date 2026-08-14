@@ -1,6 +1,19 @@
 # 依赖
 node_modules/
 
+# Native desktop build / packaging output
+desktop/**/bin/
+desktop/**/obj/
+desktop/**/TestResults/
+artifacts/
+Releases/
+*.AppImage
+
+# Local SQLite runtime files (fixtures under test/fixtures stay explicit)
+keeper.db
+keeper.db-wal
+keeper.db-shm
+
 # 敏感：账号登录态（cookies/session），泄露即账号被盗
 profiles/
 
@@ -27,6 +40,8 @@ config/groups.json
 # 代理边车运行时目录（自动生成的 mihomo 配置与缓存）
 .mihomo/
 .mihomo-test/
+mihomo/
+mihomo-test/
 
 # 个人会话内容（运行时数据，用 .example 做模板）
 config/conversations.json
@@ -39,4 +54,5 @@ logs/
 Thumbs.db
 .vscode/
 .idea/
+.vs/
 *.log

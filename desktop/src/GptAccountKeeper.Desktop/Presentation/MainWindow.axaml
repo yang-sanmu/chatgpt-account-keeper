@@ -1,0 +1,133 @@
+<Window
+    x:Class="GptAccountKeeper.Desktop.Presentation.MainWindow"
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:vm="using:GptAccountKeeper.Desktop.Presentation"
+    xmlns:pages="using:GptAccountKeeper.Desktop.Presentation.Pages"
+    xmlns:views="using:GptAccountKeeper.Desktop.Presentation.Views"
+    x:DataType="vm:ShellViewModel"
+    Title="ChatGPT Account Keeper"
+    Width="1360"
+    Height="880"
+    MinWidth="1120"
+    MinHeight="720"
+    Background="#F4F6F8"
+    WindowStartupLocation="CenterScreen">
+
+  <Grid ColumnDefinitions="248,*">
+    <!-- 侧边导航 -->
+    <Border Grid.Column="0" Background="#101828">
+      <Grid RowDefinitions="Auto,*,Auto" Margin="16,20">
+        <StackPanel Spacing="4">
+          <TextBlock Text="ChatGPT Account Keeper" FontSize="17" FontWeight="SemiBold" Foreground="White" />
+          <TextBlock Text="原生管理控制台" FontSize="11" Foreground="#98A2B3" />
+        </StackPanel>
+
+        <ListBox Grid.Row="1"
+                 Margin="0,20,0,12"
+                 Background="Transparent"
+                 BorderThickness="0"
+                 ItemsSource="{Binding Pages}"
+                 SelectedItem="{Binding SelectedPage, Mode=TwoWay}">
+          <ListBox.ItemTemplate>
+            <DataTemplate x:DataType="vm:PageViewModel">
+              <Grid ColumnDefinitions="26,*" Margin="6,7">
+                <TextBlock Text="{Binding Glyph}" VerticalAlignment="Center" FontSize="14" Foreground="#D0D5DD" />
+                <StackPanel Grid.Column="1" Spacing="1">
+                  <TextBlock Text="{Binding Title}" FontWeight="SemiBold" Foreground="White" />
+                  <TextBlock Text="{Binding Description}" FontSize="10" TextWrapping="Wrap" Foreground="#98A2B3" />
+                </StackPanel>
+              </Grid>
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+
+        <Border Grid.Row="2" Padding="11" CornerRadius="8" Background="#1D2939">
+          <StackPanel Spacing="4">
+            <TextBlock Text="本机 IPC · 无 localhost" FontSize="10" Foreground="#98A2B3" />
+            <TextBlock Text="{Binding Endpoint}" FontSize="9" TextWrapping="Wrap" Foreground="#EAECF0" />
+            <TextBlock Text="{Binding RuntimeMode}" FontSize="9" TextWrapping="Wrap" Foreground="#84CAFF" />
+          </StackPanel>
+        </Border>
+      </Grid>
+    </Border>
+
+    <!-- 主区域：标题栏 + 当前页 + 顶层 toast -->
+    <Grid Grid.Column="1" RowDefinitions="Auto,*">
+      <Grid Margin="26,20,26,14" ColumnDefinitions="*,Auto">
+        <StackPanel Spacing="3">
+          <TextBlock Text="{Binding SelectedPage.Title}" FontSize="25" FontWeight="SemiBold" Foreground="#101828" />
+          <TextBlock Text="{Binding SelectedPage.Description}" FontSize="12" Foreground="#667085" />
+        </StackPanel>
+        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+          <ProgressBar Width="90" Height="4" IsIndeterminate="True"
+                       IsVisible="{Binding Session.IsBusy}" VerticalAlignment="Center" />
+          <Button Content="重新连接" Padding="12,7" Command="{Binding ConnectAgentCommand}"
+                  IsVisible="{Binding !IsAgentConnected}" />
+          <Button Content="同步数据" Padding="12,7" Command="{Binding RefreshDataCommand}" />
+          <Button Content="{Binding AgentActionText}" Padding="12,7"
+                  Background="#175CD3" Foreground="White"
+                  Command="{Binding StartAgentCommand}"
+                  ToolTip.Tip="已连接时无需重复启动；断开后按钮会自动恢复" />
+        </StackPanel>
+      </Grid>
+
+      <Panel Grid.Row="1">
+        <!-- 每页自带 ScrollViewer；壳层不再套一层，避免嵌套滚动 -->
+        <ContentControl Content="{Binding SelectedPage}">
+          <ContentControl.DataTemplates>
+            <DataTemplate DataType="pages:OverviewPageViewModel">
+              <views:OverviewPage />
+            </DataTemplate>
+            <DataTemplate DataType="pages:AccountsPageViewModel">
+              <views:AccountsPage />
+            </DataTemplate>
+            <DataTemplate DataType="pages:OperationsPageViewModel">
+              <views:OperationsPage />
+            </DataTemplate>
+            <DataTemplate DataType="pages:ProxiesPageViewModel">
+              <views:ProxiesPage />
+            </DataTemplate>
+            <DataTemplate DataType="pages:ConversationsPageViewModel">
+              <views:ConversationsPage />
+            </DataTemplate>
+            <DataTemplate DataType="pages:ProfilesPageViewModel">
+              <views:ProfilesPage />
+            </DataTemplate>
+            <DataTemplate DataType="pages:HistoryPageViewModel">
+              <views:HistoryPage />
+            </DataTemplate>
+            <DataTemplate DataType="pages:SettingsPageViewModel">
+              <views:SettingsPage />
+            </DataTemplate>
+          </ContentControl.DataTemplates>
+        </ContentControl>
+
+        <!-- 操作反馈浮在页面之上：账号页第一屏也能看见 -->
+        <ItemsControl ItemsSource="{Binding Toasts.Items}"
+                      HorizontalAlignment="Right"
+                      VerticalAlignment="Top"
+                      Margin="0,8,26,0"
+                      Width="420"
+                      IsHitTestVisible="True">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate x:DataType="vm:ToastViewModel">
+              <Border Margin="0,0,0,8" Padding="12,9" CornerRadius="8"
+                      Background="{Binding Background}"
+                      BorderBrush="{Binding BorderColor}"
+                      BorderThickness="1"
+                      BoxShadow="0 4 12 0 #22101828">
+                <Grid ColumnDefinitions="Auto,*">
+                  <TextBlock Text="{Binding Glyph}" FontWeight="Bold" Margin="0,0,9,0"
+                             Foreground="{Binding Foreground}" VerticalAlignment="Top" />
+                  <TextBlock Grid.Column="1" Text="{Binding Message}" TextWrapping="Wrap"
+                             FontSize="12" Foreground="#344054" />
+                </Grid>
+              </Border>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </Panel>
+    </Grid>
+  </Grid>
+</Window>

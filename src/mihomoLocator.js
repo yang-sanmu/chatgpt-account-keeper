@@ -254,7 +254,33 @@ export function discoverClashVergeInstallDirectories({
   return [...registryCache.directories];
 }
 
-function environmentInstallDirectories(env) {
+export function platformInstallDirectories({
+  platform = process.platform,
+  env = process.env,
+  homeDir = env.HOME || env.USERPROFILE || "",
+} = {}) {
+  if (platform === "darwin") {
+    return uniquePaths([
+      "/Applications/Clash Verge.app/Contents/MacOS",
+      "/Applications/Clash Verge Rev.app/Contents/MacOS",
+      homeDir ? path.join(homeDir, "Applications", "Clash Verge.app", "Contents", "MacOS") : null,
+      homeDir ? path.join(homeDir, "Applications", "Clash Verge Rev.app", "Contents", "MacOS") : null,
+      "/opt/homebrew/bin",
+      "/usr/local/bin",
+    ]);
+  }
+  if (platform === "linux") {
+    return uniquePaths([
+      "/usr/local/bin",
+      "/usr/bin",
+      "/opt/mihomo",
+      "/opt/clash-verge",
+      "/opt/clash-verge-rev",
+      homeDir ? path.join(homeDir, ".local", "bin") : null,
+      homeDir ? path.join(homeDir, ".local", "share", "clash-verge") : null,
+    ]);
+  }
+
   const programRoots = uniquePaths([
     env.ProgramFiles,
     env.PROGRAMFILES,
@@ -276,6 +302,10 @@ function environmentInstallDirectories(env) {
     }
   }
   return uniquePaths(directories);
+}
+
+function environmentInstallDirectories(env) {
+  return platformInstallDirectories({ env });
 }
 
 function pathDirectories(env) {
@@ -318,11 +348,9 @@ export function findMihomoExecutable({
     }
   }
 
-  const discoveredDirectories =
-    registryInstallDirs ??
-    discoverClashVergeInstallDirectories({
-      env,
-    });
+  const discoveredDirectories = process.platform === "win32"
+    ? registryInstallDirs ?? discoverClashVergeInstallDirectories({ env })
+    : registryInstallDirs ?? [];
   for (const directory of uniquePaths(discoveredDirectories)) {
     const found = findCoreInDirectory(directory);
     if (found) return found;

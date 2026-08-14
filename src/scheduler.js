@@ -1,5 +1,5 @@
 import { launchForAccount } from "./browser.js";
-import { readJson } from "./paths.js";
+import { readResourceJson } from "./paths.js";
 import { runAgent } from "./agent.js";
 import { getAccounts, getAccount, getSettings, displayName } from "./store.js";
 import { selectSetForAccount, commitWindow } from "./rotation.js";
@@ -38,7 +38,11 @@ export async function runWithBrowserLifecycle(
     context = launched.context;
     return await operation(launched);
   } catch (error) {
-    return { ok: false, reason: String(error?.message || error) };
+    return {
+      ok: false,
+      reason: String(error?.message || error),
+      ...(error?.code ? { code: String(error.code) } : {}),
+    };
   } finally {
     if (context) {
       try {
@@ -67,7 +71,9 @@ export async function runWithBrowserLifecycle(
  * 让单个账号跑一次 agent 多轮对话。返回 { ok, topic, threads, totalRounds, reason }。
  */
 export async function runOnce(account, opts = {}) {
-  const selectors = readJson("config/selectors.json");
+  // 与登录/打开网页共用同一个解析顺序：数据目录的用户覆盖优先，
+  // 否则用安装目录里随版本分发的默认值。
+  const selectors = readResourceJson("config/selectors.json");
   const name = displayName(account);
   // 套账号锁：同一 profile 不能被两个浏览器实例同时打开。
   // 主题选择与窗口计数都放在锁内，避免并发触发时轮换状态读-改-写竞态。
@@ -135,9 +141,97 @@ export class SchedulerService {
     this._sleep = runtime.sleep ?? sleep;
     this._secureRandom = runtime.secureRandom ?? secureRandom;
     this._log = runtime.log ?? log;
+    this._persistence = runtime.persistence ?? null;
     // 每账号一条独立循环：accountId -> { nextAt, lastAt, busy, promise }
     this._accountLoops = new Map();
     this.lastResults = {}; // accountId -> { ok, reason, time }
+    this._observers = new Set();
+  }
+
+  configurePersistence(persistence) {
+    if (persistence != null && typeof persistence !== "object") {
+      throw new TypeError("scheduler persistence must be an object or null");
+    }
+    this._persistence = persistence;
+    return this;
+  }
+
+  /**
+   * 订阅调度变化。Agent 用它把每账号的 nextAt/lastAt/结果推给管理端，
+   * 否则“下次运行时间”和“刚跑完的结果”只能靠客户端定时全量拉取。
+   */
+  subscribe(observer) {
+    if (typeof observer !== "function") {
+      throw new TypeError("scheduler observer must be a function");
+    }
+    this._observers.add(observer);
+    return () => this._observers.delete(observer);
+  }
+
+  _notify(change) {
+    for (const observer of this._observers) {
+      try {
+        observer(change);
+      } catch (error) {
+        // 观察者异常不能影响调度本身。
+        try {
+          this._log.warn(`调度事件订阅者异常：${String(error?.message || error)}`);
+        } catch {
+          // 日志失败也不再向外抛
+        }
+      }
+    }
+  }
+
+  /**
+   * 普通启停时 running 与持久化的 enabled 必须一起改：早先 start() 先写 enabled=true，
+   * 管理循环稍后失败才写回 false，中间被杀进程会留下 enabled=true 但没在跑的
+   * 假状态，重启后界面显示“运行中”而实际停止。
+   */
+  _setRunning(running) {
+    const next = !!running;
+    const changed = this.running !== next;
+    this.running = next;
+    try {
+      this._persistence?.setEnabled?.(next);
+    } catch (error) {
+      this._log.warn(`保存调度开关失败：${String(error?.message || error)}`);
+    }
+    if (changed) this._notify({ kind: "scheduler", running: next });
+    return next;
+  }
+
+  _persistentSnapshot() {
+    try {
+      return this._persistence?.load?.() ?? { enabled: false, accounts: {} };
+    } catch (error) {
+      this._log.warn(`读取持久化调度状态失败：${String(error?.message || error)}`);
+      return { enabled: false, accounts: {} };
+    }
+  }
+
+  _persistAccount(accountId, state) {
+    const snapshot = {
+      nextAt: state.nextAt ? new Date(state.nextAt).toISOString() : null,
+      lastAt: state.lastAt ? new Date(state.lastAt).toISOString() : null,
+      lastResultState: this.lastResults[accountId]?.ok === true
+        ? "succeeded"
+        : this.lastResults[accountId]?.ok === false
+          ? "failed"
+          : null,
+      lastResult: this.lastResults[accountId] ?? null,
+    };
+    try {
+      this._persistence?.saveAccount?.(accountId, snapshot);
+    } catch (error) {
+      this._log.warn(`保存账号 ${accountId} 调度状态失败：${String(error?.message || error)}`);
+    }
+    this._notify({
+      kind: "account",
+      accountId,
+      ...snapshot,
+      busy: !!state.busy,
+    });
   }
 
   // 计算一次间隔：interval ± jitter（分钟）转毫秒，下限 1 分钟。
@@ -160,6 +254,7 @@ export class SchedulerService {
     }
     return {
       running: this.running,
+      enabled: this._persistentSnapshot().enabled === true,
       accounts, // 每账号各自的下次/上次时间
       lastResults: this.lastResults,
     };
@@ -167,8 +262,8 @@ export class SchedulerService {
 
   start() {
     if (this.running) return { running: true, message: "调度器已在运行" };
-    this.running = true;
     this._stopRequested = false;
+    this._setRunning(true);
     const s = this._getSettings();
     this._log.info(
       `调度器启动（每账号独立定时）：每 ~${s.intervalMinutes ?? 180} 分钟(±${
@@ -188,7 +283,7 @@ export class SchedulerService {
       }
       if (this._manager === managed) {
         this._stopRequested = true;
-        this.running = false;
+        this._setRunning(false);
       }
     });
     this._manager = managed;
@@ -196,10 +291,62 @@ export class SchedulerService {
   }
 
   async stop() {
-    if (!this.running) return { running: false, message: "调度器未运行" };
+    if (!this.running) {
+      this._setRunning(false);
+      return { running: false, message: "调度器未运行" };
+    }
     this._stopRequested = true;
+    this._setRunning(false);
     this._log.info("已请求停止调度，各账号本次对话结束后停止…");
-    return { running: this.running, message: "已请求停止" };
+    // running 已置 false，但账号循环还在收尾；status() 用 running 反映用户意图。
+    return { running: false, message: "已请求停止" };
+  }
+
+  async drain({ timeoutMs = 0, preserveEnabled = false } = {}) {
+    const shouldRestoreEnabled = preserveEnabled && this._persistentSnapshot().enabled === true;
+    await this.stop();
+    const restoreEnabled = () => {
+      if (!shouldRestoreEnabled) return;
+      try {
+        this._persistence?.setEnabled?.(true);
+      } catch (error) {
+        this._log.warn(`保存调度开关失败：${String(error?.message || error)}`);
+      }
+    };
+    const manager = this._manager;
+    const work = [
+      ...(manager ? [manager] : []),
+      ...[...this._accountLoops.values()]
+        .map((state) => state.promise)
+        .filter(Boolean),
+    ];
+    if (!work.length) {
+      this.running = false;
+      // 更新重启后要自动恢复调度：停机是为了装新版本，不是用户关掉了调度。
+      restoreEnabled();
+      return { running: false, drained: true };
+    }
+
+    const settled = Promise.allSettled(work);
+    if (timeoutMs > 0) {
+      let timeout;
+      try {
+        const result = await Promise.race([
+          settled.then(() => true),
+          new Promise((resolve) => {
+            timeout = setTimeout(() => resolve(false), timeoutMs);
+          }),
+        ]);
+        if (!result) return { running: this.running, drained: false };
+      } finally {
+        clearTimeout(timeout);
+      }
+    } else {
+      await settled;
+    }
+    // manager 的 finally 会写回 enabled=false，必须等它彻底结束后再恢复用户原来的开关。
+    restoreEnabled();
+    return { running: this.running, drained: true };
   }
 
   // 管理循环：每 15 秒扫描一次启用账号，为尚无循环的账号启动独立定时循环。
@@ -239,7 +386,9 @@ export class SchedulerService {
       while (Date.now() < until && !this._stopRequested) await this._sleep(3000);
     }
 
-    this.running = false;
+    // stop() 已经把 running/enabled 一起落下；这里只在管理循环自行退出
+    // （例如全部账号被停用）时补齐状态并通知一次。
+    this._setRunning(false);
     this._stopRequested = false;
     this._log.info("调度器已停止");
   }
@@ -251,12 +400,22 @@ export class SchedulerService {
     try {
       const headless = () => this._getSettings().headless ?? true;
 
-      // 首次启动加 0~intervalMin 的随机初始延迟，避免所有账号同时起跑。
+      // 更新/重启后恢复原 nextAt；已错过的任务只补跑一次，并加最多 5 分钟
+      // 的抖动，避免一批账号在 Agent 恢复时同时启动 Chrome。
       const s = this._getSettings();
-      const initDelay = Math.floor(
-        this._secureRandom() * (s.intervalMinutes ?? 180) * 60000
-      );
+      const persisted = this._persistentSnapshot().accounts?.[accountId] ?? null;
+      if (persisted?.lastResult && typeof persisted.lastResult === "object") {
+        this.lastResults[accountId] = { ...persisted.lastResult };
+      }
+      const persistedNextAt = persisted?.nextAt ? Date.parse(persisted.nextAt) : NaN;
+      const initDelay = Number.isFinite(persistedNextAt)
+        ? persistedNextAt > Date.now()
+          ? persistedNextAt - Date.now()
+          : Math.floor(this._secureRandom() * Math.min(5, s.intervalMinutes ?? 180) * 60000)
+        : Math.floor(this._secureRandom() * (s.intervalMinutes ?? 180) * 60000);
       state.nextAt = Date.now() + initDelay;
+      state.lastAt = persisted?.lastAt ? Date.parse(persisted.lastAt) || null : null;
+      this._persistAccount(accountId, state);
       this._log.info(
         `「${displayName(this._getAccount(accountId) ?? { id: accountId })}」首次约 ${Math.round(
           initDelay / 60000
@@ -297,6 +456,7 @@ export class SchedulerService {
           res = {
             ok: false,
             reason: `运行异常：${String(error?.message || error)}`,
+            ...(error?.code ? { code: String(error.code) } : {}),
           };
         } finally {
           state.busy = false;
@@ -322,6 +482,7 @@ export class SchedulerService {
         // 即使本轮抛错，也要为下一轮留下完整调度状态。
         const delay = this._nextDelayMs();
         state.nextAt = Date.now() + delay;
+        this._persistAccount(accountId, state);
         this._log.info(
           `「${displayName(acc)}」下次约 ${Math.round(delay / 60000)} 分钟后`
         );

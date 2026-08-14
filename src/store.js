@@ -10,6 +10,61 @@ const CONV_FILE = fromRoot("config/conversations.json");
 const SETTINGS_FILE = fromRoot("config/settings.json");
 const GROUPS_FILE = fromRoot("config/groups.json");
 
+// Desktop Agent may install a synchronous SQLite-backed implementation before
+// it starts schedulers or browser work. Legacy CLI/Express keep using the JSON
+// implementation below when no backend is configured. Existing modules import
+// these functions directly, so this seam changes storage without duplicating
+// browser automation or weakening the account/Profile locks.
+let configuredBackend = null;
+// 一旦有写操作落到某个后端，再换后端就会让 JSON 与 SQLite 状态分叉：切换点
+// 之前的写进了文件，之后的写进了数据库，两边都成了"部分正确"。Agent 必须在
+// 任何请求可达之前完成配置，所以这里把"写之后再切换"直接判为编程错误。
+let backendWriteObserved = false;
+const WRITE_METHODS = new Set([
+  "saveAccounts",
+  "addAccount",
+  "updateAccount",
+  "removeAccount",
+  "addGroup",
+  "updateGroup",
+  "removeGroup",
+  "saveDetectedRegion",
+  "saveConversationSet",
+  "removeConversationSet",
+  "saveSettings",
+]);
+
+export function configureStoreBackend(backend) {
+  if (backend != null && typeof backend !== "object") {
+    throw new TypeError("store backend must be an object or null");
+  }
+  if (backendWriteObserved && backend !== configuredBackend) {
+    throw new Error(
+      "store backend cannot change after a write: configure the backend before serving requests"
+    );
+  }
+  const previous = configuredBackend;
+  const previousWriteObserved = backendWriteObserved;
+  configuredBackend = backend;
+  backendWriteObserved = false;
+  return () => {
+    configuredBackend = previous;
+    backendWriteObserved = previousWriteObserved;
+  };
+}
+
+export function getConfiguredStoreBackend() {
+  return configuredBackend;
+}
+
+function backendCall(method, args) {
+  if (WRITE_METHODS.has(method)) backendWriteObserved = true;
+  const fn = configuredBackend?.[method];
+  return typeof fn === "function"
+    ? { handled: true, value: fn.apply(configuredBackend, args) }
+    : { handled: false, value: undefined };
+}
+
 function readJsonFile(file, fallback) {
   try {
     return JSON.parse(fs.readFileSync(file, "utf8"));
@@ -40,11 +95,15 @@ function normalizeAccount(a) {
 }
 
 export function getAccounts() {
+  const delegated = backendCall("getAccounts", []);
+  if (delegated.handled) return delegated.value;
   const data = readJsonFile(ACCOUNTS_FILE, { accounts: [] });
   return (data.accounts ?? []).map(normalizeAccount);
 }
 
 export function getAccount(id) {
+  const delegated = backendCall("getAccount", [id]);
+  if (delegated.handled) return delegated.value;
   return getAccounts().find((a) => a.id === id) ?? null;
 }
 
@@ -54,6 +113,8 @@ export function displayName(a) {
 }
 
 export function saveAccounts(accounts) {
+  const delegated = backendCall("saveAccounts", [accounts]);
+  if (delegated.handled) return delegated.value;
   const normalized = Array.isArray(accounts) ? accounts.map(normalizeAccount) : [];
   writeJsonFile(ACCOUNTS_FILE, { accounts: normalized });
 }
@@ -71,6 +132,14 @@ export function addAccount({
   minWindows = 1,
   maxWindows = 3,
 } = {}) {
+  const delegated = backendCall("addAccount", [{
+    note,
+    groupId,
+    switchRule,
+    minWindows,
+    maxWindows,
+  }]);
+  if (delegated.handled) return delegated.value;
   const accounts = getAccounts();
   const id = slugId();
   const account = {
@@ -94,6 +163,8 @@ export function addAccount({
 }
 
 export function updateAccount(id, patch) {
+  const delegated = backendCall("updateAccount", [id, patch]);
+  if (delegated.handled) return delegated.value;
   const accounts = getAccounts();
   const idx = accounts.findIndex((a) => a.id === id);
   if (idx === -1) return null;
@@ -105,6 +176,8 @@ export function updateAccount(id, patch) {
 }
 
 export function removeAccount(id) {
+  const delegated = backendCall("removeAccount", [id]);
+  if (delegated.handled) return delegated.value;
   const accounts = getAccounts();
   const next = accounts.filter((a) => a.id !== id);
   if (next.length === accounts.length) return false;
@@ -123,11 +196,15 @@ function normalizeGroup(g) {
 }
 
 export function getGroups() {
+  const delegated = backendCall("getGroups", []);
+  if (delegated.handled) return delegated.value;
   const data = readJsonFile(GROUPS_FILE, { groups: [] });
   return Array.isArray(data.groups) ? data.groups.map(normalizeGroup) : [];
 }
 
 export function getGroup(id) {
+  const delegated = backendCall("getGroup", [id]);
+  if (delegated.handled) return delegated.value;
   return getGroups().find((g) => g.id === id) ?? null;
 }
 
@@ -136,6 +213,8 @@ export function getGroup(id) {
  * 未分组 / 分组未绑节点 => null（跟随系统默认网络）。
  */
 export function effectiveProxyId(account) {
+  const delegated = backendCall("effectiveProxyId", [account]);
+  if (delegated.handled) return delegated.value;
   if (!account?.groupId) return null;
   return getGroup(account.groupId)?.proxyId ?? null;
 }
@@ -299,6 +378,8 @@ function badRequest(msg) {
 }
 
 export function addGroup(name, proxyId = null, extra = {}) {
+  const delegated = backendCall("addGroup", [name, proxyId, extra]);
+  if (delegated.handled) return delegated.value;
   const clean = String(name ?? "").trim();
   if (!clean) throw badRequest("分组名称不能为空");
   const groups = getGroups();
@@ -324,6 +405,8 @@ export function addGroup(name, proxyId = null, extra = {}) {
  * timezone / locale 传 null 表示恢复"自动按节点探测"。
  */
 export function updateGroup(id, patch = {}) {
+  const delegated = backendCall("updateGroup", [id, patch]);
+  if (delegated.handled) return delegated.value;
   const groups = getGroups();
   const g = groups.find((x) => x.id === id);
   if (!g) return null;
@@ -363,6 +446,8 @@ export function updateGroup(id, patch = {}) {
  * 且不覆盖已有值——探测是尽力而为，不该反复改写用户配置。
  */
 export function saveDetectedRegion(id, { timezone, locale } = {}) {
+  const delegated = backendCall("saveDetectedRegion", [id, { timezone, locale }]);
+  if (delegated.handled) return delegated.value;
   const groups = getGroups();
   const g = groups.find((x) => x.id === id);
   if (!g || g.tzManual) return null;
@@ -376,6 +461,8 @@ export function saveDetectedRegion(id, { timezone, locale } = {}) {
  * 删除分组。只解绑成员账号（groupId 置空），不动账号本身。
  */
 export function removeGroup(id) {
+  const delegated = backendCall("removeGroup", [id]);
+  if (delegated.handled) return delegated.value;
   const groups = getGroups();
   const next = groups.filter((g) => g.id !== id);
   if (next.length === groups.length) return false;
@@ -395,11 +482,15 @@ export function removeGroup(id) {
 
 // ---------- conversations ----------
 export function getConversations() {
+  const delegated = backendCall("getConversations", []);
+  if (delegated.handled) return delegated.value;
   const data = readJsonFile(CONV_FILE, { sets: {} });
   return data.sets ?? {};
 }
 
 export function saveConversationSet(name, set) {
+  const delegated = backendCall("saveConversationSet", [name, set]);
+  if (delegated.handled) return delegated.value;
   const sets = getConversations();
   sets[name] = set;
   writeJsonFile(CONV_FILE, { sets });
@@ -407,6 +498,8 @@ export function saveConversationSet(name, set) {
 }
 
 export function removeConversationSet(name) {
+  const delegated = backendCall("removeConversationSet", [name]);
+  if (delegated.handled) return delegated.value;
   const sets = getConversations();
   if (!sets[name]) return false;
   delete sets[name];
@@ -416,10 +509,14 @@ export function removeConversationSet(name) {
 
 // ---------- settings (调度参数等) ----------
 export function getSettings() {
+  const delegated = backendCall("getSettings", []);
+  if (delegated.handled) return delegated.value;
   return normalizeSettings(readJsonFile(SETTINGS_FILE, {}));
 }
 
 export function saveSettings(patch) {
+  const delegated = backendCall("saveSettings", [patch]);
+  if (delegated.handled) return delegated.value;
   const next = normalizeSettings({ ...getSettings(), ...patch });
   writeJsonFile(SETTINGS_FILE, next);
   return next;

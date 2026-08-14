@@ -137,6 +137,12 @@ function restoreCache() {
 
 restoreCache();
 
+export function reloadPersistedStatusCache() {
+  cache.clear();
+  restoreCache();
+  return getAllCachedStatus();
+}
+
 export function getCachedStatus(accountId) {
   return cache.get(accountId) ?? emptyCachedStatus();
 }

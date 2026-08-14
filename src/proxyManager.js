@@ -3,7 +3,12 @@ import path from "node:path";
 import net from "node:net";
 import { spawn } from "node:child_process";
 import YAML from "yaml";
-import { fromRoot, ensureDir } from "./paths.js";
+import {
+  fromRoot,
+  fromCacheRoot,
+  fromInstallRoot,
+  ensureDir,
+} from "./paths.js";
 import { getGroups, effectiveProxyId } from "./store.js";
 import {
   assignStablePorts,
@@ -33,13 +38,34 @@ import * as log from "./logger.js";
  */
 
 const PROXIES_FILE = fromRoot("config/proxies.json");
-const RUNTIME_DIR = fromRoot(".mihomo");
-const TEST_RUNTIME_DIR = fromRoot(".mihomo-test");
-const BASE_PORT = 21000;
-const API_PORT = 21999;
+const RUNTIME_DIR = fromCacheRoot("mihomo");
+const TEST_RUNTIME_DIR = fromCacheRoot("mihomo-test");
+// 默认端口段。21000 起这一段与 Clash Verge 的入站端口段重叠，撞上时
+// 用户可以通过 proxies.json 的 basePort 改到空闲区间（见 readStore）。
+const DEFAULT_BASE_PORT = 21000;
+// 控制接口固定落在端口段末尾，跟着 basePort 一起移动。
+const API_PORT_OFFSET = 999;
 // 测速使用完全独立的 mihomo，绝不重启承载账号流量的主边车。
 const TEST_API_PORT = 20999;
-export const DEFAULT_CLASH_VERGE_DIR = "C:\\Program Files\\Clash Verge";
+export const DEFAULT_CLASH_VERGE_DIR = process.platform === "win32"
+  ? "C:\\Program Files\\Clash Verge"
+  : null;
+let proxyStoreBackend = null;
+// 最近一次测速结果：nodeId -> { ok, delay, message, testedAt }。
+// 测速本身是短生命周期的独立进程，结果不落库；但界面需要在节点行上一直显示
+// 上次延迟，否则用户点完“测速”只能去任务中心翻 Operation 结果。
+const nodeLatency = new Map();
+
+export function configureProxyStoreBackend(backend) {
+  if (backend != null && typeof backend !== "object") {
+    throw new TypeError("proxy store backend must be an object or null");
+  }
+  const previous = proxyStoreBackend;
+  proxyStoreBackend = backend;
+  return () => {
+    proxyStoreBackend = previous;
+  };
+}
 
 // 用户输入不合法：标记 badRequest，API 层答 400 而不是 500。
 function badRequest(msg) {
@@ -49,6 +75,9 @@ function badRequest(msg) {
 }
 
 function readStore() {
+  if (typeof proxyStoreBackend?.readProxyStore === "function") {
+    return proxyStoreBackend.readProxyStore();
+  }
   try {
     const data = JSON.parse(fs.readFileSync(PROXIES_FILE, "utf8"));
     return {
@@ -68,6 +97,9 @@ function readStore() {
 }
 
 function writeStore(data) {
+  if (typeof proxyStoreBackend?.writeProxyStore === "function") {
+    return proxyStoreBackend.writeProxyStore(data);
+  }
   ensureDir(fromRoot("config"));
   fs.writeFileSync(PROXIES_FILE, JSON.stringify(data, null, 2), "utf8");
 }
@@ -101,6 +133,11 @@ export function getNodes({ safe = true } = {}) {
     port: n.raw?.port ?? null,
     enabled: n.enabled !== false,
     missing: !!n.missing,
+    // 上次测速结果随节点一起返回，界面无需另外关联 Operation 结果。
+    latencyMs: nodeLatency.get(n.id)?.delay ?? null,
+    latencyOk: nodeLatency.get(n.id)?.ok ?? null,
+    latencyMessage: nodeLatency.get(n.id)?.message ?? null,
+    latencyTestedAt: nodeLatency.get(n.id)?.testedAt ?? null,
     // 只有被分组实际引用的节点才有主边车监听端口；测速走独立临时进程。
     localPort:
       routedIds.has(n.id) && n.enabled !== false && !n.missing
@@ -141,7 +178,7 @@ function resolveMihomo() {
   return findMihomoExecutable({
     configuredPath: mihomoPath,
     configuredInstallDir: clashVergeDir,
-    projectRoot: fromRoot("."),
+    projectRoot: fromInstallRoot("."),
   });
 }
 
@@ -156,7 +193,7 @@ export async function setClashVergeDirectory(value) {
   if (!directory) directory = DEFAULT_CLASH_VERGE_DIR;
 
   const executable = findMihomoInDirectory(directory, {
-    projectRoot: fromRoot("."),
+    projectRoot: fromInstallRoot("."),
   });
   if (!executable) {
     throw badRequest(
@@ -260,6 +297,11 @@ export async function importSubscription(url) {
     mihomoPath: prev.mihomoPath,
     clashVergeDir: prev.clashVergeDir,
   });
+  // 订阅换掉的节点不能留着旧延迟，否则界面会给新节点显示上一批的数字。
+  const liveIds = new Set(nodes.map((node) => node.id));
+  for (const id of [...nodeLatency.keys()]) {
+    if (!liveIds.has(id)) nodeLatency.delete(id);
+  }
 
   log.info(`订阅导入完成：${nodes.filter((n) => !n.missing).length} 个节点`);
   await restart();
@@ -295,6 +337,7 @@ export async function clearNodes() {
     mihomoPath: previous.mihomoPath,
     clashVergeDir: previous.clashVergeDir,
   });
+  nodeLatency.clear();
   await runLifecycleTransition(() => stopAndWait());
 }
 
@@ -302,10 +345,53 @@ export async function clearNodes() {
 
 // 节点 id -> 预留本地端口。严格按订阅位置分配，停用节点也保留自己的槽位；
 // 这样切换一个未被分组使用的节点，不会让后续分组节点的端口整体位移。
-function portMapFrom(nodes) {
+// 当前边车实际使用的端口段起点。默认段与 Clash Verge 重叠时会自动下移，
+// 所以端口不能在每次调用时重算 —— getNodes/proxyForAccount 必须和正在运行的
+// 边车看到同一批端口，否则浏览器会把流量发到错误的监听口。
+let activeBasePort = null;
+
+function configuredBasePort() {
+  const value = Number(readStore().basePort);
+  return Number.isInteger(value) && value >= 1024 && value <= 60000 ? value : DEFAULT_BASE_PORT;
+}
+
+function currentBasePort() {
+  return activeBasePort ?? configuredBasePort();
+}
+
+function apiPortFor(basePort) {
+  return basePort + API_PORT_OFFSET;
+}
+
+/**
+ * 找一段可用的端口区间。
+ *
+ * 首选配置里的段（默认 21000）。只有当该段确实被别的程序占用时才向后让路 ——
+ * 常见情形是用户的 Clash Verge 也在这一段开入站监听。让路而不是抢占：按进程名
+ * 杀 mihomo 会把用户自己的网络一起切断。
+ *
+ * 只检查实际要用到的端口，不检查整段：段内零散端口被占用不影响我们。
+ */
+async function resolveFreeBasePort() {
+  const preferred = configuredBasePort();
+  for (let attempt = 0; attempt < 12; attempt++) {
+    const base = preferred + attempt * 1000;
+    if (apiPortFor(base) > 65535) break;
+    // 按候选段重算一次配置，只检查真正会被监听的端口加控制端口。
+    const candidate = buildConfig(base);
+    const candidates = [
+      apiPortFor(base),
+      ...candidate.listeners.map((listener) => listener.port),
+    ];
+    if ((await findOccupiedPorts(candidates)).length === 0) return base;
+  }
+  return null;
+}
+
+function portMapFrom(nodes, basePort = currentBasePort()) {
   return assignStablePorts(nodes, {
-    basePort: BASE_PORT,
-    reservedPorts: [API_PORT],
+    basePort,
+    reservedPorts: [apiPortFor(basePort)],
   });
 }
 
@@ -354,11 +440,11 @@ function runLifecycleTransition(fn) {
   return run;
 }
 
-function buildConfig() {
+function buildConfig(basePort = currentBasePort()) {
   const { nodes } = readStore();
   const active = selectRuntimeProxyNodes(nodes, referencedProxyIds());
   // 仍按完整订阅中的顺序分配端口，分组引用增减不会改变其它节点的端口。
-  const ports = portMapFrom(nodes);
+  const ports = portMapFrom(nodes, basePort);
 
   const listeners = active
     .filter((n) => ports.has(n.id))
@@ -376,7 +462,7 @@ function buildConfig() {
     mode: "rule",
     "log-level": "warning",
     ipv6: false,
-    "external-controller": `127.0.0.1:${API_PORT}`,
+    "external-controller": `127.0.0.1:${apiPortFor(basePort)}`,
     "unified-delay": true,
     dns: {
       enable: true,
@@ -398,8 +484,13 @@ function buildConfig() {
  * 一个账号开浏览器就会掐断其它账号正在进行的请求。
  */
 async function ensureRunningUnlocked() {
-  const cfg = buildConfig();
-  if (!cfg.listeners.length) {
+  // 先只判断"有没有需要监听的节点"。真正要用的端口段在下面确定，
+  // 所以这里不能把这份配置当成最终配置使用。
+  const routedNodeCount = selectRuntimeProxyNodes(
+    readStore().nodes,
+    referencedProxyIds()
+  ).length;
+  if (routedNodeCount === 0) {
     await stopAndWait();
     return { running: false, reason: "没有启用的代理节点" };
   }
@@ -412,18 +503,47 @@ async function ensureRunningUnlocked() {
     );
   }
   const executableKey = process.platform === "win32" ? bin.toLowerCase() : bin;
-  const fingerprint = JSON.stringify({ config: cfg, executable: executableKey });
-  if (child && !child.killed && currentFingerprint === fingerprint) {
-    return { running: true, nodes: cfg.listeners.length, reused: true };
+  // 复用判定必须基于**正在运行**的那个端口段（activeBasePort），而不是配置里的
+  // 首选段。否则一旦发生过让路，每次调用都会认为配置变了而重启边车 —— 每个账号
+  // 开浏览器都会掐断其它账号正在进行的请求。
+  const reuseFingerprint = JSON.stringify({
+    config: buildConfig(currentBasePort()),
+    executable: executableKey,
+  });
+  if (child && !child.killed && currentFingerprint === reuseFingerprint) {
+    return { running: true, nodes: routedNodeCount, reused: true };
   }
-
-  ensureDir(RUNTIME_DIR);
-  const cfgPath = path.join(RUNTIME_DIR, "config.yaml");
-  fs.writeFileSync(cfgPath, YAML.stringify(cfg), "utf8");
 
   // 先等旧进程真正退出，再起新的：否则旧进程还占着端口，
   // 新进程会绑定失败。
   await stopAndWait();
+
+  // 自己的进程已退出，此时仍被占用的端口一定属于别的程序 —— 通常是用户的
+  // Clash Verge，它的入站端口段与本项目默认段（21000+）重叠。
+  //
+  // 撞上时必须自己让路，不能去动占用者：按进程名杀 mihomo 会切断用户的网络。
+  // 也不能无视冲突继续启动：mihomo 绑定失败会立刻退出，而"端口连得上"的检查
+  // 会把 Verge 的监听误判为启动成功，账号流量最终流向另一套路由规则，
+  // 表现为 ERR_PROXY_CONNECTION_FAILED。
+  const basePort = await resolveFreeBasePort();
+  if (basePort === null) {
+    throw new Error(
+      `本地端口段 ${configuredBasePort()} 起连续多段都已被其它程序占用` +
+        `（常见原因：Clash Verge 的入站端口段与本程序重叠）。` +
+        `请调整 Clash Verge 的端口设置后重试；本程序不会关闭占用端口的进程。`
+    );
+  }
+  if (basePort !== configuredBasePort()) {
+    log.info(`默认端口段被占用，本次改用 ${basePort} 起的空闲端口段`);
+  }
+  // 端口段确定后再生成最终配置，并让 getNodes/proxyForAccount 看到同一批端口。
+  activeBasePort = basePort;
+  const cfg = buildConfig(basePort);
+  const fingerprint = JSON.stringify({ config: cfg, executable: executableKey });
+
+  ensureDir(RUNTIME_DIR);
+  const cfgPath = path.join(RUNTIME_DIR, "config.yaml");
+  fs.writeFileSync(cfgPath, YAML.stringify(cfg), "utf8");
 
   const proc = spawn(bin, ["-d", RUNTIME_DIR, "-f", cfgPath], {
     stdio: ["ignore", "pipe", "pipe"],
@@ -458,21 +578,28 @@ async function ensureRunningUnlocked() {
     }
   });
 
-  // 等第一个监听端口就绪，确认真的起来了。
-  const firstPort = cfg.listeners[0].port;
-  const ok = await waitPort(firstPort, 12000, () => !!spawnError);
-  if (!ok) {
+  const readiness = await waitAllPortsReady(
+    cfg.listeners.map((listener) => listener.port),
+    {
+      timeoutMs: 20000,
+      shouldStop: () => !!spawnError || proc.exitCode !== null || proc.signalCode !== null,
+    }
+  );
+  if (!readiness.ok) {
     await stopAndWait();
     throw new Error(
       spawnError
         ? `mihomo 无法启动：${String(spawnError.message || spawnError)}`
-        : "mihomo 启动后端口未就绪，请检查节点配置"
+        : proc.exitCode !== null
+          ? `mihomo 启动后立即退出（code=${proc.exitCode}），请检查节点配置与端口占用`
+          : `mihomo 入站端口 ${readiness.port} 未就绪，请检查节点配置与端口占用`
     );
   }
 
   currentFingerprint = fingerprint;
-  log.info(`代理边车已启动：${cfg.listeners.length} 个节点，端口 ${firstPort}+`);
-  return { running: true, nodes: cfg.listeners.length };
+  const firstPort = cfg.listeners[0].port;
+  log.info(`代理边车已启动：${cfg.listeners.length} 个节点全部就绪，端口 ${firstPort}+`);
+  return { running: true, nodes: cfg.listeners.length, basePort };
 }
 
 export function ensureRunning() {
@@ -502,6 +629,8 @@ export function stop() {
   }
   child = null;
   currentFingerprint = null;
+  // 下次启动重新探测空闲端口段：占用情况可能已经变化。
+  activeBasePort = null;
 }
 
 /**
@@ -562,7 +691,62 @@ export function status() {
     routedNodeCount,
     subscription: getSubscriptionInfo(),
     clashVergeDir,
+    // 实际使用的端口段：与 Clash Verge 冲突时会自动下移，界面上要能看出来。
+    basePort: currentBasePort(),
+    basePortShifted: activeBasePort !== null && activeBasePort !== configuredBasePort(),
   };
+}
+
+/**
+ * 检查端口是否已被本机其它程序占用。
+ *
+ * 本项目的端口段（21000+）会和用户自己的 Clash Verge 撞上 —— Verge 也在这一段开
+ * 入站监听。撞上时后果很隐蔽：mihomo 绑定失败后立刻退出，而 waitPort 连得上那个
+ * 被 Verge 占着的端口，于是被判定为"启动成功"，浏览器把流量发给 Verge 的入站口，
+ * 路由规则完全不同，最终表现为 ERR_PROXY_CONNECTION_FAILED。
+ *
+ * 用 bind 而不是 connect 判断：connect 成功只说明"有人在听"，无法区分是不是自己。
+ */
+function isPortAvailable(port) {
+  return new Promise((resolve) => {
+    const probe = net.createServer();
+    probe.once("error", () => resolve(false));
+    probe.once("listening", () => probe.close(() => resolve(true)));
+    // exclusive 阻止 SO_REUSEADDR 造成的"看起来能绑"假象。
+    probe.listen({ host: "127.0.0.1", port, exclusive: true });
+  });
+}
+
+async function findOccupiedPorts(ports) {
+  const occupied = [];
+  for (const port of ports) {
+    if (!(await isPortAvailable(port))) occupied.push(port);
+  }
+  return occupied;
+}
+
+/**
+ * 等待**每一个**入站端口都可连接。
+ *
+ * 早先只等 listeners[0]：第一个端口一通就返回"启动成功"，但 mihomo 还在逐个绑定
+ * 其余监听。此时发起登录的账号如果用的是后面的端口（例如 9 个节点里的第 4 个），
+ * 浏览器就会拿到 ERR_PROXY_CONNECTION_FAILED —— 表现为"部分账号刚好在这几秒里失败、
+ * 重试一次又好了"，非常难定位。
+ *
+ * shouldStop 为真表示我们自己的进程已经退出：此时必须立刻放弃，否则会把别的程序
+ * 占用的同号端口误判成自己启动成功。
+ */
+export async function waitAllPortsReady(ports, { timeoutMs = 20000, shouldStop = () => false } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  for (const port of ports) {
+    if (shouldStop()) return { ok: false, port, stopped: true };
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return { ok: false, port, timedOut: true };
+    if (!(await waitPort(port, remaining, shouldStop))) {
+      return { ok: false, port, stopped: shouldStop() };
+    }
+  }
+  return { ok: true };
 }
 
 function waitPort(port, timeoutMs, shouldStop = () => false) {
@@ -734,23 +918,52 @@ function testableNodeOrThrow(nodes, id) {
 export async function testNode(id) {
   const { nodes } = readStore();
   const node = testableNodeOrThrow(nodes, id);
-  return withTestSidecar([node], () => measureTestNode(node));
+  return withTestSidecar([node], async () => rememberLatency(node.id, await measureTestNode(node)));
+}
+
+function rememberLatency(nodeId, measurement) {
+  const record = {
+    ok: !!measurement?.ok,
+    delay: measurement?.ok ? measurement.delay ?? null : null,
+    message: measurement?.ok ? null : measurement?.message ?? "测速失败",
+    testedAt: new Date().toISOString(),
+  };
+  nodeLatency.set(nodeId, record);
+  return { id: nodeId, ...measurement, testedAt: record.testedAt };
+}
+
+export function getNodeLatency(nodeId) {
+  return nodeLatency.get(nodeId) ?? null;
 }
 
 /**
  * 批量测速：独立进程一次加载所有启用节点，再逐个请求延迟。
+ *
+ * onProgress 每测完一个节点回调一次，让上层 Operation 能报真实进度；
+ * 一百多个节点串行测速否则是十几分钟的黑盒。
  */
-export async function testAllNodes() {
+export async function testAllNodes({ onProgress } = {}) {
   const { nodes } = readStore();
   const targets = nodes.filter((n) => n.enabled !== false && !n.missing);
   if (!targets.length) throw badRequest("没有可测试的启用节点");
 
   return withTestSidecar(targets, async () => {
     const results = [];
-    for (const node of targets) {
-      results.push({ id: node.id, ...(await measureTestNode(node)) });
+    for (const [index, node] of targets.entries()) {
+      const measured = rememberLatency(node.id, await measureTestNode(node));
+      results.push(measured);
+      try {
+        onProgress?.({
+          done: index + 1,
+          total: targets.length,
+          node: { id: node.id, name: node.name },
+          result: measured,
+        });
+      } catch {
+        // 进度回调失败不能中断剩余节点的测速
+      }
     }
-    return { results };
+    return { results, total: targets.length };
   });
 }
 

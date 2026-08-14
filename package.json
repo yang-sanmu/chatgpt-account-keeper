@@ -1,6 +1,6 @@
 {
   "name": "chatgpt-account-keeper",
-  "version": "0.1.0",
+  "version": "0.1.0-alpha.6",
   "description": "多 ChatGPT 网页账号会话管理与定时对话工具（手动登录 + 持久化会话态）",
   "type": "module",
   "bin": {
@@ -8,15 +8,26 @@
   },
   "scripts": {
     "start": "node src/server.js",
+    "start:legacy": "node src/server.js",
+    "start:agent": "node src/agent/launcher.js",
     "login": "node src/cli.js login",
     "run": "node src/cli.js run",
     "once": "node src/cli.js once",
-    "test": "node --test"
+    "test": "node --test",
+    "test:node": "node --test"
+  },
+  "engines": {
+    "node": ">=24 <25"
   },
   "dependencies": {
-    "express": "^4.22.2",
-    "playwright": "^1.49.0",
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
+    "better-sqlite3": "13.0.3",
+    "playwright-core": "1.61.1",
     "ws": "^8.21.1",
     "yaml": "2.9.0"
+  },
+  "devDependencies": {
+    "express": "4.22.2"
   }
 }

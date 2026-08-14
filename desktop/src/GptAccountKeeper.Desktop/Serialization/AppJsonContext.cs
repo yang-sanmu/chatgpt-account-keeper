@@ -1,0 +1,72 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using GptAccountKeeper.Desktop.Models;
+using GptAccountKeeper.Desktop.Infrastructure.Settings;
+
+namespace GptAccountKeeper.Desktop.Serialization;
+
+[JsonSourceGenerationOptions(
+    PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
+    PropertyNameCaseInsensitive = false,
+    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    GenerationMode = JsonSourceGenerationMode.Metadata,
+    WriteIndented = false)]
+[JsonSerializable(typeof(AgentRequestEnvelope))]
+[JsonSerializable(typeof(AgentIncomingEnvelope))]
+[JsonSerializable(typeof(AgentHelloParams))]
+[JsonSerializable(typeof(AgentHelloResult))]
+[JsonSerializable(typeof(EmptyParams))]
+[JsonSerializable(typeof(AgentBootstrapResult))]
+[JsonSerializable(typeof(AgentSettingsDto))]
+[JsonSerializable(typeof(HistoryAccountDto))]
+[JsonSerializable(typeof(HistoryAccountDto[]))]
+[JsonSerializable(typeof(ProfileEntryDto))]
+[JsonSerializable(typeof(ProfileScanResultDto))]
+[JsonSerializable(typeof(AccountDto))]
+[JsonSerializable(typeof(AccountDto[]))]
+[JsonSerializable(typeof(SchedulerStateDto))]
+[JsonSerializable(typeof(GroupDto))]
+[JsonSerializable(typeof(ProxyStateDto))]
+[JsonSerializable(typeof(ProxyNodeDto))]
+[JsonSerializable(typeof(ConversationSetDto))]
+[JsonSerializable(typeof(Dictionary<string, ConversationSetDto>))]
+[JsonSerializable(typeof(AgentOperationDto))]
+[JsonSerializable(typeof(AgentActivityResult))]
+[JsonSerializable(typeof(AccountIdParams))]
+[JsonSerializable(typeof(AccountIdWithForceParams))]
+[JsonSerializable(typeof(AccountCreateParams))]
+[JsonSerializable(typeof(AccountUpdateParams))]
+[JsonSerializable(typeof(AccountToggleParams))]
+[JsonSerializable(typeof(AccountRemoveParams))]
+[JsonSerializable(typeof(GroupCreateParams))]
+[JsonSerializable(typeof(GroupUpdateParams))]
+[JsonSerializable(typeof(IdParams))]
+[JsonSerializable(typeof(ProxySubscriptionParams))]
+[JsonSerializable(typeof(ProxyNodeEnabledParams))]
+[JsonSerializable(typeof(ProxyRuntimeDirectoryParams))]
+[JsonSerializable(typeof(ConversationUpsertParams))]
+[JsonSerializable(typeof(NameParams))]
+[JsonSerializable(typeof(HistoryQueryParams))]
+[JsonSerializable(typeof(HistoryEntryDto))]
+[JsonSerializable(typeof(HistoryEntryDto[]))]
+[JsonSerializable(typeof(OperationListParams))]
+[JsonSerializable(typeof(AgentOperationDto[]))]
+[JsonSerializable(typeof(SchedulerAccountChangeDto))]
+[JsonSerializable(typeof(AccountStatusEventDto))]
+[JsonSerializable(typeof(ProxyNodeTestedDto))]
+[JsonSerializable(typeof(HistoryAppendedDto))]
+[JsonSerializable(typeof(OpenPageChangeDto))]
+[JsonSerializable(typeof(GroupDto[]))]
+[JsonSerializable(typeof(ProfileCleanParams))]
+[JsonSerializable(typeof(SettingsUpdateParams))]
+[JsonSerializable(typeof(JsonElement[]))]
+[JsonSerializable(typeof(ShutdownParams))]
+[JsonSerializable(typeof(PrepareUpdateParams))]
+[JsonSerializable(typeof(PrepareUpdateResult))]
+[JsonSerializable(typeof(AcceptedResult))]
+[JsonSerializable(typeof(OkResult))]
+[JsonSerializable(typeof(DesktopSettings))]
+[JsonSerializable(typeof(LegacyMigrationProbeResult))]
+[JsonSerializable(typeof(MigrationProgressDto))]
+[JsonSerializable(typeof(BootstrapPointer))]
+internal sealed partial class AppJsonContext : JsonSerializerContext;

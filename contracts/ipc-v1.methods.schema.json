@@ -1,0 +1,236 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/yang-sanmu/chatgpt-account-keeper/contracts/ipc-v1.methods.schema.json",
+  "title": "GptAccount Keeper IPC v1 method DTOs",
+  "$defs": {
+    "emptyParams": { "type": "object", "additionalProperties": false },
+    "jsonObject": { "type": "object" },
+    "jsonArray": { "type": "array" },
+    "accountResult": {
+      "type": "object",
+      "required": ["id", "enabled", "switchRule", "minWindows", "maxWindows", "loggedIn", "pageOpen"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 }, "note": { "type": ["string", "null"] },
+        "email": { "type": ["string", "null"] }, "gptName": { "type": ["string", "null"] },
+        "groupId": { "type": ["string", "null"] }, "enabled": { "type": "boolean" },
+        "switchRule": { "enum": ["random", "sequential"] }, "minWindows": { "type": "integer", "minimum": 1 },
+        "maxWindows": { "type": "integer", "minimum": 1 }, "state": { "type": ["string", "null"] },
+        "loggedIn": { "type": "boolean" }, "pageOpen": { "type": "boolean" },
+        "statusDetail": { "type": ["string", "null"] }, "checkedAt": { "type": ["string", "null"], "format": "date-time" },
+        "stale": { "type": "boolean" },
+        "rotationCurrentSet": { "type": ["string", "null"] },
+        "rotationWindowsDone": { "type": "integer", "minimum": 0 },
+        "rotationWindowsTarget": { "type": "integer", "minimum": 0 },
+        "groupName": { "type": ["string", "null"] },
+        "proxyId": { "type": ["string", "null"] },
+        "proxyName": { "type": ["string", "null"] },
+        "proxyMissing": { "type": "boolean" },
+        "nextRunAt": { "type": ["string", "null"], "format": "date-time" },
+        "lastRunAt": { "type": ["string", "null"], "format": "date-time" },
+        "running": { "type": "boolean" },
+        "lastRunOk": { "type": ["boolean", "null"] },
+        "lastRunReason": { "type": ["string", "null"] }
+      }
+    },
+    "historyEntryResult": {
+      "type": "object",
+      "required": ["time", "ok", "totalRounds", "rounds"],
+      "properties": {
+        "time": { "type": ["string", "null"] },
+        "ok": { "type": ["boolean", "null"] },
+        "setName": { "type": ["string", "null"] },
+        "topic": { "type": ["string", "null"] },
+        "totalRounds": { "type": "integer", "minimum": 0 },
+        "error": { "type": ["string", "null"] },
+        "needReauth": { "type": "boolean" },
+        "rounds": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["question", "answer"],
+            "properties": {
+              "question": { "type": ["string", "null"] },
+              "answer": { "type": ["string", "null"] },
+              "at": { "type": ["string", "null"] }
+            }
+          }
+        }
+      }
+    },
+    "historyEntryArray": { "type": "array", "items": { "$ref": "#/$defs/historyEntryResult" } },
+    "accountArray": { "type": "array", "items": { "$ref": "#/$defs/accountResult" } },
+    "accountStatusResult": {
+      "type": "object", "required": ["id", "state", "loggedIn"],
+      "properties": { "id": { "type": "string", "minLength": 1 }, "state": { "type": ["string", "null"] }, "loggedIn": { "type": "boolean" } }
+    },
+    "groupResult": {
+      "type": "object", "required": ["id", "name"],
+      "properties": { "id": { "type": "string", "minLength": 1 }, "name": { "type": "string", "minLength": 1 }, "proxyId": { "type": ["string", "null"] }, "timezone": { "type": ["string", "null"] }, "locale": { "type": ["string", "null"] } }
+    },
+    "groupArray": { "type": "array", "items": { "$ref": "#/$defs/groupResult" } },
+    "conversationResult": {
+      "type": "object", "required": ["topic", "minRounds", "maxRounds"],
+      "properties": { "topic": { "type": "string" }, "minRounds": { "type": "integer", "minimum": 0 }, "maxRounds": { "type": "integer", "minimum": 0 } }
+    },
+    "conversationMap": { "type": "object", "additionalProperties": { "$ref": "#/$defs/conversationResult" } },
+    "settingsResult": {
+      "type": "object", "required": ["intervalMinutes", "jitterMinutes", "headless", "statusCheckMinutes", "statusCheckOnStartup", "openPageTimeoutMinutes", "profileAutoCleanEnabled"],
+      "properties": {
+        "intervalMinutes": { "type": "number", "minimum": 1 }, "jitterMinutes": { "type": "number", "minimum": 0 },
+        "headless": { "type": "boolean" }, "statusCheckMinutes": { "type": "number", "minimum": 1 },
+        "statusCheckOnStartup": { "type": "boolean" }, "openPageTimeoutMinutes": { "type": "number", "minimum": 0 },
+        "profileAutoCleanEnabled": { "type": "boolean" }
+      }
+    },
+    "schedulerResult": {
+      "type": "object", "required": ["running", "enabled", "accounts"],
+      "properties": { "running": { "type": "boolean" }, "enabled": { "type": "boolean" }, "accounts": { "type": "object" }, "lastResults": { "type": "object" }, "message": { "type": "string" } }
+    },
+    "historyAccountResult": {
+      "type": "object", "required": ["accountId", "entryCount", "deleted"],
+      "properties": { "accountId": { "type": "string", "minLength": 1 }, "entryCount": { "type": "integer", "minimum": 0 }, "deleted": { "type": "boolean" }, "lastAt": { "type": ["string", "null"], "format": "date-time" }, "note": { "type": ["string", "null"] }, "email": { "type": ["string", "null"] }, "gptName": { "type": ["string", "null"] } }
+    },
+    "historyAccountArray": { "type": "array", "items": { "$ref": "#/$defs/historyAccountResult" } },
+    "proxyStateResult": {
+      "type": "object", "required": ["nodes", "status", "subscription", "runtime"],
+      "properties": { "nodes": { "type": "array" }, "status": { "type": "object" }, "subscription": { "type": ["object", "null"] }, "runtime": { "type": ["object", "null"] } }
+    },
+    "okResult": { "type": "object", "required": ["ok"], "properties": { "ok": { "type": "boolean" } } },
+    "acceptedResult": { "type": "object", "required": ["accepted"], "properties": { "accepted": { "type": "boolean" } } },
+    "operationResult": { "$ref": "ipc-v1.schema.json#/$defs/operation" },
+    "operationArray": { "type": "array", "items": { "$ref": "ipc-v1.schema.json#/$defs/operation" } },
+    "idParams": {
+      "type": "object", "additionalProperties": false, "required": ["id"],
+      "properties": { "id": { "type": "string", "minLength": 1 } }
+    },
+    "taskIdParams": {
+      "type": "object", "additionalProperties": false, "required": ["taskId"],
+      "properties": { "taskId": { "type": "string", "minLength": 1 } }
+    },
+    "operationListParams": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "limit": { "type": "integer", "minimum": 1, "maximum": 500 },
+        "includeTerminal": { "type": "boolean" }
+      }
+    },
+    "accountIdParams": {
+      "type": "object", "additionalProperties": false, "required": ["accountId"],
+      "properties": { "accountId": { "type": "string", "minLength": 1 }, "url": { "type": "string" } }
+    },
+    "helloParams": { "$ref": "ipc-v1.schema.json#/$defs/helloParams" },
+    "helloResult": { "$ref": "ipc-v1.schema.json#/$defs/helloResult" },
+    "prepareUpdateParams": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "commit": { "type": "boolean" }, "reason": { "type": "string" } }
+    },
+    "prepareUpdateResult": {
+      "type": "object", "required": ["ready", "blockers"],
+      "properties": { "ready": { "type": "boolean" }, "committed": { "type": "boolean" }, "blockers": { "type": "array" } }
+    },
+    "shutdownParams": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "reason": { "type": "string" }, "force": { "type": "boolean" } }
+    },
+    "bootstrapResult": {
+      "type": "object",
+      "required": ["instanceId", "revision", "accounts", "statuses", "openPages", "groups", "proxies", "conversations", "scheduler", "settings", "operations", "historyAccounts", "draining"],
+      "properties": {
+        "instanceId": { "type": "string", "format": "uuid" }, "revision": { "type": "integer" },
+        "accounts": { "$ref": "#/$defs/accountArray" }, "statuses": { "type": "object" }, "openPages": { "type": "object" },
+        "groups": { "$ref": "#/$defs/groupArray" }, "proxies": { "$ref": "#/$defs/proxyStateResult" }, "conversations": { "$ref": "#/$defs/conversationMap" },
+        "scheduler": { "$ref": "#/$defs/schedulerResult" }, "settings": { "$ref": "#/$defs/settingsResult" }, "operations": { "$ref": "#/$defs/operationArray" },
+        "activeOperations": { "$ref": "#/$defs/operationArray" },
+        "historyAccounts": { "$ref": "#/$defs/historyAccountArray" }, "draining": { "type": "boolean" }
+      }
+    },
+    "activityResult": {
+      "type": "object", "required": ["draining", "scheduler", "openPages", "operations", "blockers"],
+      "properties": { "draining": { "type": "boolean" }, "scheduler": { "type": "object" }, "openPages": { "type": "object" }, "operations": { "type": "array" }, "blockers": { "type": "array" } }
+    },
+    "accountPatch": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "note": { "type": "string" }, "groupId": { "type": ["string", "null"] }, "enabled": { "type": "boolean" },
+        "switchRule": { "enum": ["random", "sequential"] }, "minWindows": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "maxWindows": { "type": "integer", "minimum": 1, "maximum": 100 }
+      }
+    },
+    "accountCreateParams": { "$ref": "#/$defs/accountPatch" },
+    "accountUpdateParams": {
+      "type": "object", "additionalProperties": false, "required": ["id", "patch"],
+      "properties": { "id": { "type": "string", "minLength": 1 }, "patch": { "$ref": "#/$defs/accountPatch" } }
+    },
+    "accountRemoveParams": {
+      "type": "object", "additionalProperties": false, "required": ["id"],
+      "properties": { "id": { "type": "string", "minLength": 1 }, "profileAction": { "enum": ["detach", "archive", "purge"] } }
+    },
+    "loginParams": {
+      "type": "object", "additionalProperties": false, "required": ["accountId"],
+      "properties": { "accountId": { "type": "string", "minLength": 1 }, "force": { "type": "boolean" } }
+    },
+    "historyQueryParams": {
+      "type": "object", "additionalProperties": false, "required": ["accountId"],
+      "properties": { "accountId": { "type": "string", "minLength": 1 }, "limit": { "type": "integer", "minimum": 1, "maximum": 500 } }
+    },
+    "groupCreateParams": {
+      "type": "object", "additionalProperties": false, "required": ["name"],
+      "properties": { "name": { "type": "string", "minLength": 1 }, "proxyId": { "type": ["string", "null"] }, "timezone": { "type": ["string", "null"] }, "locale": { "type": ["string", "null"] } }
+    },
+    "groupUpdateParams": {
+      "type": "object", "additionalProperties": false, "required": ["id", "patch"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "patch": {
+          "type": "object", "additionalProperties": false,
+          "properties": { "name": { "type": "string" }, "proxyId": { "type": ["string", "null"] }, "timezone": { "type": ["string", "null"] }, "locale": { "type": ["string", "null"] } }
+        }
+      }
+    },
+    "subscriptionParams": {
+      "type": "object", "additionalProperties": false, "required": ["url"],
+      "properties": { "url": { "type": "string", "minLength": 1 } }
+    },
+    "runtimeDirectoryParams": {
+      "type": "object", "additionalProperties": false, "minProperties": 1,
+      "properties": { "directory": { "type": "string", "minLength": 1 }, "clashVergeDir": { "type": "string", "minLength": 1 } }
+    },
+    "nodeEnabledParams": {
+      "type": "object", "additionalProperties": false, "required": ["id", "enabled"],
+      "properties": { "id": { "type": "string", "minLength": 1 }, "enabled": { "type": "boolean" } }
+    },
+    "profileCleanParams": {
+      "type": "object", "additionalProperties": false,
+      "properties": { "scope": { "enum": ["all", "linked", "orphan"] }, "name": { "type": "string", "minLength": 1 } }
+    },
+    "nameParams": {
+      "type": "object", "additionalProperties": false, "required": ["name"],
+      "properties": { "name": { "type": "string", "minLength": 1 } }
+    },
+    "conversationUpsertParams": {
+      "type": "object", "additionalProperties": false, "required": ["name", "set"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "set": { "type": "object", "required": ["topic", "minRounds", "maxRounds"], "properties": { "topic": { "type": "string" }, "minRounds": { "type": "integer", "minimum": 0 }, "maxRounds": { "type": "integer", "minimum": 0 } } }
+      }
+    },
+    "settingsUpdateParams": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "patch": {
+          "type": "object", "additionalProperties": false,
+          "properties": {
+            "intervalMinutes": { "type": "number", "minimum": 1 }, "jitterMinutes": { "type": "number", "minimum": 0 },
+            "headless": { "type": "boolean" }, "statusCheckMinutes": { "type": "number", "minimum": 1 },
+            "statusCheckOnStartup": { "type": "boolean" }, "openPageTimeoutMinutes": { "type": "number", "minimum": 0 },
+            "profileAutoCleanEnabled": { "type": "boolean" }
+          }
+        },
+        "intervalMinutes": { "type": "number", "minimum": 1 }, "jitterMinutes": { "type": "number", "minimum": 0 },
+        "headless": { "type": "boolean" }, "statusCheckMinutes": { "type": "number", "minimum": 1 },
+        "statusCheckOnStartup": { "type": "boolean" }, "openPageTimeoutMinutes": { "type": "number", "minimum": 0 },
+        "profileAutoCleanEnabled": { "type": "boolean" }
+      }
+    }
+  }
+}

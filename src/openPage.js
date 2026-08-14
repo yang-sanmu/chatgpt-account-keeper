@@ -1,5 +1,5 @@
 import { launchForAccount } from "./browser.js";
-import { readJson } from "./paths.js";
+import { readResourceJson } from "./paths.js";
 import { withAccountLock, markHeld, releaseHeld } from "./locks.js";
 import { setCachedStatus } from "./statusMonitor.js";
 import { checkSession } from "./health.js";
@@ -21,6 +21,28 @@ import * as log from "./logger.js";
 const openSessions = new Map();
 
 const SAMPLE_INTERVAL_MS = 10000;
+
+// 打开/关闭观察者。窗口是用户手动关的，只有这里知道确切时刻；
+// 早先上层靠每秒轮询 getOpenPages() 推断关闭，既慢又浪费。
+const observers = new Set();
+
+export function subscribeOpenPages(observer) {
+  if (typeof observer !== "function") {
+    throw new TypeError("open page observer must be a function");
+  }
+  observers.add(observer);
+  return () => observers.delete(observer);
+}
+
+function notifyOpenPages(change) {
+  for (const observer of observers) {
+    try {
+      observer(change);
+    } catch {
+      // 观察者异常不能影响窗口生命周期
+    }
+  }
+}
 
 /**
  * GCash 的授权页把 Alipay IWP Tracker 当作启动期硬依赖。部分境外节点会直接重置
@@ -54,7 +76,7 @@ export async function openPageForAccount(account, url, runtime = {}) {
     return { ok: false, alreadyOpen: true, message: "该账号已有打开的窗口" };
   }
 
-  const selectors = readJson("config/selectors.json");
+  const selectors = readResourceJson("config/selectors.json");
   const target = (url && String(url).trim()) || selectors.url;
   const name = displayName(account);
 
@@ -95,6 +117,7 @@ export async function openPageForAccount(account, url, runtime = {}) {
 
       // 到这里才算真的开起来了，通知调用方成功。
       settle({ ok: true, url: target, message: "窗口已打开，用完请手动关闭浏览器窗口" });
+      notifyOpenPages({ accountId: account.id, open: true, url: target, openedAt: session.openedAt });
 
       // 用户关掉窗口 => context 触发 close。让看守循环立即醒来，
       // 不必等满一次状态采样间隔才清除 openSessions。
@@ -129,13 +152,18 @@ export async function openPageForAccount(account, url, runtime = {}) {
     } catch (e) {
       const msg = String(e.message || e);
       log.error(`「${name}」打开网页出错: ${msg}`);
-      settle({ ok: false, message: msg });
+      settle({
+        ok: false,
+        message: msg,
+        ...(e?.code ? { code: String(e.code) } : {}),
+      });
     } finally {
-      openSessions.delete(account.id);
+      const wasOpen = openSessions.delete(account.id);
       releaseHeld(account.id);
       if (context) await context.close().catch(() => {});
       // 万一在 settle 之前就抛错/退出，兜一下避免调用方悬着
       settle({ ok: false, message: "窗口已结束" });
+      if (wasOpen) notifyOpenPages({ accountId: account.id, open: false });
     }
   });
 
@@ -149,8 +177,12 @@ export async function closePageForAccount(accountId) {
   const s = openSessions.get(accountId);
   if (!s) return false;
   if (s.context) await s.context.close().catch(() => {});
-  openSessions.delete(accountId);
-  releaseHeld(accountId);
+  // 后台看守循环的 finally 也会删除并通知；这里先删是为了让调用方立刻看到关闭结果，
+  // 重复通知由 wasOpen 判断挡掉。
+  if (openSessions.delete(accountId)) {
+    releaseHeld(accountId);
+    notifyOpenPages({ accountId, open: false });
+  }
   return true;
 }
 

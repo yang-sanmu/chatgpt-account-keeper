@@ -1,0 +1,19 @@
+using Avalonia.Controls;
+
+namespace GptAccountKeeper.Desktop.Application;
+
+internal static class AppIcon
+{
+    // Embedded PNG keeps window/tray creation self-contained across NativeAOT publishes.
+    // Keep this value covered by AppIconTests so an invalid resource cannot crash startup.
+    private const string PngBase64 =
+        "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAQwSURBVHhe7Zu/axRBFMfzH0RCSKKexh/RCzHkCtEiIkjAIiCIIGJhQEghYqFYKFgEJVgoHGhnZ5NUdlaxsopN7KyEFJLGyjTXeeRGvhsPjjdvZt/bmdm7kF34WHjj7LzPzrz5sevQ8Hj92vB4/eVhZQh/HJmYNoeVSkAloBJQCShfQK1hJi4vWeDvrbKJKUXA0asPzdnlT2b2zR8z9+5vLig39eCzObbwJLmUZAIQNIKQBu2k2TLnHn0xx68/t+4Rg+gC0JWnX/ywA4nAzKtf+72CuW9RogkYm7tpzj/+ajU6BRCc5QymHVqiCDh5663VyDJAXgnNEWECao1snNOGlcn0s+9mZPKS3TYhhQWMTF1JNta1IDdgCNI2SigkYLS+kN2UNqSfYLYpIkEvoNYYmCdPwUNBz7Ta7EEtoN9jPo/602+qxKgS0K9sr+XM/TWr7S7EAjC+6I0GGaxEaQwcYgHoWvQmg8zMyk/RUBAJgE16AwlLWx1jXdttq9w+bbO+SwvvX5sbtKyMEzdWrVgoIgFFs75GAFvWGLOzxZeXMPv6d24vyBVQ9OkDNihOwNqe2aHlcHFlleT1glwBIRscmQBX1++YVaZOLVkuYOKSCag1sv04rVSKSMAGUyZg3HNg5WrFJhGAvTetTEO+gLbZpL/jopICwfqFxiYSELrqyxOwuk1/NMbs7pklpq4QsGOksYkEhHR/4BXAdv2OWV+z64mBa8vsFoDxz1SkwS2A7/ohU14eoxcW7Rh9ApA4aCVaXALK6vq9uI7QnALwD2glWlgBux1mzo8z5flwnSo7BYTOAIAVwF7pxn4X10zgFFBbXLEq0cIK2O6w4z/1EJi8/d6K0SsAXYZWooUX0HbMAGmToFpAshzwfxpkE2HCoaDOAZg2aCVafAJcU2GqoTAxv2zF6BWAhQOtRItfgON3XJGXwsB1YuwUAGglWtgAyV6A3wnG3QwB12mxV0DoMVi+AM9ZQMS1AY7LaWwiAaFToUiAqxwupmwRTt39YMUmEoBuQyvTwAbGBuUeCjGmxrGLd6zYRAIAtpK0QilyAf6hEDI1ZueCTFxiAThTo5VKUQlwlc+u4vng9L2PVkwqAdgWwyKt+EDQbDmzv1xAYC/oJ3lPXyzgQPYCwdOXC4i0PS4T1/aXIhYAQt4RlAneZOW9EeqiEoD9AV400BsOEhiqvvcAFJUAgMqDP35MRbPlXfRwqAWA7Kwg8Mg8BUU+oiwkAEDCwPSEZst54JFHYQEAhyb9zgnZ12HKbt9LkACAxNiv2QHZXpPwOIIFdMFqsbTFUrOVHXK6XndpiCYAoEFoWMoEiS/AJCs8KVEFdEEDsQ6P1SMwzvFhdGh350gioBccRkKG9tNayMPTdr3Ti0VyAb1ARvb/g+aXs6FCwd/jd9cJbgpKFTCIVAIqAZWAwy3gH3Vuj2SM+jitAAAAAElFTkSuQmCC";
+
+    public static WindowIcon Create()
+    {
+        using var stream = new MemoryStream(GetPngBytes(), writable: false);
+        return new WindowIcon(stream);
+    }
+
+    internal static byte[] GetPngBytes() => Convert.FromBase64String(PngBase64);
+}

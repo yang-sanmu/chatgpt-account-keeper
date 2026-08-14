@@ -10,6 +10,8 @@ import {
   initializeLaunchedContext,
   normalizeHeadlessIdentity,
   normalizeHeadlessUserAgent,
+  normalizeChromeLaunchError,
+  ChromeNotFoundError,
   WEBRTC_NO_LEAK_FLAG,
 } from "../src/browser.js";
 
@@ -116,7 +118,7 @@ test("Headless UA 只移除产品标记并保留实际 Chrome 版本", () => {
   assert.equal(normalizeHeadlessUserAgent(headed), headed);
 });
 
-test("Chromium 回退身份同时移除 UA-CH 中的 HeadlessChrome 品牌", () => {
+test("身份规范化同时移除 UA-CH 中的 HeadlessChrome 品牌", () => {
   const native = {
     userAgent:
       "Mozilla/5.0 HeadlessChrome/149.0.7827.55 Safari/537.36",
@@ -236,7 +238,7 @@ test("WebRTC 防护清空 iceServers 但保留原生外观", () => {
   delete globalThis.window;
 });
 
-test("识别缺少浏览器渠道的启动错误以便回退", () => {
+test("识别缺少系统 Chrome 的启动错误", () => {
   assert.equal(
     isMissingChannelError(new Error("Chromium distribution 'chrome' is not found")),
     true
@@ -250,4 +252,16 @@ test("识别缺少浏览器渠道的启动错误以便回退", () => {
   // Profile 锁、进程崩溃等普通启动失败绝不能切换到另一种浏览器读取同一 Profile。
   assert.equal(isMissingChannelError(new Error("browserType.launch: Failed to launch browser")), false);
   assert.equal(isMissingChannelError(new Error("net::ERR_PROXY_CONNECTION_FAILED")), false);
+});
+
+test("缺少系统 Chrome 时返回稳定错误且绝不回退 bundled Chromium", () => {
+  const original = new Error("Chromium distribution 'chrome' is not found");
+  const normalized = normalizeChromeLaunchError(original);
+  assert.ok(normalized instanceof ChromeNotFoundError);
+  assert.equal(normalized.code, "CHROME_NOT_FOUND");
+  assert.equal(normalized.retryable, false);
+  assert.equal(normalized.cause, original);
+
+  const proxyError = new Error("net::ERR_PROXY_CONNECTION_FAILED");
+  assert.equal(normalizeChromeLaunchError(proxyError), proxyError);
 });

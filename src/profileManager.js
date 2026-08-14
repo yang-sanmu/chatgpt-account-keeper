@@ -1,7 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
-import { ROOT, fromRoot, ensureDir } from "./paths.js";
+import { fromRoot, ensureDir } from "./paths.js";
 import { isBusy, isHeld } from "./locks.js";
+import { renamePathSync } from "./atomicFile.js";
 
 const SERVICE_WORKER_CACHE_PATH = ["Default", "Service Worker", "CacheStorage"];
 const CACHE_PATHS = [
@@ -135,16 +136,29 @@ function uniqueDestination(root, base) {
 }
 
 export function createProfileManager({
-  workspaceRoot = ROOT,
+  // workspaceRoot 是账号 profileDir 相对路径的解析基准，必须与 profilesRoot 同根。
+  // 早先默认成安装根 ROOT，而单例传的 profilesRoot 在数据根下，安装布局中两者
+  // 分离后每个账号的 Profile 都会被判为越界。默认值在这里帮不上忙，只会掩盖错配。
+  workspaceRoot,
   profilesRoot = path.join(workspaceRoot, "profiles"),
   archiveRoot = path.join(workspaceRoot, "profiles-archive"),
   trashRoot = path.join(workspaceRoot, ".profile-trash"),
   accountBusy = (id) => isBusy(id) || isHeld(id),
 } = {}) {
+  if (!workspaceRoot) {
+    throw new TypeError("createProfileManager 需要 workspaceRoot（账号 profileDir 的解析基准）");
+  }
   const resolvedWorkspace = path.resolve(workspaceRoot);
   const resolvedProfiles = path.resolve(profilesRoot);
   const resolvedArchive = path.resolve(archiveRoot);
   const resolvedTrash = path.resolve(trashRoot);
+  // 错配会让所有账号 Profile 操作失败，且症状（"不在 profiles 直接子目录中"）
+  // 完全指不到真正的原因。启动时就断言，而不是等用户点删除。
+  if (!isPathInside(resolvedWorkspace, resolvedProfiles)) {
+    throw new TypeError(
+      `profilesRoot（${resolvedProfiles}）必须位于 workspaceRoot（${resolvedWorkspace}）之内`
+    );
+  }
 
   function pathKey(value) {
     const resolved = path.resolve(value);
@@ -431,7 +445,7 @@ export function createProfileManager({
     ensureDir(resolvedArchive);
     const base = `${safeName(path.basename(target))}__${timestampSlug()}`;
     const destination = uniqueDestination(resolvedArchive, base);
-    fs.renameSync(target, destination);
+    renamePathSync(target, destination);
     try {
       fs.writeFileSync(
         path.join(destination, ".keeper-archive.json"),
@@ -478,7 +492,7 @@ export function createProfileManager({
       resolvedTrash,
       `${safeName(path.basename(target))}__${timestampSlug()}`
     );
-    fs.renameSync(target, staged);
+    renamePathSync(target, staged);
     try {
       if (!isPathInside(resolvedTrash, staged)) {
         throw new ProfileOperationError("临时删除路径不安全");
@@ -488,7 +502,7 @@ export function createProfileManager({
       // 删除失败时尽量恢复原目录，避免留下不可见的半完成状态。
       if (!fs.existsSync(target) && fs.existsSync(staged)) {
         try {
-          fs.renameSync(staged, target);
+          renamePathSync(staged, target);
         } catch {
           // 保留原始错误；残留仍位于受控的 .profile-trash 目录。
         }
@@ -564,7 +578,7 @@ export function createProfileManager({
         }
         if (!fs.existsSync(target) && fs.existsSync(destination)) {
           try {
-            fs.renameSync(destination, target);
+            renamePathSync(destination, target);
           } catch {
             // 保留最初的提交错误。
           }
@@ -579,14 +593,14 @@ export function createProfileManager({
       resolvedTrash,
       `${safeName(path.basename(target))}__${timestampSlug()}`
     );
-    fs.renameSync(target, staged);
+    renamePathSync(target, staged);
     try {
       const committed = commitRemoval();
       if (!committed) throw new ProfileOperationError("账号删除提交失败", 404);
     } catch (error) {
       if (!fs.existsSync(target) && fs.existsSync(staged)) {
         try {
-          fs.renameSync(staged, target);
+          renamePathSync(staged, target);
         } catch {
           // 保留最初的提交错误。
         }
@@ -604,7 +618,7 @@ export function createProfileManager({
       // 账号已成功移除，若最终清除受阻就恢复成可扫描的孤儿目录，避免隐藏残留。
       if (!fs.existsSync(target) && fs.existsSync(staged)) {
         try {
-          fs.renameSync(staged, target);
+          renamePathSync(staged, target);
         } catch {
           // 若连恢复也失败，目录仍在受控的 .profile-trash 中。
         }
@@ -631,9 +645,14 @@ export function createProfileManager({
   };
 }
 
+// workspaceRoot 必须是数据根，不能是安装根。账号的 profileDir 是相对路径
+// （"profiles/acc_xxx"），accountProfilePath 会把它拼到 workspaceRoot 上；用安装根
+// 拼出来的是 <安装目录>\profiles\acc_xxx，而 profilesRoot 在数据目录下，于是
+// 每个账号都被判定为"Profile 路径不在 profiles 直接子目录中"，删除账号和清缓存
+// 全部失败。CLI 模式下两个根恰好相同，所以这个错配一直没暴露。
 export const profileManager = createProfileManager({
-  workspaceRoot: ROOT,
+  workspaceRoot: fromRoot("."),
   profilesRoot: fromRoot("profiles"),
   archiveRoot: fromRoot("profiles-archive"),
-  trashRoot: fromRoot(".profile-trash"),
+  trashRoot: fromRoot("profile-trash"),
 });

@@ -1,6 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { planAccountProxyMigration } from "../src/store.js";
+import {
+  configureStoreBackend,
+  getAccount,
+  getAccounts,
+  getSettings,
+  planAccountProxyMigration,
+  saveSettings,
+  updateAccount,
+} from "../src/store.js";
 
 function groupForAccount(result, accountId) {
   const account = result.accounts.find((a) => a.id === accountId);
@@ -79,4 +87,71 @@ test("proxy migration reuses deterministic groups after an interrupted write", (
     retried.groups.map((g) => g.id).sort(),
     first.groups.map((g) => g.id).sort()
   );
+});
+
+test("configured store backend is visible to existing direct store imports", () => {
+  const account = { id: "sqlite-account", note: "from sqlite" };
+  const calls = [];
+  const restore = configureStoreBackend({
+    getAccounts() {
+      calls.push("getAccounts");
+      return [account];
+    },
+    getAccount(id) {
+      calls.push(["getAccount", id]);
+      return id === account.id ? account : null;
+    },
+    updateAccount(id, patch) {
+      calls.push(["updateAccount", id, patch]);
+      return { ...account, ...patch };
+    },
+    getSettings() {
+      return { intervalMinutes: 42 };
+    },
+    saveSettings(patch) {
+      return { intervalMinutes: 42, ...patch };
+    },
+  });
+
+  try {
+    assert.deepEqual(getAccounts(), [account]);
+    assert.equal(getAccount(account.id), account);
+    assert.equal(updateAccount(account.id, { note: "updated" }).note, "updated");
+    assert.equal(getSettings().intervalMinutes, 42);
+    assert.equal(saveSettings({ headless: false }).headless, false);
+    assert.deepEqual(calls.slice(0, 3), [
+      "getAccounts",
+      ["getAccount", account.id],
+      ["updateAccount", account.id, { note: "updated" }],
+    ]);
+  } finally {
+    restore();
+  }
+});
+
+test("写操作之后不允许再切换 store 后端", () => {
+  // 切换点之前的写落到 JSON、之后的写落到 SQLite，两边都成了“部分正确”。
+  // 这是编程错误，必须在配置阶段就暴露，而不是留下分叉的数据。
+  const first = { updateAccount: () => ({ id: "a" }) };
+  const second = { updateAccount: () => ({ id: "b" }) };
+  const restore = configureStoreBackend(first);
+  try {
+    updateAccount("a", { note: "写一次" });
+    assert.throws(() => configureStoreBackend(second), /cannot change after a write/);
+  } finally {
+    restore();
+  }
+});
+
+test("只读之后仍可切换 store 后端", () => {
+  const backend = { getAccounts: () => [] };
+  const restore = configureStoreBackend(backend);
+  try {
+    getAccounts();
+    const inner = configureStoreBackend({ getAccounts: () => [{ id: "x" }] });
+    assert.deepEqual(getAccounts(), [{ id: "x" }]);
+    inner();
+  } finally {
+    restore();
+  }
 });

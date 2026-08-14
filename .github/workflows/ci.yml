@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-native-aot:
+    runs-on: windows-latest
+    env:
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: desktop/global.json
+
+      - name: Install Node dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Node tests
+        run: npm test
+
+      - name: Avalonia build (warnings are errors)
+        run: dotnet build desktop/GptAccountKeeper.Desktop.sln -c Release
+
+      - name: Native desktop tests
+        run: dotnet test desktop/tests/GptAccountKeeper.Desktop.Tests/GptAccountKeeper.Desktop.Tests.csproj -c Release --no-build
+
+      - name: NativeAOT publish gate
+        run: >-
+          dotnet publish
+          desktop/src/GptAccountKeeper.Desktop/GptAccountKeeper.Desktop.csproj
+          -c Release
+          -r win-x64
+          -o artifacts/desktop-win-x64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-aot-win-x64
+          path: artifacts/desktop-win-x64
+          if-no-files-found: error

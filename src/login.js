@@ -1,5 +1,5 @@
 import { launchForAccount } from "./browser.js";
-import { readJson } from "./paths.js";
+import { readResourceJson } from "./paths.js";
 import { getAccount, displayName } from "./store.js";
 import {
   checkSession,
@@ -23,7 +23,7 @@ import * as log from "./logger.js";
  * 改过密码/加过双重认证的账号两者都还在，但令牌已失效。
  */
 export async function loginAccount(accountId, opts = {}) {
-  const selectors = readJson("config/selectors.json");
+  const selectors = readResourceJson("config/selectors.json");
   const account = getAccount(accountId);
   if (!account) {
     throw new Error(`找不到账号 id=${accountId}，请检查 config/accounts.json`);

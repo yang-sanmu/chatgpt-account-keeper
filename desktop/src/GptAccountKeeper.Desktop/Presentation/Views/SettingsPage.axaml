@@ -1,0 +1,138 @@
+<UserControl
+    x:Class="GptAccountKeeper.Desktop.Presentation.Views.SettingsPage"
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:vm="using:GptAccountKeeper.Desktop.Presentation"
+    xmlns:pages="using:GptAccountKeeper.Desktop.Presentation.Pages"
+    x:DataType="pages:SettingsPageViewModel">
+
+  <ScrollViewer>
+    <Grid Margin="26,0,26,24" ColumnDefinitions="1*,1*" ColumnSpacing="14">
+
+      <StackPanel Spacing="14">
+        <Border Padding="18" CornerRadius="10" Background="White" BorderBrush="#EAECF0" BorderThickness="1">
+          <StackPanel Spacing="11">
+            <Grid ColumnDefinitions="*,Auto">
+              <TextBlock Text="调度与风控" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center" />
+              <TextBlock Grid.Column="1" Text="{Binding PendingEditText}" FontSize="11"
+                         Foreground="#B54708" VerticalAlignment="Center" />
+            </Grid>
+
+            <Grid ColumnDefinitions="*,*" ColumnSpacing="10">
+              <StackPanel Spacing="3">
+                <TextBlock Text="账号执行间隔（分钟）" FontSize="10" Foreground="#667085" />
+                <NumericUpDown Minimum="1" Maximum="10080" Increment="10" FormatString="0"
+                               Value="{Binding IntervalMinutes, Mode=TwoWay}" />
+              </StackPanel>
+              <StackPanel Grid.Column="1" Spacing="3">
+                <TextBlock Text="随机抖动（分钟）" FontSize="10" Foreground="#667085" />
+                <NumericUpDown Minimum="0" Maximum="1440" Increment="5" FormatString="0"
+                               Value="{Binding JitterMinutes, Mode=TwoWay}" />
+              </StackPanel>
+            </Grid>
+
+            <Grid ColumnDefinitions="*,*" ColumnSpacing="10">
+              <StackPanel Spacing="3">
+                <TextBlock Text="状态巡检间隔（分钟）" FontSize="10" Foreground="#667085" />
+                <NumericUpDown Minimum="1" Maximum="1440" Increment="5" FormatString="0"
+                               Value="{Binding StatusCheckMinutes, Mode=TwoWay}" />
+              </StackPanel>
+              <StackPanel Grid.Column="1" Spacing="3">
+                <TextBlock Text="打开网页兜底超时（0 = 不限时）" FontSize="10" Foreground="#667085" />
+                <NumericUpDown Minimum="0" Maximum="1440" Increment="10" FormatString="0"
+                               Value="{Binding OpenPageTimeoutMinutes, Mode=TwoWay}" />
+              </StackPanel>
+            </Grid>
+
+            <CheckBox Content="后台自动化使用 Headless Chrome"
+                      IsChecked="{Binding Headless, Mode=TwoWay}" />
+            <CheckBox Content="Agent 启动后立即执行一次状态巡检"
+                      IsChecked="{Binding StatusCheckOnStartup, Mode=TwoWay}" />
+            <CheckBox Content="自动维护 Profile 可重建缓存"
+                      IsChecked="{Binding ProfileAutoCleanEnabled, Mode=TwoWay}" />
+
+            <TextBlock Text="{Binding ValidationError}" FontSize="11" Foreground="#B42318" TextWrapping="Wrap" />
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <Button Content="保存设置" Background="#175CD3" Foreground="White"
+                      Command="{Binding SaveAgentSettingsCommand}" />
+              <Button Content="放弃修改" Command="{Binding RevertAgentSettingsCommand}" />
+            </StackPanel>
+            <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#667085"
+                       Text="间隔越短越容易触发风控。抖动会让各账号错开启动，避免同时打开多个 Chrome。保存后状态巡检会按新间隔重启。" />
+          </StackPanel>
+        </Border>
+
+        <Border Padding="18" CornerRadius="10" Background="White" BorderBrush="#EAECF0" BorderThickness="1">
+          <StackPanel Spacing="9">
+            <TextBlock Text="数据位置与诊断" FontSize="16" FontWeight="SemiBold" />
+            <TextBlock Text="{Binding RuntimeMode}" FontSize="11" Foreground="#175CD3" TextWrapping="Wrap" />
+            <TextBlock Text="数据目录" FontSize="10" Foreground="#667085" />
+            <SelectableTextBlock Text="{Binding DataDirectory}" FontSize="12" TextWrapping="Wrap" />
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <Button Content="打开数据目录" Padding="9,5" FontSize="11" Command="{Binding OpenDataDirectoryCommand}" />
+              <Button Content="复制路径" Padding="9,5" FontSize="11" Command="{Binding CopyDataDirectoryCommand}" />
+            </StackPanel>
+            <TextBlock Text="Agent 日志" FontSize="10" Foreground="#667085" />
+            <SelectableTextBlock Text="{Binding AgentLogFile}" FontSize="12" TextWrapping="Wrap" />
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <Button Content="打开日志所在文件夹" Padding="9,5" FontSize="11" Command="{Binding OpenLogFileCommand}" />
+              <Button Content="复制路径" Padding="9,5" FontSize="11" Command="{Binding CopyLogPathCommand}" />
+            </StackPanel>
+          </StackPanel>
+        </Border>
+      </StackPanel>
+
+      <StackPanel Grid.Column="1" Spacing="14">
+        <Border Padding="18" CornerRadius="10" Background="White" BorderBrush="#EAECF0" BorderThickness="1">
+          <StackPanel Spacing="10">
+            <TextBlock Text="桌面行为" FontSize="16" FontWeight="SemiBold" />
+            <TextBlock Text="关闭主窗口时" FontSize="10" Foreground="#667085" />
+            <ComboBox HorizontalAlignment="Stretch"
+                      ItemsSource="{Binding Behavior.CloseBehaviorOptions}"
+                      SelectedItem="{Binding Behavior.SelectedCloseBehavior, Mode=TwoWay}">
+              <ComboBox.ItemTemplate>
+                <DataTemplate x:DataType="vm:CloseBehaviorOptionViewModel">
+                  <StackPanel Margin="2" Spacing="1">
+                    <TextBlock Text="{Binding Title}" FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding Description}" FontSize="10" Foreground="#667085" />
+                  </StackPanel>
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+            <CheckBox Content="登录系统后隐藏到托盘并恢复调度"
+                      IsChecked="{Binding Behavior.StartAtLogin, Mode=TwoWay}" />
+            <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#667085"
+                       Text="桌面设置单独写入 desktop.json，不与 Agent 业务数据混写。" />
+          </StackPanel>
+        </Border>
+
+        <Border Padding="18" CornerRadius="10" Background="White" BorderBrush="#EAECF0" BorderThickness="1">
+          <StackPanel Spacing="10">
+            <TextBlock Text="应用更新" FontSize="16" FontWeight="SemiBold" />
+            <ComboBox HorizontalAlignment="Stretch"
+                      ItemsSource="{Binding Behavior.UpdatePolicyOptions}"
+                      SelectedItem="{Binding Behavior.SelectedUpdatePolicy, Mode=TwoWay}">
+              <ComboBox.ItemTemplate>
+                <DataTemplate x:DataType="vm:UpdatePolicyOptionViewModel">
+                  <StackPanel Margin="2" Spacing="1">
+                    <TextBlock Text="{Binding Title}" FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding Description}" FontSize="10" Foreground="#667085" />
+                  </StackPanel>
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+            <TextBlock Text="{Binding Behavior.UpdateStatus}" TextWrapping="Wrap" FontSize="11"
+                       Foreground="#475467" />
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <Button Content="检查更新" Padding="9,5" FontSize="11" Command="{Binding Behavior.CheckUpdateCommand}" />
+              <Button Content="下载" Padding="9,5" FontSize="11" Command="{Binding Behavior.DownloadUpdateCommand}" />
+              <Button Content="安全安装" Padding="9,5" FontSize="11" Command="{Binding Behavior.InstallUpdateCommand}" />
+            </StackPanel>
+            <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#667085"
+                       Text="安装前会先让 Agent 安全排空：登录窗口、打开的网页和正在运行的任务都必须先结束，绝不强杀 Chrome 或 Profile。" />
+          </StackPanel>
+        </Border>
+      </StackPanel>
+    </Grid>
+  </ScrollViewer>
+</UserControl>

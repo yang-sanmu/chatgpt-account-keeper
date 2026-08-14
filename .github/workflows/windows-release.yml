@@ -1,0 +1,233 @@
+name: Windows signed release candidate
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: SemVer without the v prefix
+        required: true
+        type: string
+      internal_unsigned:
+        description: Build an unsigned internal artifact (never upload to Releases)
+        required: true
+        default: true
+        type: boolean
+      n_minus_one_verified:
+        description: Confirm an installed N-1 to N update run completed with Agent restart and data intact
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    runs-on: windows-latest
+    env:
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      SIGNING_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_BASE64 }}
+      SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: desktop/global.json
+
+      - name: Resolve and validate version
+        id: version
+        shell: pwsh
+        run: |
+          if ('${{ github.ref_type }}' -eq 'tag') {
+            $version = '${{ github.ref_name }}'.TrimStart('v')
+          } else {
+            $version = '${{ inputs.version }}'
+          }
+          if ($version -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$') {
+            throw "Version must be SemVer: $version"
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Require signing credentials for distributable builds
+        if: github.ref_type == 'tag' || inputs.internal_unsigned == false
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:SIGNING_CERTIFICATE_BASE64) -or
+              [string]::IsNullOrWhiteSpace($env:SIGNING_CERTIFICATE_PASSWORD)) {
+            throw 'Stable/draft release builds require Authenticode signing credentials.'
+          }
+
+      - name: Install dependencies and test
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm test
+          dotnet test desktop/GptAccountKeeper.Desktop.sln -c Release
+
+      - name: Publish Avalonia NativeAOT
+        run: >-
+          dotnet publish
+          desktop/src/GptAccountKeeper.Desktop/GptAccountKeeper.Desktop.csproj
+          -c Release
+          -r win-x64
+          -p:Version=${{ steps.version.outputs.version }}
+          -o artifacts/desktop
+
+      - name: Download pinned private runtimes
+        shell: pwsh
+        run: |
+          $versions = Get-Content build/runtime-versions.json -Raw | ConvertFrom-Json
+          New-Item -ItemType Directory artifacts/downloads -Force | Out-Null
+
+          $nodeArchive = Join-Path artifacts/downloads $versions.node.windowsX64Archive
+          Invoke-WebRequest "https://nodejs.org/dist/v$($versions.node.version)/$($versions.node.windowsX64Archive)" -OutFile $nodeArchive
+          if ((Get-FileHash $nodeArchive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $versions.node.windowsX64Sha256) {
+            throw 'Node.js archive SHA-256 mismatch'
+          }
+          Expand-Archive $nodeArchive artifacts/downloads/node
+
+          $mihomoArchive = Join-Path artifacts/downloads $versions.mihomo.windowsX64Archive
+          $mihomoUrl = "https://github.com/MetaCubeX/mihomo/releases/download/v$($versions.mihomo.version)/$($versions.mihomo.windowsX64Archive)"
+          Invoke-WebRequest $mihomoUrl -OutFile $mihomoArchive
+          if ((Get-FileHash $mihomoArchive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $versions.mihomo.windowsX64Sha256) {
+            throw 'mihomo archive SHA-256 mismatch'
+          }
+          Expand-Archive $mihomoArchive artifacts/downloads/mihomo
+          Invoke-WebRequest "https://raw.githubusercontent.com/MetaCubeX/mihomo/v$($versions.mihomo.version)/LICENSE" -OutFile artifacts/downloads/mihomo-LICENSE.txt
+
+      - name: Stage private Agent and verify release contents
+        shell: pwsh
+        run: |
+          $versions = Get-Content build/runtime-versions.json -Raw | ConvertFrom-Json
+          $nodeDirectory = Get-ChildItem artifacts/downloads/node -Directory | Select-Object -First 1 -ExpandProperty FullName
+          $mihomo = Get-ChildItem artifacts/downloads/mihomo -File -Filter '*.exe' | Select-Object -First 1 -ExpandProperty FullName
+          ./scripts/stage-windows-release.ps1 `
+            -Version ${{ steps.version.outputs.version }} `
+            -DesktopPublishDirectory artifacts/desktop `
+            -NodeDirectory $nodeDirectory `
+            -MihomoExecutable $mihomo `
+            -MihomoLicense artifacts/downloads/mihomo-LICENSE.txt `
+            -OutputDirectory artifacts/stage
+          npm sbom --prefix artifacts/stage/agent --omit=dev --package-lock-only --sbom-format cyclonedx | Out-File artifacts/stage/licenses/agent.cdx.json -Encoding utf8
+          if ($LASTEXITCODE -ne 0) { throw 'Agent SBOM generation failed' }
+          node scripts/verify-package.mjs artifacts/stage ${{ steps.version.outputs.version }}
+          node scripts/smoke-staged-agent.mjs artifacts/stage
+
+      - name: Install pinned VeloPack CLI
+        run: dotnet tool install --global vpk --version 1.2.0
+
+      - name: Download previous release for delta generation
+        continue-on-error: true
+        run: >-
+          vpk download github
+          --repoUrl https://github.com/yang-sanmu/chatgpt-account-keeper
+          --token ${{ github.token }}
+          --outputDir artifacts/Releases
+
+      - name: Decode signing certificate
+        if: env.SIGNING_CERTIFICATE_BASE64 != ''
+        shell: pwsh
+        run: |
+          [IO.File]::WriteAllBytes(
+            (Join-Path $env:RUNNER_TEMP 'keeper-signing.pfx'),
+            [Convert]::FromBase64String($env:SIGNING_CERTIFICATE_BASE64))
+
+      - name: Create signed VeloPack package
+        if: env.SIGNING_CERTIFICATE_BASE64 != ''
+        shell: pwsh
+        run: |
+          $certificate = Join-Path $env:RUNNER_TEMP 'keeper-signing.pfx'
+          $signParams = "/td sha256 /fd sha256 /f `"$certificate`" /p `"$env:SIGNING_CERTIFICATE_PASSWORD`" /tr http://timestamp.digicert.com"
+          vpk pack `
+            --packId GptAccountKeeper.Desktop `
+            --packVersion ${{ steps.version.outputs.version }} `
+            --packTitle 'ChatGPT Account Keeper' `
+            --packDir artifacts/stage `
+            --mainExe GptAccountKeeper.Desktop.exe `
+            --runtime win-x64 `
+            --outputDir artifacts/Releases `
+            --signParams $signParams
+
+      - name: Create unsigned internal VeloPack package
+        if: env.SIGNING_CERTIFICATE_BASE64 == '' && inputs.internal_unsigned == true
+        run: >-
+          vpk pack
+          --packId GptAccountKeeper.Desktop
+          --packVersion ${{ steps.version.outputs.version }}
+          --packTitle "ChatGPT Account Keeper"
+          --packDir artifacts/stage
+          --mainExe GptAccountKeeper.Desktop.exe
+          --runtime win-x64
+          --outputDir artifacts/Releases
+
+      - name: Verify Authenticode signatures
+        if: env.SIGNING_CERTIFICATE_BASE64 != ''
+        shell: pwsh
+        run: |
+          $executables = Get-ChildItem artifacts/Releases -File -Filter '*.exe'
+          if ($executables.Count -eq 0) { throw 'VeloPack produced no Windows executables' }
+          foreach ($executable in $executables) {
+            $signature = Get-AuthenticodeSignature $executable.FullName
+            if ($signature.Status -ne 'Valid') {
+              throw "Invalid signature on $($executable.Name): $($signature.Status)"
+            }
+          }
+
+      - name: Generate release SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: artifacts/stage
+          format: spdx-json
+          output-file: artifacts/Releases/GptAccountKeeper.Desktop-${{ steps.version.outputs.version }}.spdx.json
+
+      - name: Upload signed assets to a GitHub draft
+        # Tag builds intentionally stop at the signed artifact. Publishing remains a manual action
+        # until the installed N-1 -> N candidate has been exercised and explicitly attested.
+        if: >-
+          env.SIGNING_CERTIFICATE_BASE64 != '' &&
+          github.event_name == 'workflow_dispatch' &&
+          inputs.internal_unsigned == false &&
+          inputs.n_minus_one_verified == true
+        run: >-
+          vpk upload github
+          --repoUrl https://github.com/yang-sanmu/chatgpt-account-keeper
+          --token ${{ github.token }}
+          --outputDir artifacts/Releases
+          --tag v${{ steps.version.outputs.version }}
+          --releaseName "ChatGPT Account Keeper ${{ steps.version.outputs.version }}"
+
+      - name: Report why release upload was withheld
+        if: >-
+          env.SIGNING_CERTIFICATE_BASE64 != '' &&
+          !(github.event_name == 'workflow_dispatch' &&
+            inputs.internal_unsigned == false &&
+            inputs.n_minus_one_verified == true)
+        shell: pwsh
+        run: Write-Host 'Signed candidate retained as a workflow artifact; GitHub Release upload requires an attested installed N-1 -> N run.'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GptAccountKeeper.Desktop-win-x64-${{ steps.version.outputs.version }}
+          path: artifacts/Releases
+          if-no-files-found: error
+
+      - name: Remove signing material
+        if: always()
+        shell: pwsh
+        run: |
+          $certificate = Join-Path $env:RUNNER_TEMP 'keeper-signing.pfx'
+          if (Test-Path -LiteralPath $certificate) {
+            Remove-Item -LiteralPath $certificate -Force
+          }

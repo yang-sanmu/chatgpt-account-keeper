@@ -77,7 +77,9 @@ function identityInTarget(target) {
 
 test(
   "Headless 身份覆盖主页面、跨站 iframe、popup、newPage 与 Service Worker",
-  { timeout: 60_000 },
+  // Brand Chrome can take close to a minute to initialize every target type on
+  // a contended Windows CI host. The test still performs its own bounded waits.
+  { timeout: 120_000 },
   async (t) => {
     const tempPrefix = path.join(path.dirname(ROOT), "gptkeeper-browser-identity-");
     const profileDir = fs.mkdtempSync(tempPrefix);

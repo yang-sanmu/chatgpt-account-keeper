@@ -1,0 +1,20 @@
+{
+  "node": {
+    "version": "24.11.1",
+    "windowsX64Archive": "node-v24.11.1-win-x64.zip",
+    "windowsX64Sha256": "5355ae6d7c49eddcfde7d34ac3486820600a831bf81dc3bdca5c8db6a9bb0e76",
+    "source": "https://nodejs.org/dist/v24.11.1/"
+  },
+  "playwrightCore": {
+    "version": "1.61.1"
+  },
+  "mihomo": {
+    "version": "1.19.29",
+    "windowsX64Archive": "mihomo-windows-amd64-compatible-v1.19.29.zip",
+    "windowsX64Sha256": "322aaa5957ba9e72afdda9b71cc4329f691d2d45ec39e70bbca3f7bf5aa93d52",
+    "source": "https://github.com/MetaCubeX/mihomo/releases/tag/v1.19.29"
+  },
+  "velopack": {
+    "version": "1.2.0"
+  }
+}

@@ -1,0 +1,225 @@
+<UserControl
+    x:Class="GptAccountKeeper.Desktop.Presentation.Views.AccountsPage"
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:pages="using:GptAccountKeeper.Desktop.Presentation.Pages"
+    xmlns:vm="using:GptAccountKeeper.Desktop.Presentation"
+    x:DataType="pages:AccountsPageViewModel">
+
+  <!-- 三行：工具栏 / 列表（撑满剩余高度，唯一的滚动容器） / 批量操作栏 -->
+  <Grid Margin="26,0,26,20" RowDefinitions="Auto,*,Auto" RowSpacing="12">
+
+    <Border Padding="14" CornerRadius="10" Background="White" BorderBrush="#EAECF0" BorderThickness="1">
+      <Grid RowDefinitions="Auto,Auto" RowSpacing="10">
+        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+          <TextBlock Text="{Binding SummaryText}" FontSize="12" Foreground="#475467" VerticalAlignment="Center" />
+          <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="7">
+            <TextBox Width="170" PlaceholderText="新账号备注" Text="{Binding NewAccountNote, Mode=TwoWay}" />
+            <ComboBox Width="150" ItemsSource="{Binding GroupChoices}"
+                      SelectedItem="{Binding NewAccountGroup, Mode=TwoWay}"
+                      ToolTip.Tip="分组决定登录出口，创建时就选好可避免用错网络登录一次">
+              <ComboBox.ItemTemplate>
+                <DataTemplate x:DataType="vm:RouteChoiceViewModel">
+                  <TextBlock Text="{Binding Title}" />
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+            <Button Content="新增账号" Background="#175CD3" Foreground="White"
+                    Command="{Binding CreateAccountCommand}" />
+          </StackPanel>
+        </Grid>
+
+        <Grid Grid.Row="1" ColumnDefinitions="*,170,170" ColumnSpacing="8">
+          <TextBox PlaceholderText="搜索邮箱、备注、分组或账号 ID" Text="{Binding Search, Mode=TwoWay}" />
+          <ComboBox Grid.Column="1" ItemsSource="{Binding StatusFilters}"
+                    SelectedItem="{Binding StatusFilter, Mode=TwoWay}">
+            <ComboBox.ItemTemplate>
+              <DataTemplate x:DataType="pages:AccountStatusFilterOption">
+                <TextBlock Text="{Binding Title}" />
+              </DataTemplate>
+            </ComboBox.ItemTemplate>
+          </ComboBox>
+          <ComboBox Grid.Column="2" ItemsSource="{Binding GroupFilterChoices}"
+                    SelectedItem="{Binding GroupFilter, Mode=TwoWay}">
+            <ComboBox.ItemTemplate>
+              <DataTemplate x:DataType="vm:RouteChoiceViewModel">
+                <TextBlock Text="{Binding Title}" />
+              </DataTemplate>
+            </ComboBox.ItemTemplate>
+          </ComboBox>
+        </Grid>
+      </Grid>
+    </Border>
+
+    <Border Grid.Row="1" CornerRadius="10" Background="White" BorderBrush="#EAECF0" BorderThickness="1">
+      <Panel>
+        <!-- 行内编辑：备注、分组、轮换方式、窗口数都在行上，不再"选中→右栏→保存" -->
+        <ScrollViewer Padding="4">
+          <ItemsControl ItemsSource="{Binding Rows}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="pages:AccountRowViewModel">
+                <Border Margin="6,5" Padding="12,10" CornerRadius="8"
+                        Background="#FCFCFD" BorderBrush="#EAECF0" BorderThickness="1">
+                  <Grid RowDefinitions="Auto,Auto,Auto" RowSpacing="8">
+
+                    <Grid ColumnDefinitions="Auto,*,220,Auto" ColumnSpacing="10">
+                      <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}" VerticalAlignment="Center"
+                                ToolTip.Tip="勾选后可使用下方批量操作" />
+                      <StackPanel Grid.Column="1" Spacing="2">
+                        <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" FontSize="13" />
+                        <TextBlock Text="{Binding Id}" FontSize="9" Foreground="#98A2B3" />
+                      </StackPanel>
+
+                      <StackPanel Grid.Column="2" Spacing="2">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                          <Ellipse Width="8" Height="8" VerticalAlignment="Center"
+                                   Fill="{Binding StatusColor}" />
+                          <TextBlock Text="{Binding StatusText}" FontSize="12" FontWeight="SemiBold"
+                                     Foreground="{Binding StatusColor}" />
+                        </StackPanel>
+                        <TextBlock Text="{Binding CheckedAtText}" FontSize="10" Foreground="#667085"
+                                   ToolTip.Tip="{Binding CheckedAtTooltip}" />
+                      </StackPanel>
+
+                      <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding EnabledText}" FontSize="11" Foreground="#667085"
+                                   VerticalAlignment="Center" />
+                        <ToggleSwitch IsChecked="{Binding Enabled, Mode=OneWay}"
+                                      Command="{Binding ToggleEnabledCommand}"
+                                      OnContent="" OffContent=""
+                                      ToolTip.Tip="是否参与自动调度" />
+                      </StackPanel>
+                    </Grid>
+
+                    <Grid Grid.Row="1" ColumnDefinitions="*,150,140,96,96" ColumnSpacing="8">
+                      <TextBox Text="{Binding Note, Mode=TwoWay}" PlaceholderText="备注"
+                               ToolTip.Tip="按 Enter 或点“保存修改”提交"
+                               KeyDown="OnNoteKeyDown" />
+                      <ComboBox Grid.Column="1" ItemsSource="{Binding GroupChoices}"
+                                SelectedItem="{Binding SelectedGroup, Mode=TwoWay}"
+                                ToolTip.Tip="分组决定出口，选择后立即生效">
+                        <ComboBox.ItemTemplate>
+                          <DataTemplate x:DataType="vm:RouteChoiceViewModel">
+                            <TextBlock Text="{Binding Title}" />
+                          </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                      </ComboBox>
+                      <ComboBox Grid.Column="2"
+                                ItemsSource="{Binding $parent[ItemsControl].((pages:AccountsPageViewModel)DataContext).SwitchRules}"
+                                SelectedItem="{Binding SelectedSwitchRule, Mode=TwoWay}">
+                        <ComboBox.ItemTemplate>
+                          <DataTemplate x:DataType="pages:SwitchRuleOption">
+                            <TextBlock Text="{Binding Title}" />
+                          </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                      </ComboBox>
+                      <NumericUpDown Grid.Column="3" Minimum="1" Maximum="100" Increment="1"
+                                     FormatString="0"
+                                     Value="{Binding MinWindows, Mode=TwoWay}"
+                                     ToolTip.Tip="一个主题连续跑的最少窗口数" />
+                      <NumericUpDown Grid.Column="4" Minimum="1" Maximum="100" Increment="1"
+                                     FormatString="0"
+                                     Value="{Binding MaxWindows, Mode=TwoWay}"
+                                     ToolTip.Tip="一个主题连续跑的最多窗口数" />
+                    </Grid>
+
+                    <Grid Grid.Row="2" ColumnDefinitions="*,Auto" ColumnSpacing="10">
+                      <StackPanel Spacing="3">
+                        <StackPanel Orientation="Horizontal" Spacing="12">
+                          <TextBlock Text="{Binding RouteText}" FontSize="11" Foreground="{Binding RouteColor}" />
+                          <TextBlock Text="{Binding ScheduleText}" FontSize="11" Foreground="#475467" />
+                          <TextBlock Text="{Binding LastRunText}" FontSize="11" Foreground="#667085"
+                                     ToolTip.Tip="{Binding LastRunTooltip}" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                          <TextBlock Text="{Binding RotationText}" FontSize="11" Foreground="#475467"
+                                     VerticalAlignment="Center" />
+                          <ProgressBar Width="110" Height="5" Minimum="0" Maximum="1"
+                                       Value="{Binding RotationProgress}" VerticalAlignment="Center" />
+                        </StackPanel>
+                        <TextBlock Text="{Binding ValidationError}" FontSize="11" Foreground="#B42318"
+                                   IsVisible="{Binding HasValidationError}" />
+                      </StackPanel>
+
+                      <WrapPanel Grid.Column="1" HorizontalAlignment="Right">
+                        <Button Content="保存修改" Margin="0,0,6,4" Padding="9,5" FontSize="11"
+                                Background="#175CD3" Foreground="White"
+                                IsVisible="{Binding HasPendingEdits}"
+                                Command="{Binding CommitNoteCommand}" />
+                        <Button Content="登录" Margin="0,0,6,4" Padding="9,5" FontSize="11"
+                                Command="{Binding LoginCommand}" />
+                        <Button Content="重新登录" Margin="0,0,6,4" Padding="9,5" FontSize="11"
+                                Foreground="#B54708"
+                                IsVisible="{Binding NeedsReauth}"
+                                Command="{Binding ForceLoginCommand}" />
+                        <Button Content="{Binding OpenPageText}" Margin="0,0,6,4" Padding="9,5" FontSize="11"
+                                Command="{Binding OpenPageCommand}" />
+                        <Button Content="关闭窗口" Margin="0,0,6,4" Padding="9,5" FontSize="11"
+                                IsVisible="{Binding PageOpen}"
+                                Command="{Binding ClosePageCommand}" />
+                        <Button Content="刷新状态" Margin="0,0,6,4" Padding="9,5" FontSize="11"
+                                Command="{Binding RefreshStatusCommand}" />
+                        <Button Content="立即跑" Margin="0,0,6,4" Padding="9,5" FontSize="11"
+                                Command="{Binding RunNowCommand}" />
+                        <Button Content="历史" Margin="0,0,6,4" Padding="9,5" FontSize="11"
+                                Command="{Binding HistoryCommand}" />
+                        <Button Content="删除" Margin="0,0,0,4" Padding="9,5" FontSize="11"
+                                Foreground="#B42318"
+                                Command="{Binding RemoveCommand}" />
+                      </WrapPanel>
+                    </Grid>
+                  </Grid>
+                </Border>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </ScrollViewer>
+
+        <StackPanel IsVisible="{Binding IsEmpty}" VerticalAlignment="Center" HorizontalAlignment="Center"
+                    Spacing="8" MaxWidth="380">
+          <TextBlock Text="◉" FontSize="34" Foreground="#D0D5DD" HorizontalAlignment="Center" />
+          <TextBlock Text="{Binding EmptyText}" TextWrapping="Wrap" TextAlignment="Center"
+                     FontSize="12" Foreground="#667085" />
+        </StackPanel>
+      </Panel>
+    </Border>
+
+    <Border Grid.Row="2" Padding="12" CornerRadius="10" Background="White"
+            BorderBrush="#EAECF0" BorderThickness="1">
+      <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12">
+        <StackPanel Orientation="Horizontal" Spacing="7" VerticalAlignment="Center">
+          <Button Content="全选" Padding="9,5" FontSize="11" Command="{Binding SelectAllCommand}" />
+          <Button Content="取消选择" Padding="9,5" FontSize="11" Command="{Binding ClearSelectionCommand}" />
+        </StackPanel>
+
+        <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
+          <TextBlock FontSize="11" Foreground="#475467">
+            <Run Text="已勾选" /><Run Text="{Binding SelectedCount}" /><Run Text=" 个账号" />
+          </TextBlock>
+          <TextBlock Text="{Binding PendingEditText}" FontSize="11" Foreground="#B54708"
+                     IsVisible="{Binding HasPendingEdits}" />
+        </StackPanel>
+
+        <WrapPanel Grid.Column="2" HorizontalAlignment="Right">
+          <Button Content="保存全部修改" Margin="0,0,6,0" Padding="10,6" FontSize="11"
+                  Background="#175CD3" Foreground="White"
+                  IsEnabled="{Binding HasPendingEdits}"
+                  Command="{Binding SaveAllEditsCommand}" />
+          <Button Content="放弃修改" Margin="0,0,14,0" Padding="10,6" FontSize="11"
+                  IsEnabled="{Binding HasPendingEdits}"
+                  Command="{Binding RevertAllEditsCommand}" />
+          <Button Content="批量启用" Margin="0,0,6,0" Padding="10,6" FontSize="11"
+                  IsEnabled="{Binding HasSelection}" Command="{Binding BatchEnableCommand}" />
+          <Button Content="批量停用" Margin="0,0,6,0" Padding="10,6" FontSize="11"
+                  IsEnabled="{Binding HasSelection}" Command="{Binding BatchDisableCommand}" />
+          <Button Content="批量刷新状态" Margin="0,0,6,0" Padding="10,6" FontSize="11"
+                  IsEnabled="{Binding HasSelection}" Command="{Binding BatchRefreshStatusCommand}" />
+          <Button Content="批量立即跑" Margin="0,0,6,0" Padding="10,6" FontSize="11"
+                  IsEnabled="{Binding HasSelection}" Command="{Binding BatchRunNowCommand}" />
+          <Button Content="批量删除…" Padding="10,6" FontSize="11" Foreground="#B42318"
+                  IsEnabled="{Binding HasSelection}" Command="{Binding BatchRemoveCommand}" />
+        </WrapPanel>
+      </Grid>
+    </Border>
+  </Grid>
+</UserControl>

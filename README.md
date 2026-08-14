@@ -1,193 +1,134 @@
-# chatgpt-account-keeper
+# ChatGPT Account Keeper
 
-多 ChatGPT 网页账号的会话管理与定时对话工具。手动登录一次后持久化登录态，之后可按预设内容定时自动对话，并在网页面板里统一管理多个账号。
+ChatGPT 多账号的原生桌面管理与后台自动对话工具。每个账号使用独立的 Google Chrome Profile；管理界面是 Avalonia 原生窗口，不打开浏览器、不使用 WebView，也不监听 `localhost:5173`。
 
-## 功能
+> Windows 原生 Alpha 已具备完整的首次迁移和主要管理流程。仓库仍保留旧 Express 管理页作为过渡兼容入口；正式 Windows 安装包只包含 NativeAOT Desktop、私有 Node Agent 和本地 IPC，不会包含旧管理页。
 
-- 多账号管理：每个账号独立浏览器 profile，登录态落盘持久化
-- 手动登录：面板点“登录”→ 本机弹出真实浏览器窗口，手动完成登录（含验证码/二步验证）
-- 打开网页：用账号身份开一个浏览器窗口自己用，**不会自动关闭**，关窗即回收
-- 账号分组：给账号打分组标签并按分组过滤，分组可为空
-- 定向代理：**按分组**绑定代理节点（VPN），组内账号统一走该出口；未分组或分组未绑节点的走系统默认网络
-- 时区跟随出口：绑了节点的分组，浏览器时区/语言按节点出口地区自动探测，避免境外 IP 配本机时区
-- WebRTC 防泄露：走节点时清空 WebRTC 的 STUN 配置，避免漏出系统网络的真实出口 IP
-- 真实浏览器：优先使用本机安装的 Google Chrome；后台动态还原同版本的有头浏览器身份，不写死版本
-- 账号身份：登录后自动抓取并显示 ChatGPT 账号邮箱
-- 会话内容集：可配置多组 prompt，随机或顺序抽取
-- 定时调度：按可配置间隔（带随机抖动）自动为各账号跑对话
-- 状态监控：后台定时检查各账号登录状态，面板实时显示；能识别“改过密码/加过双重认证导致会话失效”的账号
+## 新架构
 
-## 技术栈
-
-- 后端：Node.js + Express（REST API + 内置调度器 + 状态监控）
-- 前端：原生 HTML/CSS/JS（无构建步骤）
-- 自动化：Playwright（优先本机 Google Chrome，缺失时回退自带 Chromium）
-
-## 安装
-
-```bash
-npm install
-npx playwright install chromium
+```text
+GptAccountKeeper.Desktop
+Avalonia 12 · .NET 10 NativeAOT · 托盘 · VeloPack
+                    │
+        Named Pipe / Unix Domain Socket
+                    │
+Keeper.Agent
+私有 Node 24 · playwright-core · SQLite · 调度 · mihomo
+                    │
+           本机 Google Chrome
 ```
 
-首次使用，复制示例配置：
+- 管理端：跨平台 Avalonia 原生窗口，编译绑定与 System.Text.Json 源生成，Windows 首发使用 NativeAOT。
+- 后台端：独立的每用户 Agent；管理窗口隐藏到托盘后，自动对话、巡检和调度继续运行。
+- 本地通信：Windows Named Pipe；macOS/Linux Unix Domain Socket。帧为 4 字节小端长度加 UTF-8 JSON，最大 8 MiB。
+- 持久化：SQLite（WAL、外键、幂等命令回执）和平台用户数据目录；安装与更新不触碰 Profile/数据库。
+- 浏览器：只使用本机真实 Google Chrome。未安装时返回稳定错误 `CHROME_NOT_FOUND`，不下载或回退 Chromium。
+- 更新：VeloPack 从公开 GitHub Releases 检查；默认只提醒，安装前调用 Agent drain、SQLite checkpoint 和备份。
 
-```bash
-cp config/accounts.example.json config/accounts.json
-cp config/settings.example.json config/settings.json
-cp config/conversations.example.json config/conversations.json
+## 当前可用功能
+
+- 账号新增、启用/停用、登录、明确强制重登、状态刷新和立即运行。
+- 用对应账号 Profile 打开/关闭真实 Google Chrome。
+- 自动调度启停、持久化与重启恢复；错过任务每账号最多补跑一次并增加抖动。
+- 独立 Profile、账号锁、WAF/unknown 状态保护、Headless Chrome 身份覆盖。
+- 原生侧栏对应八个独立页面：总览、账号、任务、分组与代理、会话、Profile、历史和设置。
+- 账号搜索/筛选/编辑/删除，分组与代理管理，会话集编辑，Profile 扫描/清理/归档/永久删除，已删除账号历史和 Agent 设置均已接入 IPC v1。
+- 旧 JSON/JSONL/Profile 到 SQLite 的原生预览、空间/运行锁检查、进度显示和校验式复制迁移；失败不修改旧数据。
+- Agent 自行写入用户状态目录的脱敏诊断日志，不依赖 Desktop 输出管道；桌面断线会自动重连并在事件缺口后重新获取完整快照。
+
+## Windows 开发
+
+要求：
+
+- Node.js `24.11.1`（见 `.node-version`）
+- .NET SDK 10（见 `desktop/global.json`）
+- 本机 Google Chrome
+
+安装依赖并测试：
+
+```powershell
+$env:PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = '1'
+npm ci --ignore-scripts
+npm test
+dotnet build desktop/GptAccountKeeper.Desktop.sln -c Release
 ```
 
-（`groups.json` 与 `proxies.json` 会在你用面板新建分组 / 导入订阅时自动生成，无需手动创建。）
+发布 Windows x64 NativeAOT：
 
-（`accounts.json` 也可留空由面板“添加账号”生成；会话内容可在面板“会话内容”里编辑。）
-
-## 启动
-
-```bash
-npm start
+```powershell
+dotnet publish desktop/src/GptAccountKeeper.Desktop/GptAccountKeeper.Desktop.csproj `
+  -c Release -r win-x64 -o artifacts/desktop-win-x64
 ```
 
-然后浏览器打开 http://127.0.0.1:5173
+开发时直接启动原生 Desktop；它会从仓库向上查找 `src/agent/launcher.js`，用本机 Node 启动 Agent。安装包则从 `agent/runtime/node.exe` 启动私有 Node，用户无需安装 Git、Node、npm、.NET 或 Playwright 浏览器。
 
-面板**只监听本机回环地址**，因为它没有任何鉴权，且能操作已登录的 ChatGPT 会话、读写代理节点配置——绑定到 `0.0.0.0` 会让同网段的人直接接管这些账号。确实要从别的机器访问，请自行加鉴权后再设 `HOST` 环境变量。
+Visual Studio 打开 `desktop/GptAccountKeeper.Desktop.sln`，将 `GptAccountKeeper.Desktop` 设为启动项目并按 F5。内置的 Development 启动配置会使用独立的 `GptAccountKeeper-dev` 数据、IPC 和日志，不会连接或覆盖安装版数据。首次页面可选择“预览并导入旧项目”或“创建全新数据”；旧项目根目录和其中的 `profiles` 目录都可选择。
 
-## 使用
+## Agent 与数据目录
 
-1. 面板点“添加账号”→ 自动弹出浏览器 → 手动登录
-2. 登录成功后账号邮箱会自动显示
-3. 在“主题轮换”配置主题，账号会在各主题间自动轮换
-4. “定时与风控设置”里配置间隔，顶栏“启动调度”开启自动对话
+Agent 可单独启动用于诊断：
 
-账号行的按钮：
-
-- **登录** / **重新登录**：打开登录页；会话失效时用“重新登录”（会先清掉失效会话）
-- **打开网页**：用该账号身份开个窗口自己用，**默认不限时**，用完手动关即可（担心忘关可在设置里配“兜底超时”，0 = 不限时）
-- **刷新**：立即检查该账号登录状态
-- **立即跑**：马上跑一轮对话
-- **删除**：可选择仅从面板移除、归档完整 Profile，或永久删除 Profile
-
-## Profile 存储维护
-
-“定时与风控设置”页提供 Profile 存储维护：
-
-- **扫描 Profile**：统计活动目录、孤儿 Profile、可清理缓存、已归档占用和未完成的删除残留
-- **清理全部缓存**：只清理 Chromium 的网页、代码、GPU/着色器等可重建缓存；不会删除 Cookie、Local Storage、IndexedDB 或登录态
-- **孤儿 Profile**：可单独清缓存、移动到 `profiles-archive/` 归档，或永久删除
-- **自动缓存预算**：默认在浏览器关闭后检查对应 Profile；可重建缓存超过 128 MB 时自动清理，同一账号每小时最多检查一次
-- **启动补扫**：服务启动 30 秒后低优先级检查现有账号，异常退出遗留的缓存也能被后续回收
-- **浏览器缓存限制**：每个 Profile 的主磁盘缓存限制为 64 MB、媒体缓存限制为 16 MB
-
-自动维护可在设置页关闭。它通过账号锁与浏览器操作串行，并在独立工作线程中完成文件统计和删除，避免阻塞管理页面。自动维护采用更保守的白名单并保留 CacheStorage；手动“清理全部缓存”仍会清理它。
-
-删除账号时有三种明确选项：
-
-| 选项 | 行为 |
-| --- | --- |
-| 仅移除账号 | 只删除账号配置，Profile 留在 `profiles/` 并成为可扫描的孤儿目录 |
-| 归档 Profile | 删除账号配置，并把完整 Profile 移到 `profiles-archive/` |
-| 彻底删除 | 删除账号配置及完整 Profile；Cookie 和登录态不可恢复 |
-
-账号有打开的浏览器窗口、登录任务、巡检或调度任务时，归档和删除会被拒绝；若多个账号引用同一 Profile，也只允许移除账号配置。归档目录同样包含敏感登录态，已加入 `.gitignore`，切勿提交或分享。
-
-## 账号分组（同时决定代理出口）
-
-在账号页点“分组管理”新建分组，然后在账号行的分组下拉里选择。工具栏的分组过滤器可与状态过滤、搜索叠加使用。
-
-分组同时是**代理归属的单位**：新建分组时可直接选节点，已有分组也能随时改。账号行只显示它当前实际走的出口（只读），要换节点去分组管理改，这样同组账号的出口 IP 必然一致。
-
-分组允许为空：账号可以不属于任何分组（显示为“未分组”，走系统默认网络）。删除分组只会把组内账号变回未分组，**不会删除账号**。
-
-## 定向代理（按分组走不同节点）
-
-在“代理节点”页填入 Clash 订阅地址点“导入”，随后到账号页“分组管理”为每个分组选择节点。节点下拉支持模糊搜索（空格分词，也支持首字母连打），几百个订阅节点也能快速定位。
-
-- 未分组、或分组没绑节点的账号走**系统默认网络**（也就是你 Clash 当前选的节点）
-- 例：本机 Clash 选日本，分组「美国」绑美国节点、分组「韩国」绑韩国节点、账号 C 未分组 → 美国组走美国、韩国组走韩国、C 走日本
-- 订阅**只在你点“导入”或“手动刷新订阅”时才会更新**，不做任何自动刷新
-- 从旧版本升级：原先绑在账号上的 `proxyId` 会在首次启动时自动迁移到分组；同组存在不同出口、账号未分组或原分组已删除时，会自动创建迁移分组，确保每个账号仍使用原节点
-- 旧配置中的账号级手工 `proxy` 地址无法等价映射到订阅节点；这类账号会先被停用，请在分组管理中明确选择节点后再重新启用
-
-实现方式：程序另起一个私有 mihomo 主边车，常态下只加载被分组实际引用的节点，
-并为这些节点开放本地端口（21000 起）；测速使用独立临时进程，完成后立即关闭，
-不会重启或打断承载账号流量的主边车。
-Playwright 按账号连不同端口。**不会修改你的 Clash Verge 配置**。
-
-需要 mihomo 内核。“代理节点”页可配置 **Clash Verge 安装目录**，默认是 `C:\Program Files\Clash Verge`。程序优先检查该目录，随后检查项目 `bin/`、Windows 环境目录、`PATH` 和 Clash Verge / Clash Verge Rev 的安装注册信息。旧配置中的 `mihomoPath` 会继续兼容；用户在页面保存安装目录后，新目录会明确接管该旧覆盖项。找不到时会明确报错，不会静默直连。
-
-若分组绑定的节点已停用或已不在订阅中，组内账号会直接拒绝启动并提示，而不是悄悄用错误的出口 IP 访问。
-
-## 用本机真实 Chrome（人机验证的关键）
-
-程序优先启动本机安装的 Google Chrome（`channel: "chrome"`），不写死浏览器版本。
-
-旧实现与当前实现的实测对比：
-
-| | 自带 Chromium（旧） | 真实 Chrome（现在） |
-| --- | --- | --- |
-| UA | 写死 Chrome/131 | 跟随当前实际 Chrome |
-| 实际内核版本 | 当时为 Chromium 149 —— **与 UA 矛盾** | 与安装的 Chrome 一致 |
-| `userAgentData.brands` | Chromium/HeadlessChrome | 含 **`Google Chrome`**，版本一致 |
-
-`userAgentData` 与 UA、平台、架构会被交叉校验。旧版只覆盖最外层 UA，虽然遮住了最直接的 `HeadlessChrome`，但内部仍暴露 Chromium 149，因而会偶发验证。当前 Headless 模式从同一浏览器动态读取 UA/UA-CH，只移除 Headless 专属产品名，并把同一组实际版本和平台值覆盖到页面、跨站验证 iframe、弹窗和 Worker。
-
-若本机没装 Chrome，会自动退回自带 Chromium，并同步移除 legacy UA 与 UA-CH 中的 `HeadlessChrome` 产品名；但它仍没有 `Google Chrome` 品牌，遇到验证的概率更高，因此仍建议安装 Chrome。
-
-后台巡检使用真正的 Headless Chrome；设置中启用“无头模式运行”后，立即跑和自动调度也不会创建可见窗口或任务栏图标。设置中的“启动时立即巡检”可控制项目启动后是否立刻检查所有账号，关闭后会等待一个完整的巡检间隔。登录完成后程序会先关闭浏览器、等待 Session 写入 Profile，再向面板报告成功；关闭失败会明确标记登录任务失败，不会伪报 Session 已保存。
-
-状态判断只在 Session 与鉴权接口都返回相互一致的用户 JSON 时确认“已登录”；验证页、WAF、429/5xx 或格式异常都不会被当成令牌失效，更不会据此清 Cookie。只要已有一次明确结论，后续检查异常就只显示“待复核”并永久保留该结论，直到服务端再次明确返回“已登录”“需重新登录”或“未登录”。最近明确状态会写入本地缓存，项目重启后也不会因一次验证页或网络抖动丢失。
-
-Headless 身份覆盖需要 Chrome DevTools Protocol，因此任务运行期间会开放一个随机的 `127.0.0.1` 调试端口，Context 关闭时同步回收。该设计以单用户桌面为信任边界；不要在有不受信任本机用户或进程的主机上运行已登录 Profile。
-
-## WebRTC 泄露防护
-
-Playwright 的 `--proxy-server` **只代理 HTTP/HTTPS，不管 WebRTC 的 UDP**。所以走节点的浏览器会通过 WebRTC 直接漏出系统网络的出口 IP：实测走韩国节点时，HTTP 出口是韩国 `152.67.216.73`，而 WebRTC 漏出的是系统 Clash 的美国出口 `64.181.240.59`——同一次会话里出现两个国家的 IP，是非常明确的代理特征。
-
-这也解释了「同一个节点，系统浏览器不弹验证码、本工具却经常弹」：系统浏览器的 HTTP 与 WebRTC 都走同一个 Clash 出口，天然一致；而本工具此前两者分属不同出口。
-
-现在绑了节点的浏览器会在页面层清空 WebRTC 的 `iceServers`，页面仍能正常构造 `RTCPeerConnection`，但收集不到公网候选地址，也就漏不出出口 IP。实测修复后 WebRTC 不再暴露任何 IP，HTTP 出口不受影响。ChatGPT 用不到 WebRTC，无功能影响。
-
-注意**不能只靠命令行开关**：`--force-webrtc-ip-handling-policy` 只有 Playwright 自带的 Chromium 认，品牌版 Chrome 会忽略它（该策略只认企业策略配置）。实测在真实 Chrome 下加了这个开关仍会漏 IP，所以真正生效的是页面层的 `iceServers` 清空。也刻意**不删除** `RTCPeerConnection`——真实 Chrome 一定有这个 API，删掉反而是更明显的自动化特征；补丁保持了 `name` 与 `toString()` 的原生外观。
-
-未绑节点的账号不做改动——它的 HTTP 本来就走系统网络，与 WebRTC 一致，没有需要隐藏的矛盾。
-
-## 时区跟随节点出口
-
-浏览器时区默认来自本机。账号走境外节点时，就会出现「韩国 IP + 东八区时区」这种不一致，是风控的常见加分项。所以绑了节点的分组会让浏览器时区/语言跟着节点出口走：
-
-- 首次为该分组开浏览器时，程序**经节点自身**查一次出口归属，把时区（如 `Asia/Seoul`）和语言（如 `ko-KR`）记在分组上，之后直接复用，不再重复查询
-- 探测请求经节点发出，所以查到的是节点出口的归属，也不会把你本机 IP 暴露给探测服务
-- 探测失败不阻断登录，只是沿用浏览器默认时区并记一条日志
-- 在分组管理里可手动填时区覆盖自动值；**留空则恢复自动探测**
-- 换节点后，自动探测出来的旧时区会被清掉重新探测；你手动填过的值会保留，不被覆盖
-- 未绑节点的分组和未分组账号不受影响（走系统网络，时区本来就一致）
-
-## 登录状态的三种含义
-
-| 状态 | 含义 |
-| --- | --- |
-| 已登录 | 鉴权接口明确验证通过，会话完全可用 |
-| 已登录 · 待复核 | 最近一次检查被验证页、WAF 或网络抖动打断；仍显示上次明确确认时间，不会因一次失败抹掉登录态 |
-| 需重新登录 | cookie 还在、看着像已登录，但令牌已被服务端作废（常见于在别处改了密码或新增双重认证）。点该行的“重新登录”会先清掉失效会话再打开登录页，**不必删除账号**，备注/分组配置都会保留 |
-| 待确认 | 尚无任何明确基线，且当前也没能确认（网络抖动、限流、5xx）。不会当成已登录对外显示；调度仍会尝试跑，跑不动会记下原因 |
-| 未登录 | 没有有效会话 |
-
-## 命令行（可选）
-
-```bash
-npm run login -- <accountId>          # 手动登录某账号
-npm run login -- <accountId> --force  # 明确清除旧 Session 后强制重登
-npm run once -- <accountId>           # 立即跑一次
-npm run run                 # 启动常驻定时调度
+```powershell
+npm run start:agent -- --data-root C:\path\to\keeper-data
 ```
 
-“重新登录”与 `--force` 都是显式的不可逆操作：会清除该 Profile 中 ChatGPT 及相关认证域的 Cookie 和站点登录数据，再打开全新的登录页。普通“登录”、自动巡检和运行任务不会自动清理这些数据。
+默认数据位置：
 
-## 安全说明
+- Windows 数据：`%LOCALAPPDATA%\GptAccountKeeper\data`
+- Windows Desktop 配置与引导：`%APPDATA%\GptAccountKeeper\desktop.json`、`bootstrap.json`
+- Windows 缓存/状态：`%LOCALAPPDATA%\GptAccountKeeper\cache`、`state`
+- macOS：`~/Library/Application Support/GptAccountKeeper`
+- Linux：`${XDG_DATA_HOME:-~/.local/share}/gpt-account-keeper`
 
-- `profiles/` 存放账号登录态（cookies/session），`config/accounts.json` 含邮箱等信息，均已在 `.gitignore` 中排除，**切勿提交或分享**。
-- `config/proxies.json` 含代理节点的服务器地址与密码，同样已排除，泄露即节点被盗用。
+Desktop 是 Agent 的客户端，不直接写 SQLite、Profile、Chrome 或 mihomo。所有修改命令携带 UUID `commandId`，结果在 SQLite 中保留 24 小时，进程重启后重复提交也不会重复创建。
 
-## 免责声明
+首次旧数据迁移可向 Agent 增加 `--legacy-root <旧项目目录>`。迁移在 staging 中构造并校验数据库，Profile 只复制、不移动，并排除 Chrome 运行锁；程序不会自动删除旧源码目录或旧数据。
 
-本工具通过自动化方式访问 ChatGPT 网页端。OpenAI 的服务条款通常禁止对非 API 服务的程序化/自动化访问，使用本工具可能导致账号被限制或封禁。本工具仅供个人学习与技术研究，使用风险自负。
+## IPC v1
+
+Canonical JSON Schema 位于 `contracts/ipc-v1.schema.json`（消息信封/共享类型）和 `contracts/ipc-v1.methods.schema.json`（所有方法输入/输出）。主要方法组：
+
+- `system.hello/bootstrap/getActivity/prepareUpdate/shutdown`
+- `accounts.*`、`browser.*`、`history.*`
+- `groups.*`、`proxies.*`、`profiles.*`
+- `conversations.*`、`scheduler.*`、`settings.*`、`operations.*`
+
+登录、立即运行、状态刷新、代理与 Profile 长任务都返回 Operation；状态变化通过有序事件推送，Desktop 在断线、序号缺口或 Agent 实例变化后重新获取 bootstrap 快照。
+
+## 发行与更新
+
+`.github/workflows/windows-release.yml` 会：
+
+1. 运行完整 Node 测试和真实 NativeAOT publish。
+2. 下载固定版本的 Node 与 mihomo并校验 SHA-256。
+3. 使用 `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1` 安装生产依赖。
+4. 拒绝 Chromium、`ms-playwright` 和旧 `public/` 管理页进入产物。
+5. 用私有 Node 对 staged Agent 执行 IPC/SQLite 启动烟测。
+6. 生成 SBOM，通过 VeloPack `GptAccountKeeper.Desktop` 打包。
+7. 稳定/草稿发行必须完成 Authenticode SHA-256 与可信时间戳签名；无证书只产生内部测试 artifact。
+
+固定发行标识：
+
+- 显示名：`ChatGPT Account Keeper`
+- VeloPack Pack ID：`GptAccountKeeper.Desktop`
+- Bundle ID：`io.github.yang-sanmu.gptaccountkeeper`
+
+更新源是公开的 [GitHub Releases](https://github.com/yang-sanmu/chatgpt-account-keeper/releases)，客户端不含 GitHub Token。VeloPack 草稿不会被客户端看到，人工发布前应完成 N-1 → N 安装更新验收。
+
+## 过渡期旧入口
+
+旧网页管理端暂时仅用于 REST/IPC 等价回归：
+
+```powershell
+npm run start:legacy
+```
+
+它会在 `127.0.0.1:5173` 启动旧 Express 页面，不属于最终安装包。生产 staging 脚本明确排除 `server.js`、`cli.js` 与 `public/`。
+
+## 安全与限制
+
+- Profile 包含 Cookie、Local Storage 与登录态，代理配置可能包含订阅 Token/密码；不要提交、分享或加入普通日志。
+- 管理 IPC 以当前 OS 用户为信任边界。Unix Socket 权限为 `0600`；Windows 使用每用户命名管道，并在首次 hello 中验证一个 256 位随机凭据。凭据文件移除继承 ACL，只允许当前用户读取；无凭据的连接在任何业务调用前关闭。
+- Headless 身份覆盖目前需要 Chrome DevTools Protocol，任务期间可能使用随机、仅回环的短生命周期 CDP 端口；它不是管理端口。
+- 登录态只承诺同一机器、同一 OS 用户迁移；DPAPI、Keychain 或密钥环可能使跨用户/跨机器迁移需要重新登录。
+- 自动化访问 ChatGPT 网页端可能违反服务条款并带来账号限制风险。本项目仅供个人学习与技术研究，使用风险自负。

@@ -2,7 +2,7 @@ import { Worker } from "node:worker_threads";
 import path from "node:path";
 import { getAccount, getAccounts, getSettings } from "./store.js";
 import { isHeld, withAccountLock } from "./locks.js";
-import { ROOT } from "./paths.js";
+import { fromRoot } from "./paths.js";
 import * as log from "./logger.js";
 
 export const PROFILE_CACHE_LIMIT_BYTES = 128 * 1024 * 1024;
@@ -11,7 +11,9 @@ const STARTUP_DELAY_MS = 30 * 1000;
 const CLOSE_DELAY_MS = 1000;
 
 function profileKey(profileDir) {
-  const resolved = path.resolve(ROOT, String(profileDir ?? ""));
+  // 账号的 profileDir 是相对数据根的路径。早先用安装根解析，安装布局下两者分离后
+  // 这个 key 会指向一个不存在的位置（同 profileManager 的双根错配）。
+  const resolved = path.resolve(fromRoot("."), String(profileDir ?? ""));
   return process.platform === "win32" ? resolved.toLowerCase() : resolved;
 }
 

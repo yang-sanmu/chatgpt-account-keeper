@@ -247,8 +247,13 @@ function Send-LocalBuild {
         throw "The local build is missing required assets: $($missing -join ', ')"
     }
 
+    # Only project-produced files carry the release version. Third-party source
+    # archives (mihomo) carry their own upstream version and must not be treated
+    # as leftovers from an earlier build.
     $stray = @($candidates | Where-Object {
-        $_.Name -match '\d+\.\d+\.\d+' -and $_.Name -notlike "*$Version*"
+        ($_.Name -like 'GptAccountKeeper.Desktop-*' -or $_.Name -like 'chatgpt-account-keeper-*') -and
+        $_.Name -match '\d+\.\d+\.\d+' -and
+        $_.Name -notlike "*$Version*"
     })
     if ($stray.Count -gt 0) {
         throw "artifacts contain files from another version: $(($stray | ForEach-Object { $_.Name }) -join ', '). Rebuild to clear them."

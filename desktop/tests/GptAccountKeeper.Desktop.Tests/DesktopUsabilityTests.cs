@@ -100,7 +100,9 @@ public sealed class DesktopUsabilityTests
     {
         await using var fixture = CreateShellFixture();
         Assert.False(fixture.Shell.IsAgentConnected);
+        Assert.Same(Palette.Muted, fixture.Shell.AgentConnectionStatusColor);
         Assert.Equal("启动 Agent", fixture.Shell.AgentActionText);
+        Assert.EndsWith(" · AOT", fixture.Shell.DesktopVersion, StringComparison.Ordinal);
         Assert.True(fixture.Shell.StartAgentCommand.CanExecute(null));
         Assert.True(fixture.Shell.ConnectAgentCommand.CanExecute(null));
 
@@ -112,12 +114,16 @@ public sealed class DesktopUsabilityTests
             Guid.NewGuid().ToString()));
 
         Assert.True(fixture.Shell.IsAgentConnected);
+        Assert.Same(Palette.Ok, fixture.Shell.AgentConnectionStatusColor);
+        Assert.Equal("Agent 已连接", fixture.Shell.Overview.ConnectionStatus);
         Assert.Equal("Agent 已连接", fixture.Shell.AgentActionText);
         Assert.False(fixture.Shell.StartAgentCommand.CanExecute(null));
         Assert.False(fixture.Shell.ConnectAgentCommand.CanExecute(null));
 
         fixture.Shell.ApplyConnection(new AgentConnectionSnapshot(false, "未连接", "test disconnect"));
         Assert.False(fixture.Shell.IsAgentConnected);
+        Assert.Same(Palette.Muted, fixture.Shell.AgentConnectionStatusColor);
+        Assert.Equal("未连接", fixture.Shell.Overview.ConnectionStatus);
         Assert.Equal("启动 Agent", fixture.Shell.AgentActionText);
         Assert.True(fixture.Shell.StartAgentCommand.CanExecute(null));
     }

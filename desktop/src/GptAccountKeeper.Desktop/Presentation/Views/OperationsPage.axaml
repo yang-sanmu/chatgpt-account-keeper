@@ -6,89 +6,122 @@
     xmlns:pages="using:GptAccountKeeper.Desktop.Presentation.Pages"
     x:DataType="pages:OperationsPageViewModel">
 
-  <Grid Margin="26,0,26,20" ColumnDefinitions="1.15*,1*" ColumnSpacing="14">
+  <Grid Margin="24,0,24,20" ColumnDefinitions="1.15*,1*" ColumnSpacing="16">
 
-    <Border CornerRadius="10" Background="White" BorderBrush="#EAECF0" BorderThickness="1">
-      <Grid RowDefinitions="Auto,*" Margin="14">
-        <Grid ColumnDefinitions="*,150,Auto" ColumnSpacing="8" Margin="0,0,0,10">
-          <TextBlock Text="{Binding Summary}" FontSize="12" Foreground="#475467" VerticalAlignment="Center" />
-          <ComboBox Grid.Column="1" ItemsSource="{Binding Filters}" SelectedItem="{Binding Filter, Mode=TwoWay}">
+    <!-- 左侧：任务列表 -->
+    <Border Classes="card" Padding="16">
+      <Grid RowDefinitions="Auto,*">
+        <Grid ColumnDefinitions="*,130,Auto" ColumnSpacing="10" Margin="0,0,0,12">
+          <TextBlock Text="{Binding Summary}" FontSize="11" Foreground="#94A3B8" VerticalAlignment="Center" />
+          <ComboBox Grid.Column="1" HorizontalAlignment="Stretch"
+                    ItemsSource="{Binding Filters}" SelectedItem="{Binding Filter, Mode=TwoWay}">
             <ComboBox.ItemTemplate>
               <DataTemplate x:DataType="pages:OperationFilterOption">
                 <TextBlock Text="{Binding Title}" />
               </DataTemplate>
             </ComboBox.ItemTemplate>
           </ComboBox>
-          <Button Grid.Column="2" Content="重新载入" Padding="10,6" Command="{Binding ReloadCommand}"
-                  ToolTip.Tip="任务已持久化，Agent 重启后仍能回看历史失败" />
+          <Button Grid.Column="2" Content="🔄 刷新" Padding="9,5" FontSize="11" Command="{Binding ReloadCommand}"
+                  ToolTip.Tip="任务已持久化到 SQLite，Agent 重启后仍可回看历史记录" />
         </Grid>
 
         <Panel Grid.Row="1">
           <ListBox ItemsSource="{Binding Items}" SelectedItem="{Binding Selected, Mode=TwoWay}">
             <ListBox.ItemTemplate>
               <DataTemplate x:DataType="models:AgentOperationDto">
-                <Grid Margin="4,6" ColumnDefinitions="*,Auto" ColumnSpacing="10">
-                  <StackPanel Spacing="2">
-                    <StackPanel Orientation="Horizontal" Spacing="8">
-                      <TextBlock Text="{Binding KindText}" FontWeight="SemiBold" FontSize="12" />
-                      <TextBlock Text="{Binding TimeText}" FontSize="10" Foreground="#98A2B3" />
+                <Border Margin="0,2" Padding="12,10" CornerRadius="8" Background="#0F172A" BorderBrush="#1E2D4A" BorderThickness="1">
+                  <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12" VerticalAlignment="Center">
+                    <StackPanel Spacing="3">
+                      <StackPanel Orientation="Horizontal" Spacing="8">
+                        <TextBlock Text="{Binding KindText}" FontWeight="Bold" FontSize="12" Foreground="#F8FAFC" />
+                        <TextBlock Text="{Binding TimeText}" FontSize="10" Foreground="#64748B" />
+                      </StackPanel>
+                      <TextBlock Text="{Binding DetailText}" FontSize="11" Foreground="#94A3B8"
+                                 TextTrimming="CharacterEllipsis" />
+                      <ProgressBar Height="4" Minimum="0" Maximum="1" Value="{Binding Progress}"
+                                   IsVisible="{Binding HasProgress}" Margin="0,2,0,0" />
                     </StackPanel>
-                    <TextBlock Text="{Binding DetailText}" FontSize="10" Foreground="#667085"
-                               TextTrimming="CharacterEllipsis" />
-                    <ProgressBar Height="4" Minimum="0" Maximum="1" Value="{Binding Progress}"
-                                 IsVisible="{Binding HasProgress}" />
-                  </StackPanel>
-                  <TextBlock Grid.Column="1" Text="{Binding StateText}" FontSize="11" FontWeight="SemiBold"
-                             Foreground="{Binding StateColor}" VerticalAlignment="Center" />
-                </Grid>
+
+                    <!-- 状态标签 -->
+                    <Border Grid.Column="1" Padding="8,3" CornerRadius="6" Background="#0B0F19" VerticalAlignment="Center">
+                      <TextBlock Text="{Binding StateText}" FontSize="11" FontWeight="SemiBold"
+                                 Foreground="{Binding StateColor}" />
+                    </Border>
+                  </Grid>
+                </Border>
               </DataTemplate>
             </ListBox.ItemTemplate>
           </ListBox>
 
+          <!-- 空列表提示 -->
           <StackPanel IsVisible="{Binding IsEmpty}" VerticalAlignment="Center" HorizontalAlignment="Center"
                       Spacing="8" MaxWidth="330">
-            <TextBlock Text="▶" FontSize="32" Foreground="#D0D5DD" HorizontalAlignment="Center" />
+            <TextBlock Text="⚡" FontSize="30" HorizontalAlignment="Center" />
+            <TextBlock Text="暂无后台任务" FontSize="14" FontWeight="SemiBold" Foreground="#F8FAFC" HorizontalAlignment="Center" />
             <TextBlock Text="{Binding EmptyText}" TextWrapping="Wrap" TextAlignment="Center"
-                       FontSize="12" Foreground="#667085" />
+                       FontSize="11" Foreground="#94A3B8" LineHeight="16" />
           </StackPanel>
         </Panel>
       </Grid>
     </Border>
 
-    <Border Grid.Column="1" CornerRadius="10" Background="White" BorderBrush="#EAECF0" BorderThickness="1">
-      <ScrollViewer Padding="16">
-        <StackPanel Spacing="10" IsVisible="{Binding HasSelected}">
-          <TextBlock Text="任务详情" FontSize="16" FontWeight="SemiBold" />
-          <TextBlock Text="{Binding Selected.KindText}" FontSize="19" FontWeight="SemiBold" />
-          <TextBlock Text="{Binding Selected.StateText}" FontSize="14" FontWeight="SemiBold"
-                     Foreground="{Binding Selected.StateColor}" />
-          <ProgressBar Minimum="0" Maximum="1" Height="7" Value="{Binding Selected.Progress}" />
+    <!-- 右侧：任务详情卡片 -->
+    <Border Grid.Column="1" Classes="card" Padding="20">
+      <ScrollViewer>
+        <StackPanel Spacing="12" IsVisible="{Binding HasSelected}">
+          <TextBlock Text="任务详情" FontSize="16" FontWeight="Bold" Foreground="#F8FAFC" />
 
-          <TextBlock Text="阶段" FontSize="10" Foreground="#667085" />
-          <TextBlock Text="{Binding Selected.Stage}" FontSize="12" />
-          <TextBlock Text="消息" FontSize="10" Foreground="#667085" />
-          <SelectableTextBlock Text="{Binding Selected.Message}" FontSize="12" TextWrapping="Wrap" />
-          <TextBlock Text="资源" FontSize="10" Foreground="#667085" />
-          <SelectableTextBlock Text="{Binding Selected.ResourceId}" FontSize="12" TextWrapping="Wrap" />
-          <TextBlock Text="任务 ID" FontSize="10" Foreground="#667085" />
-          <SelectableTextBlock Text="{Binding Selected.Id}" FontSize="11" TextWrapping="Wrap"
-                               Foreground="#667085" />
-
-          <Border IsVisible="{Binding Selected.HasError}" Padding="12" CornerRadius="8"
-                  Background="#FEF3F2" BorderBrush="#FECDCA" BorderThickness="1">
-            <StackPanel Spacing="6">
-              <TextBlock Text="错误详情" FontSize="12" FontWeight="SemiBold" Foreground="#B42318" />
-              <SelectableTextBlock Text="{Binding Selected.Error.Code}" FontSize="11" FontWeight="SemiBold"
-                                   Foreground="#B42318" />
-              <SelectableTextBlock Text="{Binding Selected.Error.Message}" FontSize="12" TextWrapping="Wrap"
-                                   Foreground="#7A271A" />
-              <Button Content="复制错误详情" Padding="9,5" FontSize="11" HorizontalAlignment="Left"
-                      Command="{Binding CopyErrorCommand}" />
+          <Border Padding="14" CornerRadius="10" Background="#0F172A" BorderBrush="#1E2D4A" BorderThickness="1">
+            <StackPanel Spacing="8">
+              <Grid ColumnDefinitions="*,Auto">
+                <TextBlock Text="{Binding Selected.KindText}" FontSize="16" FontWeight="Bold" Foreground="#93C5FD" />
+                <Border Grid.Column="1" Padding="8,3" CornerRadius="6" Background="#0B0F19">
+                  <TextBlock Text="{Binding Selected.StateText}" FontSize="12" FontWeight="SemiBold"
+                             Foreground="{Binding Selected.StateColor}" />
+                </Border>
+              </Grid>
+              <ProgressBar Minimum="0" Maximum="1" Height="6" Value="{Binding Selected.Progress}" />
             </StackPanel>
           </Border>
 
-          <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#667085"
-                     Text="任务写入 SQLite：重连、Agent 重启后错误码和结果仍可查询。上次运行未结束的任务会被标记为已取消，不会伪装成仍在运行。" />
+          <StackPanel Spacing="3">
+            <TextBlock Text="当前执行阶段" FontSize="10" Foreground="#64748B" />
+            <TextBlock Text="{Binding Selected.Stage}" FontSize="12" FontWeight="SemiBold" Foreground="#F8FAFC" />
+          </StackPanel>
+
+          <StackPanel Spacing="3">
+            <TextBlock Text="状态消息" FontSize="10" Foreground="#64748B" />
+            <SelectableTextBlock Text="{Binding Selected.Message}" FontSize="12" TextWrapping="Wrap" Foreground="#CBD5E1" />
+          </StackPanel>
+
+          <StackPanel Spacing="3">
+            <TextBlock Text="关联资源" FontSize="10" Foreground="#64748B" />
+            <SelectableTextBlock Text="{Binding Selected.ResourceId}" FontSize="12" TextWrapping="Wrap" Foreground="#93C5FD" />
+          </StackPanel>
+
+          <StackPanel Spacing="3">
+            <TextBlock Text="任务唯一 ID" FontSize="10" Foreground="#64748B" />
+            <SelectableTextBlock Text="{Binding Selected.Id}" FontSize="10" TextWrapping="Wrap" Foreground="#64748B" />
+          </StackPanel>
+
+          <!-- 错误面板 -->
+          <Border IsVisible="{Binding Selected.HasError}" Padding="14" CornerRadius="10"
+                  Background="#450A0A" BorderBrush="#DC2626" BorderThickness="1">
+            <StackPanel Spacing="6">
+              <TextBlock Text="⚠️ 失败错误详情" FontSize="12" FontWeight="Bold" Foreground="#FCA5A5" />
+              <SelectableTextBlock Text="{Binding Selected.Error.Code}" FontSize="11" FontWeight="SemiBold"
+                                   Foreground="#F87171" />
+              <SelectableTextBlock Text="{Binding Selected.Error.Message}" FontSize="11" TextWrapping="Wrap"
+                                   Foreground="#FECACA" LineHeight="16" />
+              <Button Content="📋 复制错误详情" Classes="danger" Padding="8,4" FontSize="10" HorizontalAlignment="Left"
+                      Command="{Binding CopyErrorCommand}" Margin="0,4,0,0" />
+            </StackPanel>
+          </Border>
+
+          <Border Padding="12" CornerRadius="8" Background="#0F172A" BorderBrush="#1E2D4A" BorderThickness="1">
+            <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#94A3B8" LineHeight="16"
+                       Text="任务写入 SQLite：断开重连或 Agent 重启后错误码与状态仍可查询。未正常结束的任务会被置为已取消。" />
+          </Border>
         </StackPanel>
       </ScrollViewer>
     </Border>

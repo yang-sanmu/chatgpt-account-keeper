@@ -1,6 +1,8 @@
 using System.Collections.ObjectModel;
+using System.Reflection;
 using System.Text.Json;
 using System.Windows.Input;
+using Avalonia.Media;
 using Avalonia.Threading;
 using GptAccountKeeper.Desktop.Infrastructure.Agent;
 using GptAccountKeeper.Desktop.Infrastructure.Settings;
@@ -99,11 +101,43 @@ internal sealed class ShellViewModel : ObservableObject
         Overview.ChooseDataDirectoryCommand = ChooseDataDirectoryCommand;
         Accounts.HistoryRequested = ShowHistoryForAccountAsync;
 
+        Overview.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName is nameof(Overview.SchedulerRunning) or nameof(Overview.SchedulerStatusText) or nameof(Overview.SchedulerStatusColor) or null)
+            {
+                OnPropertyChanged(nameof(SchedulerRunning));
+                OnPropertyChanged(nameof(SchedulerStatusText));
+                OnPropertyChanged(nameof(SchedulerStatusColor));
+                OnPropertyChanged(nameof(SchedulerActionText));
+            }
+        };
+
+        ToggleSchedulerCommand = new AsyncRelayCommand(() =>
+        {
+            if (Overview.SchedulerRunning)
+            {
+                Overview.StopSchedulerCommand.Execute(null);
+            }
+            else
+            {
+                Overview.StartSchedulerCommand.Execute(null);
+            }
+            return Task.CompletedTask;
+        });
+
         _connection.ConnectionChanged += OnConnectionChanged;
         _connection.EventReceived += OnAgentEvent;
         _connection.MigrationProgressChanged += OnMigrationProgress;
         _connection.ResynchronizationRequired += OnResynchronizationRequired;
     }
+
+    public bool SchedulerRunning => Overview.SchedulerRunning;
+    public string SchedulerStatusText => Overview.SchedulerStatusText;
+    public IBrush SchedulerStatusColor => Overview.SchedulerStatusColor;
+    public string SchedulerActionText => SchedulerRunning ? "停止调度" : "启动调度";
+    public ICommand ToggleSchedulerCommand { get; }
+
+    public string DesktopVersion { get; } = ResolveDesktopVersion();
 
     public ObservableCollection<PageViewModel> Pages { get; }
 
@@ -153,6 +187,8 @@ internal sealed class ShellViewModel : ObservableObject
     public bool IsBusy => _session.IsBusy;
 
     public bool IsAgentConnected => _isAgentConnected;
+
+    public IBrush AgentConnectionStatusColor => IsAgentConnected ? Palette.Ok : Palette.Muted;
 
     internal bool IsSafeInstallMonitorRunning => Volatile.Read(ref _safeInstallLoop) != 0;
 
@@ -390,9 +426,28 @@ internal sealed class ShellViewModel : ObservableObject
         if (_isAgentConnected == snapshot.IsConnected) return;
         _isAgentConnected = snapshot.IsConnected;
         OnPropertyChanged(nameof(IsAgentConnected));
+        OnPropertyChanged(nameof(AgentConnectionStatusColor));
         OnPropertyChanged(nameof(AgentActionText));
         (ConnectAgentCommand as AsyncRelayCommand)?.RaiseCanExecuteChanged();
         (StartAgentCommand as AsyncRelayCommand)?.RaiseCanExecuteChanged();
+    }
+
+    private static string ResolveDesktopVersion()
+    {
+        var assembly = typeof(ShellViewModel).Assembly;
+        var version = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+        if (string.IsNullOrWhiteSpace(version))
+        {
+            version = assembly.GetName().Version?.ToString(3) ?? "未知版本";
+        }
+
+        var metadataSeparator = version.IndexOf('+', StringComparison.Ordinal);
+        if (metadataSeparator >= 0)
+        {
+            version = version[..metadataSeparator];
+        }
+
+        return $"v{version} · AOT";
     }
 
     private void OnConnectionChanged(object? sender, AgentConnectionSnapshot snapshot)

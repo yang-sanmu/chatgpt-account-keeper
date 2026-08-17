@@ -88,7 +88,11 @@ internal sealed class ConversationsPageViewModel : PageViewModel
         get => _minRounds;
         set
         {
-            if (SetProperty(ref _minRounds, value)) OnPropertyChanged(nameof(ValidationError));
+            if (SetProperty(ref _minRounds, value))
+            {
+                OnPropertyChanged(nameof(ValidationError));
+                OnPropertyChanged(nameof(HasValidationError));
+            }
         }
     }
 
@@ -97,7 +101,11 @@ internal sealed class ConversationsPageViewModel : PageViewModel
         get => _maxRounds;
         set
         {
-            if (SetProperty(ref _maxRounds, value)) OnPropertyChanged(nameof(ValidationError));
+            if (SetProperty(ref _maxRounds, value))
+            {
+                OnPropertyChanged(nameof(ValidationError));
+                OnPropertyChanged(nameof(HasValidationError));
+            }
         }
     }
 
@@ -106,6 +114,8 @@ internal sealed class ConversationsPageViewModel : PageViewModel
         : MaxRounds < MinRounds
             ? "最多轮数不能小于最少轮数"
             : string.Empty;
+
+    public bool HasValidationError => ValidationError.Length > 0;
 
     public string Summary => $"{Items.Count} 个会话主题";
 

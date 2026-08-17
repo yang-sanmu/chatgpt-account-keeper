@@ -39,23 +39,23 @@ internal sealed class ToastViewModel : ObservableObject
     // 直接暴露 Brush：字符串到 Brush 依赖运行时 TypeConverter，在 AOT/裁剪下不可靠。
     public IBrush Background => Kind switch
     {
-        ToastKind.Success => Palette.Of("#ECFDF3"),
-        ToastKind.Error => Palette.Of("#FEF3F2"),
-        _ => Palette.Of("#EFF8FF"),
+        ToastKind.Success => Palette.Of("#064E3B"),
+        ToastKind.Error => Palette.Of("#450A0A"),
+        _ => Palette.Of("#0F2942"),
     };
 
     public IBrush BorderColor => Kind switch
     {
-        ToastKind.Success => Palette.Of("#ABEFC6"),
-        ToastKind.Error => Palette.Of("#FECDCA"),
-        _ => Palette.Of("#B2DDFF"),
+        ToastKind.Success => Palette.Of("#059669"),
+        ToastKind.Error => Palette.Of("#DC2626"),
+        _ => Palette.Of("#0284C7"),
     };
 
     public IBrush Foreground => Kind switch
     {
-        ToastKind.Success => Palette.Of("#067647"),
-        ToastKind.Error => Palette.Danger,
-        _ => Palette.Info,
+        ToastKind.Success => Palette.Of("#6EE7B7"),
+        ToastKind.Error => Palette.Of("#FCA5A5"),
+        _ => Palette.Of("#7DD3FC"),
     };
 }
 

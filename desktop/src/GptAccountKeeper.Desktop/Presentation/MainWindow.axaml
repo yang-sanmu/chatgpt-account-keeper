@@ -7,73 +7,124 @@
     xmlns:views="using:GptAccountKeeper.Desktop.Presentation.Views"
     x:DataType="vm:ShellViewModel"
     Title="ChatGPT Account Keeper"
-    Width="1360"
-    Height="880"
-    MinWidth="1120"
-    MinHeight="720"
-    Background="#F4F6F8"
+    Width="1380"
+    Height="890"
+    MinWidth="1160"
+    MinHeight="740"
+    Background="#0B0F19"
     WindowStartupLocation="CenterScreen">
 
-  <Grid ColumnDefinitions="248,*">
-    <!-- 侧边导航 -->
-    <Border Grid.Column="0" Background="#101828">
-      <Grid RowDefinitions="Auto,*,Auto" Margin="16,20">
-        <StackPanel Spacing="4">
-          <TextBlock Text="ChatGPT Account Keeper" FontSize="17" FontWeight="SemiBold" Foreground="White" />
-          <TextBlock Text="原生管理控制台" FontSize="11" Foreground="#98A2B3" />
+  <Grid ColumnDefinitions="260,*">
+    <!-- 侧边导航栏 (Modern Slate Dark) -->
+    <Border Grid.Column="0" Background="#080C14" BorderBrush="#1E2D4A" BorderThickness="0,0,1,0">
+      <Grid RowDefinitions="Auto,*,Auto" Margin="16,20,16,16">
+
+        <!-- 品牌标识 -->
+        <StackPanel Spacing="14">
+          <Grid ColumnDefinitions="38,*" ColumnSpacing="12" VerticalAlignment="Center">
+            <!-- Logo 图标 -->
+            <Border Width="38" Height="38" CornerRadius="10" Background="{StaticResource BrushPrimaryGradient}">
+              <TextBlock Text="⚡" FontSize="20" HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Border>
+            <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
+              <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                <TextBlock Text="ChatGPT" FontSize="16" FontWeight="Bold" Foreground="#F8FAFC" />
+                <TextBlock Text="Keeper" FontSize="16" FontWeight="Light" Foreground="#60A5FA" />
+              </StackPanel>
+              <Border HorizontalAlignment="Left" Padding="6,1" CornerRadius="10" Background="#172554" BorderBrush="#1D4ED8" BorderThickness="1">
+                <TextBlock Text="{Binding DesktopVersion}" FontSize="9" FontWeight="SemiBold" Foreground="#93C5FD" />
+              </Border>
+            </StackPanel>
+          </Grid>
+          <Rectangle Height="1" Fill="#1E2D4A" Margin="0,4,0,0" />
         </StackPanel>
 
+        <!-- 页面导航列表 -->
         <ListBox Grid.Row="1"
-                 Margin="0,20,0,12"
+                 Margin="0,14,0,12"
                  Background="Transparent"
                  BorderThickness="0"
                  ItemsSource="{Binding Pages}"
                  SelectedItem="{Binding SelectedPage, Mode=TwoWay}">
           <ListBox.ItemTemplate>
             <DataTemplate x:DataType="vm:PageViewModel">
-              <Grid ColumnDefinitions="26,*" Margin="6,7">
-                <TextBlock Text="{Binding Glyph}" VerticalAlignment="Center" FontSize="14" Foreground="#D0D5DD" />
-                <StackPanel Grid.Column="1" Spacing="1">
-                  <TextBlock Text="{Binding Title}" FontWeight="SemiBold" Foreground="White" />
-                  <TextBlock Text="{Binding Description}" FontSize="10" TextWrapping="Wrap" Foreground="#98A2B3" />
+              <Grid ColumnDefinitions="28,*" Margin="6,7">
+                <TextBlock Text="{Binding Glyph}" VerticalAlignment="Center" FontSize="15" Foreground="#60A5FA" />
+                <StackPanel Grid.Column="1" Spacing="1" VerticalAlignment="Center">
+                  <TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="13" Foreground="#F8FAFC" />
+                  <TextBlock Text="{Binding Description}" FontSize="10" TextWrapping="Wrap" Foreground="#94A3B8" />
                 </StackPanel>
               </Grid>
             </DataTemplate>
           </ListBox.ItemTemplate>
         </ListBox>
 
-        <Border Grid.Row="2" Padding="11" CornerRadius="8" Background="#1D2939">
-          <StackPanel Spacing="4">
-            <TextBlock Text="本机 IPC · 无 localhost" FontSize="10" Foreground="#98A2B3" />
-            <TextBlock Text="{Binding Endpoint}" FontSize="9" TextWrapping="Wrap" Foreground="#EAECF0" />
-            <TextBlock Text="{Binding RuntimeMode}" FontSize="9" TextWrapping="Wrap" Foreground="#84CAFF" />
+        <!-- 底部 IPC 诊断卡片 -->
+        <Border Grid.Row="2" Padding="12" CornerRadius="10" Background="#0F172A" BorderBrush="#1E2D4A" BorderThickness="1">
+          <StackPanel Spacing="5">
+            <StackPanel Orientation="Horizontal" Spacing="6">
+              <Ellipse Width="7" Height="7" Fill="{Binding AgentConnectionStatusColor}" VerticalAlignment="Center" />
+              <TextBlock Text="{Binding Overview.ConnectionStatus}" FontSize="11" FontWeight="SemiBold" Foreground="#94A3B8" />
+            </StackPanel>
+            <TextBlock Text="{Binding Endpoint}" FontSize="9" TextWrapping="Wrap" Foreground="#64748B" />
+            <Border HorizontalAlignment="Left" Margin="0,2,0,0" Padding="5,2" CornerRadius="4" Background="#1E293B">
+              <TextBlock Text="{Binding RuntimeMode}" FontSize="9" Foreground="#38BDF8" />
+            </Border>
           </StackPanel>
         </Border>
       </Grid>
     </Border>
 
-    <!-- 主区域：标题栏 + 当前页 + 顶层 toast -->
+    <!-- 主工作区 -->
     <Grid Grid.Column="1" RowDefinitions="Auto,*">
-      <Grid Margin="26,20,26,14" ColumnDefinitions="*,Auto">
-        <StackPanel Spacing="3">
-          <TextBlock Text="{Binding SelectedPage.Title}" FontSize="25" FontWeight="SemiBold" Foreground="#101828" />
-          <TextBlock Text="{Binding SelectedPage.Description}" FontSize="12" Foreground="#667085" />
-        </StackPanel>
-        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-          <ProgressBar Width="90" Height="4" IsIndeterminate="True"
-                       IsVisible="{Binding Session.IsBusy}" VerticalAlignment="Center" />
-          <Button Content="重新连接" Padding="12,7" Command="{Binding ConnectAgentCommand}"
-                  IsVisible="{Binding !IsAgentConnected}" />
-          <Button Content="同步数据" Padding="12,7" Command="{Binding RefreshDataCommand}" />
-          <Button Content="{Binding AgentActionText}" Padding="12,7"
-                  Background="#175CD3" Foreground="White"
-                  Command="{Binding StartAgentCommand}"
-                  ToolTip.Tip="已连接时无需重复启动；断开后按钮会自动恢复" />
-        </StackPanel>
-      </Grid>
 
+      <!-- 全局顶栏 Header (集成调度器状态胶囊与启停按钮) -->
+      <Border Margin="24,18,24,14" Padding="0,0,0,14" BorderBrush="#1E2D4A" BorderThickness="0,0,0,1">
+        <Grid ColumnDefinitions="*,Auto">
+          <!-- 页面标题 -->
+          <StackPanel Spacing="3" VerticalAlignment="Center">
+            <TextBlock Text="{Binding SelectedPage.Title}" FontSize="24" FontWeight="Bold" Foreground="#F8FAFC" />
+            <TextBlock Text="{Binding SelectedPage.Description}" FontSize="12" Foreground="#94A3B8" />
+          </StackPanel>
+
+          <!-- 顶部全局动作区 -->
+          <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+
+            <!-- 全局调度器微光胶囊 -->
+            <Border Padding="10,5" CornerRadius="20" Background="#131C2E" BorderBrush="#1E2D4A" BorderThickness="1">
+              <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                <Ellipse Width="8" Height="8" Fill="{Binding SchedulerStatusColor}" VerticalAlignment="Center" />
+                <TextBlock Text="调度器:" FontSize="12" Foreground="#94A3B8" VerticalAlignment="Center" />
+                <TextBlock Text="{Binding SchedulerStatusText}" FontSize="12" FontWeight="SemiBold"
+                           Foreground="{Binding SchedulerStatusColor}" VerticalAlignment="Center" />
+              </StackPanel>
+            </Border>
+
+            <!-- 启停调度器快捷按钮 -->
+            <Button Content="{Binding SchedulerActionText}"
+                    Classes="primary"
+                    Command="{Binding ToggleSchedulerCommand}"
+                    ToolTip.Tip="全局调度器开关：开启后按设定间隔自动唤醒并轮换对话" />
+
+            <Rectangle Width="1" Height="20" Fill="#1E2D4A" Margin="4,0" />
+
+            <!-- 数据同步与 Agent 状态 -->
+            <ProgressBar Width="70" Height="4" IsIndeterminate="True"
+                         IsVisible="{Binding Session.IsBusy}" VerticalAlignment="Center" />
+            <Button Content="重新连接" Command="{Binding ConnectAgentCommand}"
+                    IsVisible="{Binding !IsAgentConnected}" />
+            <Button Content="同步数据" Command="{Binding RefreshDataCommand}"
+                    ToolTip.Tip="重新从 Agent 拉取最新账号与状态数据" />
+            <Button Content="{Binding AgentActionText}"
+                    Classes="primary"
+                    Command="{Binding StartAgentCommand}"
+                    ToolTip.Tip="已连接时无需重复启动；断开后按钮会自动恢复" />
+          </StackPanel>
+        </Grid>
+      </Border>
+
+      <!-- 页面内容容器 -->
       <Panel Grid.Row="1">
-        <!-- 每页自带 ScrollViewer；壳层不再套一层，避免嵌套滚动 -->
         <ContentControl Content="{Binding SelectedPage}">
           <ContentControl.DataTemplates>
             <DataTemplate DataType="pages:OverviewPageViewModel">
@@ -103,25 +154,24 @@
           </ContentControl.DataTemplates>
         </ContentControl>
 
-        <!-- 操作反馈浮在页面之上：账号页第一屏也能看见 -->
+        <!-- 浮层 Toast 通知 -->
         <ItemsControl ItemsSource="{Binding Toasts.Items}"
                       HorizontalAlignment="Right"
                       VerticalAlignment="Top"
                       Margin="0,8,26,0"
-                      Width="420"
+                      Width="440"
                       IsHitTestVisible="True">
           <ItemsControl.ItemTemplate>
             <DataTemplate x:DataType="vm:ToastViewModel">
-              <Border Margin="0,0,0,8" Padding="12,9" CornerRadius="8"
+              <Border Margin="0,0,0,8" Padding="14,10" CornerRadius="10"
                       Background="{Binding Background}"
                       BorderBrush="{Binding BorderColor}"
-                      BorderThickness="1"
-                      BoxShadow="0 4 12 0 #22101828">
+                      BorderThickness="1">
                 <Grid ColumnDefinitions="Auto,*">
-                  <TextBlock Text="{Binding Glyph}" FontWeight="Bold" Margin="0,0,9,0"
-                             Foreground="{Binding Foreground}" VerticalAlignment="Top" />
+                  <TextBlock Text="{Binding Glyph}" FontWeight="Bold" FontSize="14" Margin="0,0,10,0"
+                             Foreground="{Binding Foreground}" VerticalAlignment="Center" />
                   <TextBlock Grid.Column="1" Text="{Binding Message}" TextWrapping="Wrap"
-                             FontSize="12" Foreground="#344054" />
+                             FontSize="12" Foreground="#F8FAFC" VerticalAlignment="Center" />
                 </Grid>
               </Border>
             </DataTemplate>

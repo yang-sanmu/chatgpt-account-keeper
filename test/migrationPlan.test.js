@@ -28,12 +28,12 @@ function createLegacyFixture(t) {
         groupId: "g1",
         proxyId: "px1",
         enabled: true,
-        rotation: { currentSet: "default", windowsDone: 2, windowsTarget: 3 },
+        rotation: { currentSet: "topic_mrveci1p", windowsDone: 2, windowsTarget: 3 },
       },
     ],
   });
   write("config/conversations.json", {
-    sets: { default: { topic: "migration", minRounds: 1, maxRounds: 4 } },
+    sets: { topic_mrveci1p: { topic: "migration", minRounds: 1, maxRounds: 4 } },
   });
   write("config/settings.json", { intervalMinutes: 90, headless: false, customFuture: 1 });
   write("config/groups.json", { groups: [{ id: "g1", name: "group", proxyId: null }] });
@@ -56,14 +56,27 @@ function createLegacyFixture(t) {
   write(
     "logs/a1.jsonl",
     [
-      JSON.stringify({ time: "2026-01-01T00:00:00.000Z", ok: true, prompt: "p", reply: "r" }),
+      JSON.stringify({
+        time: "2026-01-01T00:00:00.000Z",
+        ok: true,
+        setName: "topic_mrveci1p",
+        topic: "migration",
+        prompt: "p",
+        reply: "r",
+      }),
       "{broken",
       "",
     ].join("\n")
   );
   write(
     "logs/deleted-account.jsonl",
-    `${JSON.stringify({ time: "2025-01-01T00:00:00.000Z", ok: false, reason: "old" })}\n`
+    `${JSON.stringify({
+      time: "2025-01-01T00:00:00.000Z",
+      ok: false,
+      setName: "topic_mrvedead",
+      topic: "已删除主题",
+      reason: "old",
+    })}\n`
   );
   return { root, write };
 }
@@ -86,7 +99,14 @@ test("legacy plan preserves ordering/history/orphans and excludes Chrome locks",
     rejects: 1,
   });
   assert.equal(plan.data.accounts[0].profileName, "a1");
+  assert.equal(plan.data.accounts[0].rotation.currentSet, "migration");
   assert.equal(plan.data.accounts[0].rotation.windowsDone, 2);
+  assert.equal(plan.data.conversationSets[0].id, "migration");
+  assert.equal(plan.data.histories[0].payload.setName, "migration");
+  assert.equal(
+    plan.data.histories.find((entry) => entry.accountId === "deleted-account").payload.setName,
+    "已删除主题"
+  );
   assert.equal(plan.data.groups[0].proxyId, "px1");
   assert.equal(plan.data.settings.legacyExtra.customFuture, 1);
   assert.equal(plan.data.statuses[0].stale, true);
@@ -99,6 +119,45 @@ test("legacy plan preserves ordering/history/orphans and excludes Chrome locks",
   assert.equal(a1.files.some((file) => file.path.includes("Cookies")), true);
   assert.equal(a1.files.some((file) => /Singleton|DevTools/.test(file.path)), false);
   assert.equal(verifyLegacyMigrationPlan(plan), true);
+});
+
+test("legacy generated conversation ids become unique content-based ids", (t) => {
+  const fixture = createLegacyFixture(t);
+  fixture.write("config/conversations.json", {
+    sets: {
+      default: { topic: "保留名称", minRounds: 1, maxRounds: 2 },
+      topic_mrveci1p: { topic: "default", minRounds: 1, maxRounds: 2 },
+      topic_mrveci2p: { topic: "相同内容", minRounds: 1, maxRounds: 2 },
+      topic_mrveci3p: { topic: "相同内容", minRounds: 1, maxRounds: 2 },
+    },
+  });
+
+  const plan = buildLegacyMigrationPlan(fixture.root);
+
+  assert.deepEqual(
+    plan.data.conversationSets.map((set) => set.id),
+    ["default", "default (2)", "相同内容", "相同内容 (2)"]
+  );
+  assert.equal(plan.data.accounts[0].rotation.currentSet, "default (2)");
+  assert.equal(plan.data.histories[0].payload.setName, "default (2)");
+});
+
+test("legacy conversation ids reserve another topic's natural content name", (t) => {
+  const fixture = createLegacyFixture(t);
+  fixture.write("config/conversations.json", {
+    sets: {
+      topic_mrveci1p: { topic: "foo", minRounds: 1, maxRounds: 2 },
+      topic_mrveci2p: { topic: "foo", minRounds: 1, maxRounds: 2 },
+      topic_mrveci3p: { topic: "foo (2)", minRounds: 1, maxRounds: 2 },
+    },
+  });
+
+  const plan = buildLegacyMigrationPlan(fixture.root);
+
+  assert.deepEqual(
+    plan.data.conversationSets.map((set) => set.id),
+    ["foo", "foo (3)", "foo (2)"]
+  );
 });
 
 test("legacy plan detects source changes after the manifest is created", (t) => {

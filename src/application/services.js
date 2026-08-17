@@ -266,14 +266,18 @@ function publicSchedulerStatus(runtime) {
  * 旧 JSONL 与 SQLite payload 都是自由结构，界面不该自己去猜字段，
  * 更不该在取不到时把原始 JSON 铺给用户看。
  */
-function publicHistoryEntry(entry) {
+function publicHistoryEntry(entry, conversations = {}) {
   const raw = entry && typeof entry === "object" ? entry : {};
   const rounds = Array.isArray(raw.rounds) ? raw.rounds : [];
+  const setName = typeof raw.setName === "string" && raw.setName.trim() ? raw.setName : null;
+  const configuredTopic = setName ? conversations?.[setName]?.topic : null;
+  const topic = [raw.topic, configuredTopic, raw.prompt]
+    .find((value) => typeof value === "string" && value.trim()) ?? null;
   return {
     time: raw.time ?? raw.finishedAt ?? null,
     ok: raw.ok == null ? null : !!raw.ok,
-    setName: raw.setName ?? null,
-    topic: raw.topic ?? null,
+    setName,
+    topic,
     totalRounds: Number.isFinite(raw.totalRounds) ? raw.totalRounds : rounds.length,
     error: raw.reason ?? raw.error ?? null,
     needReauth: !!raw.needReauth,
@@ -369,7 +373,7 @@ export class ApplicationServices {
     const history = this.runtime.subscribeHistory?.((change) => {
       this.events.publish("history.appended", {
         accountId: change.accountId,
-        entry: publicHistoryEntry(change.entry),
+        entry: publicHistoryEntry(change.entry, this.runtime.store.getConversations()),
       });
     });
     if (typeof history === "function") subscriptions.push(history);
@@ -826,7 +830,9 @@ export class ApplicationServices {
   _historyQuery(params) {
     const accountId = requireId(params, "accountId");
     const entries = this.runtime.readHistory(accountId, safeLimit(params.limit));
-    return (Array.isArray(entries) ? entries : []).map(publicHistoryEntry);
+    const conversations = this.runtime.store.getConversations();
+    return (Array.isArray(entries) ? entries : [])
+      .map((entry) => publicHistoryEntry(entry, conversations));
   }
 
   _historyListAccounts() {

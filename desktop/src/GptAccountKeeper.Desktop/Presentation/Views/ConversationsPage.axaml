@@ -60,7 +60,7 @@
           <TextBlock Text="{Binding FormTitle}" FontSize="16" FontWeight="Bold" Foreground="#F8FAFC" />
 
           <StackPanel Spacing="4">
-            <TextBlock Text="主题名称" FontSize="11" FontWeight="Medium" Foreground="#94A3B8" />
+            <TextBlock Text="会话集标识" FontSize="11" FontWeight="Medium" Foreground="#94A3B8" />
             <TextBox PlaceholderText="如：科技趋势探讨、Rust 与 Go 架构比较…"
                      Text="{Binding Name, Mode=TwoWay}" IsEnabled="{Binding CanEdit}" />
           </StackPanel>

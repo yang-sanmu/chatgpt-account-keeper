@@ -10,8 +10,7 @@ import {
 import { configureStatusBackend } from "../statusCacheStore.js";
 import { startProfileMaintenance } from "../profileMaintenance.js";
 import { scheduler } from "../scheduler.js";
-import { closeAllLoginTasks } from "../loginProvider.js";
-import { closeAllOpenPages } from "../openPage.js";
+import { closeAllBrowserContexts } from "../browser.js";
 import * as log from "../logger.js";
 import { configureHistoryBackend } from "../logger.js";
 import { createAgent } from "./createAgent.js";
@@ -61,33 +60,42 @@ async function updateBackup(dataRoot) {
 async function shutdown(exitCode = 0, { preserveScheduler = true } = {}) {
   if (shuttingDown) return;
   shuttingDown = true;
-  try {
-    stopStatusMonitor();
-    const drained = await scheduler.drain({ timeoutMs: 60_000, preserveEnabled: preserveScheduler });
-    if (!drained.drained) log.warn("Agent 关闭时调度任务未能在限定时间内结束");
-    proxies.stopAll();
-    const closeResults = await Promise.allSettled([
-      closeAllLoginTasks(),
-      closeAllOpenPages(),
-    ]);
-    for (const result of closeResults) {
-      if (result.status === "rejected") {
-        log.warn(`关闭浏览器任务失败：${String(result.reason?.message || result.reason)}`);
-      }
+  let cleanupFailed = false;
+  const cleanup = async (label, action) => {
+    try {
+      return await action();
+    } catch (error) {
+      cleanupFailed = true;
+      log.warn(`${label}失败：${String(error?.message || error)}`);
+      return null;
     }
-    if (agent?.started) await agent.server.close();
+  };
+  try {
+    await cleanup("停止状态巡检", () => stopStatusMonitor());
+    // 退出不是“等用户手动关窗口”：先禁止排队任务再开 Chrome，并主动释放
+    // 本 Agent 启动的调度、巡检、登录和可见窗口。关闭上下文会让占锁任务尽快收尾。
+    await cleanup("关闭 Chrome", () => closeAllBrowserContexts({ timeoutMs: 3_000 }));
+    const drained = await cleanup("停止调度", () =>
+      scheduler.drain({ timeoutMs: 5_000, preserveEnabled: preserveScheduler })
+    );
+    if (drained && !drained.drained) log.warn("Agent 关闭时调度任务未能在限定时间内结束");
+    await cleanup("停止代理内核", () => proxies.stopAll());
+    if (agent?.started) await cleanup("关闭 IPC 服务", () => agent.server.close());
     if (repository) {
       const currentRepository = repository;
       repository = null;
-      try {
-        currentRepository.checkpoint();
-      } finally {
-        currentRepository.close();
-      }
+      await cleanup("关闭数据库", () => {
+        try {
+          currentRepository.checkpoint();
+        } finally {
+          currentRepository.close();
+        }
+      });
     }
-    for (const restore of backendRestorers.reverse()) restore();
+    for (const restore of backendRestorers.reverse()) {
+      await cleanup("释放运行后端", () => restore());
+    }
     backendRestorers = [];
-    process.exitCode = exitCode;
   } finally {
     if (instanceLock) {
       try {
@@ -98,6 +106,12 @@ async function shutdown(exitCode = 0, { preserveScheduler = true } = {}) {
       instanceLock = null;
     }
   }
+  // 所有持久化与单实例锁均已释放。即使第三方浏览器驱动残留句柄，Agent 也
+  // 不应反过来阻止桌面程序退出。放到下一轮事件循环，让 agent.stop() 当前的
+  // Promise 收尾先完成，但不再等待其它未知句柄自然消失。
+  const finalExitCode = cleanupFailed ? 1 : exitCode;
+  process.exitCode = finalExitCode;
+  setImmediate(() => process.exit(finalExitCode));
 }
 
 async function main() {

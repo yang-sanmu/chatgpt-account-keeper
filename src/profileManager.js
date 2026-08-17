@@ -282,6 +282,9 @@ export function createProfileManager({
           name: entry.name,
           linked: linkedAccounts.length > 0,
           accountIds: linkedAccounts.map((account) => account.id),
+          accountLabels: linkedAccounts.map(
+            (account) => account.email || account.gptName || account.note || account.id
+          ),
           nonStandardReference: linkedAccounts.some((account) => account.nonStandardProfilePath),
           busy: linkedAccounts.some((account) => accountBusy(account.id)) || hasBrowserLock(full),
           bytes: stats.bytes,

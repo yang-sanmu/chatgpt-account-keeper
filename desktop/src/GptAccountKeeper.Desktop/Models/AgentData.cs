@@ -216,7 +216,7 @@ internal sealed record AccountDto
             ? Palette.Danger
             : Palette.Ok;
 
-    /// <summary>轮换进度：当前主题与已完成/目标窗口数。</summary>
+    /// <summary>轮换进度：当前会话集标识与已完成/目标窗口数。</summary>
     [JsonIgnore]
     public string RotationText => string.IsNullOrWhiteSpace(RotationCurrentSet)
         ? "未开始轮换"
@@ -683,8 +683,10 @@ internal sealed class AgentSettingsDto
     public bool ProfileAutoCleanEnabled { get; init; } = true;
 }
 
-internal sealed class ProfileEntryDto
+internal sealed class ProfileEntryDto : ObservableObject
 {
+    private string[] _accountLabels = [];
+
     [JsonPropertyName("name")]
     public string Name { get; init; } = string.Empty;
 
@@ -693,6 +695,17 @@ internal sealed class ProfileEntryDto
 
     [JsonPropertyName("accountIds")]
     public string[] AccountIds { get; init; } = [];
+
+    [JsonPropertyName("accountLabels")]
+    public string[] AccountLabels
+    {
+        get => _accountLabels;
+        set
+        {
+            if (!SetProperty(ref _accountLabels, value ?? [])) return;
+            OnPropertyChanged(nameof(DisplayName));
+        }
+    }
 
     [JsonPropertyName("busy")]
     public bool Busy { get; init; }
@@ -707,7 +720,19 @@ internal sealed class ProfileEntryDto
     public long CacheBytes { get; init; }
 
     [JsonIgnore]
-    public string StateText => Busy ? "正在使用" : Linked ? $"关联 {AccountIds.Length} 个账号" : "孤儿 Profile";
+    public string DisplayName => Linked
+        ? AccountLabels.FirstOrDefault(label =>
+                !string.IsNullOrWhiteSpace(label)
+                && !AccountIds.Contains(label, StringComparer.Ordinal))
+            ?? "未命名账号"
+        : Name;
+
+    [JsonIgnore]
+    public string StateText => AccountIds.Length > 1
+        ? $"异常：关联 {AccountIds.Length} 个账号"
+        : Busy
+            ? "正在使用"
+            : Linked ? "已关联" : "孤儿 Profile";
 
     [JsonIgnore]
     public string SizeText => $"{FormatBytes(Bytes)} · 缓存 {FormatBytes(CacheBytes)}";

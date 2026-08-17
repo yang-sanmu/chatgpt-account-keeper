@@ -14,6 +14,9 @@ internal sealed class ProfilesPageViewModel : PageViewModel
     private bool _onlyOrphans;
     private string _summary = "首次进入会自动扫描 Profile 占用";
     private ProfileEntryDto[] _all = [];
+    // null 表示账号已知但当前没有可显示名称；没有键才表示旧 Agent/事件尚未
+    // 提供该账号。两者必须区分，否则清空备注后会回退到上一次的旧名称。
+    private readonly Dictionary<string, string?> _accountNames = new(StringComparer.Ordinal);
 
     public ProfilesPageViewModel(AgentSession session)
         : base("profiles", "▣", "Profile", "扫描、缓存清理和孤儿处理")
@@ -98,11 +101,68 @@ internal sealed class ProfilesPageViewModel : PageViewModel
         if (scan is null) return;
         _scanned = true;
         _all = scan.Profiles;
+        foreach (var profile in _all) ApplyAccountNames(profile);
         ApplyFilter();
         Summary = $"{scan.Totals.Profiles} 个 Profile · {scan.Totals.Linked} 个已关联 · "
             + $"{scan.Totals.Orphans} 个孤儿 · 可清理缓存 {FormatBytes(scan.Totals.CacheBytes)} · "
             + $"已归档 {scan.Totals.ArchiveCount} 个（{FormatBytes(scan.Totals.ArchiveBytes)}） · "
             + $"删除残留 {scan.Totals.TrashCount} 个（{FormatBytes(scan.Totals.TrashBytes)}）";
+    }
+
+    public void ApplyAccounts(IReadOnlyList<AccountDto> accounts)
+    {
+        _accountNames.Clear();
+        foreach (var account in accounts)
+        {
+            _accountNames[account.Id] = ResolveAccountName(account);
+        }
+        foreach (var profile in _all) ApplyAccountNames(profile);
+    }
+
+    public void ApplyAccount(AccountDto account)
+    {
+        _accountNames[account.Id] = ResolveAccountName(account);
+        foreach (var profile in _all.Where(profile => profile.AccountIds.Contains(account.Id, StringComparer.Ordinal)))
+        {
+            ApplyAccountNames(profile);
+        }
+    }
+
+    public void ApplyAccountEmail(string accountId, string? email)
+    {
+        if (string.IsNullOrWhiteSpace(email)) return;
+        _accountNames[accountId] = email.Trim();
+        foreach (var profile in _all.Where(profile => profile.AccountIds.Contains(accountId, StringComparer.Ordinal)))
+        {
+            ApplyAccountNames(profile);
+        }
+    }
+
+    private void ApplyAccountNames(ProfileEntryDto profile)
+    {
+        if (!profile.Linked) return;
+        var agentLabels = profile.AccountLabels;
+        var labels = new List<string>(profile.AccountIds.Length);
+        for (var index = 0; index < profile.AccountIds.Length; index++)
+        {
+            var accountId = profile.AccountIds[index];
+            var label = _accountNames.TryGetValue(accountId, out var knownName)
+                ? knownName
+                : index < agentLabels.Length ? agentLabels[index] : null;
+            if (!string.IsNullOrWhiteSpace(label)
+                && !string.Equals(label, accountId, StringComparison.Ordinal))
+            {
+                labels.Add(label.Trim());
+            }
+        }
+        profile.AccountLabels = labels.ToArray();
+    }
+
+    private static string? ResolveAccountName(AccountDto account)
+    {
+        if (!string.IsNullOrWhiteSpace(account.Email)) return account.Email.Trim();
+        if (!string.IsNullOrWhiteSpace(account.GptName)) return account.GptName.Trim();
+        return string.IsNullOrWhiteSpace(account.Note) ? null : account.Note.Trim();
     }
 
     private void ApplyFilter()
@@ -148,8 +208,8 @@ internal sealed class ProfilesPageViewModel : PageViewModel
         if (profile is null) return Task.CompletedTask;
         return CleanCacheAsync(
             profile.Name,
-            $"清理 {profile.Name} 的缓存",
-            $"已开始清理 {profile.Name} 的可重建缓存");
+            $"清理 {profile.DisplayName} 的缓存",
+            $"已开始清理 {profile.DisplayName} 的可重建缓存");
     }
 
     private async Task ArchiveOrphanAsync()

@@ -250,7 +250,10 @@ internal sealed class ShellViewModel : ObservableObject
             _lifetime.Token);
     }
 
-    public async Task ShutdownAgentAsync(string reason = "user-exit-all")
+    public async Task ShutdownAgentAsync(
+        string reason = "user-exit-all",
+        bool force = true,
+        bool requireDisconnect = false)
     {
         if (!await TryReconnectToAgentAsync()) return;
         _suppressReconnect = true;
@@ -258,12 +261,20 @@ internal sealed class ShellViewModel : ObservableObject
         {
             await _connection.CallAsync(
                 "system.shutdown",
-                new ShutdownParams(reason),
+                new ShutdownParams(reason, Force: force),
                 AppJsonContext.Default.ShutdownParams,
                 AppJsonContext.Default.AcceptedResult,
                 _lifetime.Token,
                 AgentSession.NewCommandId());
-            await _connection.WaitForDisconnectAsync(TimeSpan.FromSeconds(15), _lifetime.Token);
+            try
+            {
+                await _connection.WaitForDisconnectAsync(TimeSpan.FromSeconds(15), _lifetime.Token);
+            }
+            catch (TimeoutException) when (!requireDisconnect)
+            {
+                // Agent 已确认接管退出；不能因为第三方浏览器驱动迟迟不释放句柄，
+                // 再把桌面窗口锁成“永远关不上”。Agent 自身有有界清理与最终退出保障。
+            }
         }
         catch
         {
@@ -404,6 +415,7 @@ internal sealed class ShellViewModel : ObservableObject
             _lifetime.Token);
 
         Accounts.ApplyAccounts(bootstrap.Accounts, bootstrap.Groups);
+        Profiles.ApplyAccounts(bootstrap.Accounts);
         Proxies.ApplyState(bootstrap.Proxies, bootstrap.Groups, bootstrap.Accounts);
         Conversations.Apply(bootstrap.Conversations);
         History.ApplyAccounts(bootstrap.HistoryAccounts);
@@ -522,8 +534,10 @@ internal sealed class ShellViewModel : ObservableObject
             case "account.changed":
                 {
                     var account = agentEvent.Payload.Deserialize(AppJsonContext.Default.AccountDto);
+                    if (account is null) return false;
+                    Profiles.ApplyAccount(account);
                     // 新建的账号还不在列表里：这时才需要一次全量同步。
-                    return account is not null && Accounts.ApplyAccount(account);
+                    return Accounts.ApplyAccount(account);
                 }
 
             case "accountStatus.changed":
@@ -531,7 +545,9 @@ internal sealed class ShellViewModel : ObservableObject
                     // 状态事件只带状态字段，账号视图还需要出口和轮换信息；
                     // 交给 accounts.list 之外的轻量路径：直接更新那一行的状态部分。
                     var status = agentEvent.Payload.Deserialize(AppJsonContext.Default.AccountStatusEventDto);
-                    return status is not null && Accounts.ApplyStatus(status);
+                    if (status is null || !Accounts.ApplyStatus(status)) return false;
+                    Profiles.ApplyAccountEmail(status.Id, status.Email);
+                    return true;
                 }
 
             case "account.removed":
@@ -666,7 +682,9 @@ internal sealed class ShellViewModel : ObservableObject
                 throw new InvalidOperationException($"仍有阻塞项：{blockers}");
             }
 
-            await ShutdownAgentAsync("desktop-update");
+            // 安装更新仍必须坚持安全点语义：不绕过阻塞，也必须确认旧 Agent
+            // 已彻底退出后才能替换文件。这里只放宽用户主动“退出全部”。
+            await ShutdownAgentAsync("desktop-update", force: false, requireDisconnect: true);
             await Behavior.ApplyAndRestartAsync();
             ApplicationExitRequested?.Invoke(this, EventArgs.Empty);
         });

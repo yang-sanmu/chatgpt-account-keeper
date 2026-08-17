@@ -39,13 +39,20 @@ test("scan distinguishes linked and orphan profiles and reports cache bytes", ()
     fx.write("profiles/orphan/Default/Local Storage/data", 50);
     const manager = createProfileManager(fx);
 
-    const result = manager.scan([{ id: "a1", profileDir: "profiles/active" }]);
+    const result = manager.scan([{
+      id: "a1",
+      profileDir: "profiles/active",
+      email: "owner@example.com",
+    }]);
 
     assert.equal(result.totals.profiles, 2);
     assert.equal(result.totals.linked, 1);
     assert.equal(result.totals.orphans, 1);
     assert.equal(result.totals.cacheBytes, 300);
     assert.equal(result.totals.orphanBytes, 250);
+    assert.deepEqual(result.profiles.find((profile) => profile.name === "active").accountLabels, [
+      "owner@example.com",
+    ]);
     assert.equal(result.orphans[0].name, "orphan");
   } finally {
     fx.cleanup();

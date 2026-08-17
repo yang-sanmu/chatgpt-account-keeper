@@ -16,6 +16,7 @@ const OPTIONAL_CONFIG_FILES = Object.freeze([
   "config/selectors.json",
 ]);
 const PROFILE_LOCK_NAMES = /^(?:Singleton.*|DevToolsActivePort)$/i;
+const LEGACY_GENERATED_CONVERSATION_ID = /^topic_[a-z0-9]{8}$/i;
 
 function migrationError(code, message, cause = null) {
   const error = new Error(message, cause ? { cause } : undefined);
@@ -123,6 +124,54 @@ function pickExtra(value, known) {
 
 function finiteNumber(value, fallback, minimum = 0) {
   return Number.isFinite(value) && value >= minimum ? value : fallback;
+}
+
+function normalizeConversationSets(rawSets) {
+  const entries = Object.entries(rawSets).map(([id, value]) => [
+    id,
+    requireObject(value, `会话集 ${id}`),
+  ]);
+  const generatedBases = new Set(
+    entries
+      .filter(([id]) => LEGACY_GENERATED_CONVERSATION_ID.test(id))
+      .map(([, set]) => typeof set.topic === "string" && set.topic.trim()
+        ? set.topic.trim()
+        : "未命名会话")
+  );
+  const usedIds = new Set(
+    entries
+      .map(([id]) => id)
+      .filter((id) => !LEGACY_GENERATED_CONVERSATION_ID.test(id))
+  );
+  const idMap = new Map();
+  const conversationSets = entries.map(([legacyId, set], sortOrder) => {
+    let id = legacyId;
+    if (LEGACY_GENERATED_CONVERSATION_ID.test(legacyId)) {
+      const base = typeof set.topic === "string" && set.topic.trim()
+        ? set.topic.trim()
+        : "未命名会话";
+      id = base;
+      let suffix = 2;
+      while (usedIds.has(id)) {
+        id = `${base} (${suffix++})`;
+        // 另一条会话的上下文本身可能正好叫“foo (2)”。优先为它保留
+        // 原始内容标识，当前重复项继续递增，避免导入与数据库升级结果不同。
+        while (generatedBases.has(id) && id !== base) id = `${base} (${suffix++})`;
+      }
+      usedIds.add(id);
+    }
+    idMap.set(legacyId, id);
+    const minRounds = finiteNumber(set.minRounds, 2);
+    return {
+      id,
+      sortOrder,
+      topic: typeof set.topic === "string" ? set.topic : "",
+      minRounds,
+      maxRounds: finiteNumber(set.maxRounds, Math.max(8, minRounds), minRounds),
+      legacyExtra: pickExtra(set, new Set(["topic", "minRounds", "maxRounds"])),
+    };
+  });
+  return { conversationSets, idMap };
 }
 
 function deterministicMigrationGroupId(sourceKey, proxyId) {
@@ -353,13 +402,15 @@ function accountProfileName(account, profilesRoot) {
   return path.basename(absolute);
 }
 
-function normalizeData(config, profileTrees) {
+function normalizeData(config, profileTrees, rawHistories) {
   const rawAccounts = requireArray(config.accounts.accounts, "accounts.accounts");
   const rawGroups = config.groups ? requireArray(config.groups.groups ?? [], "groups.groups") : [];
   ensureUnique(rawAccounts, "id", "账号");
   ensureUnique(rawGroups, "id", "分组");
   const migrated = migrateLegacyAccountProxies(rawAccounts, rawGroups);
   ensureUnique(migrated.groups, "id", "迁移后的分组");
+  const sets = requireObject(config.conversations.sets ?? {}, "conversations.sets");
+  const { conversationSets, idMap: conversationIdMap } = normalizeConversationSets(sets);
 
   const activeProfiles = new Set(
     profileTrees.filter((tree) => tree.kind === "active").map((tree) => tree.name)
@@ -396,7 +447,7 @@ function normalizeData(config, profileTrees) {
       minWindows,
       maxWindows: finiteNumber(account.maxWindows, Math.max(3, minWindows), minWindows),
       rotation: {
-        currentSet: account.rotation?.currentSet ?? null,
+        currentSet: conversationIdMap.get(account.rotation?.currentSet) ?? null,
         windowsDone: finiteNumber(account.rotation?.windowsDone, 0),
         windowsTarget: finiteNumber(account.rotation?.windowsTarget, 0),
       },
@@ -446,20 +497,6 @@ function normalizeData(config, profileTrees) {
   }));
   const groupIds = new Set(groups.map((group) => group.id));
   for (const account of accounts) if (account.groupId && !groupIds.has(account.groupId)) account.groupId = null;
-
-  const sets = requireObject(config.conversations.sets ?? {}, "conversations.sets");
-  const conversationSets = Object.entries(sets).map(([id, value], sortOrder) => {
-    const set = requireObject(value, `会话集 ${id}`);
-    const minRounds = finiteNumber(set.minRounds, 2);
-    return {
-      id,
-      sortOrder,
-      topic: typeof set.topic === "string" ? set.topic : "",
-      minRounds,
-      maxRounds: finiteNumber(set.maxRounds, Math.max(8, minRounds), minRounds),
-      legacyExtra: pickExtra(set, new Set(["topic", "minRounds", "maxRounds"])),
-    };
-  });
 
   const rawSettings = requireObject(config.settings, "settings");
   const settingsKnown = new Set([
@@ -517,7 +554,32 @@ function normalizeData(config, profileTrees) {
       legacyExtra: pickExtra(status, statusKnown),
     }));
 
-  return { accounts, groups, conversationSets, proxyNodes, proxySettings, settings, statuses };
+  const histories = rawHistories.map((entry) => {
+    const legacySetName = entry.payload?.setName;
+    if (typeof legacySetName !== "string") return entry;
+    const mappedSetName = conversationIdMap.get(legacySetName)
+      ?? (LEGACY_GENERATED_CONVERSATION_ID.test(legacySetName)
+        ? (typeof entry.payload?.topic === "string" && entry.payload.topic.trim()
+          ? entry.payload.topic.trim()
+          : "未命名会话")
+        : null);
+    if (mappedSetName === null) return entry;
+    return {
+      ...entry,
+      payload: { ...entry.payload, setName: mappedSetName },
+    };
+  });
+
+  return {
+    accounts,
+    groups,
+    conversationSets,
+    proxyNodes,
+    proxySettings,
+    settings,
+    statuses,
+    histories,
+  };
 }
 
 /**
@@ -592,7 +654,7 @@ export function buildLegacyMigrationPlan(
     trashResidues,
     legacyOverrides: loaded.selectors ? { selectors: loaded.selectors } : {},
   };
-  const normalized = normalizeData(loaded, profileTrees);
+  const normalized = normalizeData(loaded, profileTrees, history.histories);
   const sourceFingerprint = fingerprintManifest(manifest);
   return Object.freeze({
     version: 1,
@@ -605,7 +667,6 @@ export function buildLegacyMigrationPlan(
     selectorsOverride: loaded.selectors ?? null,
     data: Object.freeze({
       ...normalized,
-      histories: history.histories,
       rejects: history.rejects,
     }),
     counts: Object.freeze({
@@ -616,7 +677,7 @@ export function buildLegacyMigrationPlan(
       conversationSets: normalized.conversationSets.length,
       proxyNodes: normalized.proxyNodes.length,
       statuses: normalized.statuses.length,
-      histories: history.histories.length,
+      histories: normalized.histories.length,
       rejects: history.rejects.length,
     }),
   });

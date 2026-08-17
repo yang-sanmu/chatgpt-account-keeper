@@ -28,7 +28,8 @@
                 <Border Margin="0,2" Padding="12,10" CornerRadius="8" Background="#0F172A" BorderBrush="#1E2D4A" BorderThickness="1">
                   <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12" VerticalAlignment="Center">
                     <StackPanel Spacing="2">
-                      <TextBlock Text="{Binding Name}" FontWeight="Bold" FontSize="12" Foreground="#F8FAFC" />
+                      <TextBlock Text="{Binding DisplayName}" FontWeight="Bold" FontSize="12" Foreground="#F8FAFC"
+                                 TextTrimming="CharacterEllipsis" />
                       <TextBlock Text="{Binding SizeText}" FontSize="10" Foreground="#94A3B8" />
                     </StackPanel>
                     <Border Grid.Column="1" Padding="8,3" CornerRadius="6" Background="#1E293B" VerticalAlignment="Center">
@@ -60,7 +61,7 @@
 
           <Border Padding="14" CornerRadius="10" Background="#0F172A" BorderBrush="#1E2D4A" BorderThickness="1">
             <StackPanel Spacing="6">
-              <TextBlock Text="{Binding Selected.Name}" FontSize="16" FontWeight="Bold" Foreground="#93C5FD" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding Selected.DisplayName}" FontSize="16" FontWeight="Bold" Foreground="#93C5FD" TextWrapping="Wrap" />
               <Grid ColumnDefinitions="*,*" Margin="0,4,0,0">
                 <StackPanel Spacing="2">
                   <TextBlock Text="状态" FontSize="10" Foreground="#64748B" />

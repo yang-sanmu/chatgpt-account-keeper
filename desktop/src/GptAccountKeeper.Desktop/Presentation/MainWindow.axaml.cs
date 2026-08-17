@@ -57,25 +57,25 @@ internal sealed partial class MainWindow : Window
         _closeFlowRunning = true;
         try
         {
-            var activity = await ViewModel.GetActivityAsync();
-            if (activity is not null && activity.Blockers.Length > 0)
+            try
             {
-                var descriptions = activity.Blockers
-                    .Select(blocker => $"• {BlockerName(blocker.Kind)}：{blocker.ResourceId ?? "未知资源"}");
-                await new NoticeDialog(
-                    "当前不能退出全部",
-                    $"请先关闭真实 Chrome、登录窗口或等待关键任务结束：\n\n{string.Join("\n", descriptions)}")
-                    .ShowDialog(this);
-                return;
+                await ViewModel.ShutdownAgentAsync();
             }
-
-            await ViewModel.ShutdownAgentAsync();
-            await SaveWindowPlacementAsync();
+            catch (Exception exception)
+            {
+                // 用户已经选择退出。Agent 停止失败需要记录，但不能再次把窗口锁住。
+                Debug.WriteLine($"Agent 退出失败：{exception}");
+            }
+            try
+            {
+                await SaveWindowPlacementAsync();
+            }
+            catch (Exception exception)
+            {
+                // 窗口位置属于非关键偏好，写入失败不应阻止程序退出。
+                Debug.WriteLine($"保存窗口位置失败：{exception}");
+            }
             _requestApplicationExit();
-        }
-        catch (Exception exception)
-        {
-            await new NoticeDialog("退出失败", $"Agent 未能安全停止：{exception.Message}").ShowDialog(this);
         }
         finally
         {
@@ -248,11 +248,4 @@ internal sealed partial class MainWindow : Window
         }
     }
 
-    private static string BlockerName(string kind) => kind switch
-    {
-        "open-page" => "账号 Chrome 窗口",
-        "operation" => "活动任务",
-        "account-busy" => "账号浏览器任务",
-        _ => kind,
-    };
 }

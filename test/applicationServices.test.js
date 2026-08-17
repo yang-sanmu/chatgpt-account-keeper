@@ -527,6 +527,26 @@ test("shutdown refuses to terminate while a profile resource is busy", async () 
   );
 });
 
+test("forced shutdown accepts owned browser activity for lifecycle cleanup", async () => {
+  let shutdownCalled = false;
+  const runtime = fakeRuntime({
+    isBusy: () => true,
+    lifecycle: {
+      shutdown: async () => {
+        shutdownCalled = true;
+      },
+    },
+  });
+  const services = new ApplicationServices({ runtime });
+
+  assert.deepEqual(
+    await services.execute(request("system.shutdown", { reason: "user-exit-all", force: true })),
+    { accepted: true }
+  );
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(shutdownCalled, true);
+});
+
 test("asynchronous shutdown failures are reported", async () => {
   let report;
   const reported = new Promise((resolve) => {
@@ -568,6 +588,20 @@ test("history entries expose structured question/answer rounds", async () => {
   assert.equal(entry.ok, true);
   assert.equal(entry.totalRounds, 1);
   assert.deepEqual(entry.rounds, [{ question: "问题", answer: "回答", at: null }]);
+});
+
+test("history resolves legacy topics from the configured context or prompt", async () => {
+  const runtime = fakeRuntime({
+    readHistory: () => [
+      { setName: "default", topic: "", ok: true, rounds: [] },
+      { ok: true, prompt: "旧版上下文指令", reply: "", rounds: [] },
+    ],
+  });
+  const services = new ApplicationServices({ runtime });
+
+  const entries = await services.invoke("history.query", { accountId: "acc", limit: 10 });
+  assert.equal(entries[0].topic, "hello");
+  assert.equal(entries[1].topic, "旧版上下文指令");
 });
 
 test("history append publishes an event instead of requiring a poll", async () => {

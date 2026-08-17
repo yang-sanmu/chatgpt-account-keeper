@@ -42,6 +42,35 @@ const HEADLESS_UA_HIGH_ENTROPY_HINTS = [
   "wow64",
   "formFactors",
 ];
+const activeBrowserContexts = new Set();
+let browserShutdownRequested = false;
+
+/**
+ * Agent 退出后不允许排队中的账号任务再启动 Chrome。已启动的持久化上下文
+ * 统一在这里登记，这样调度、巡检、登录和“打开网页”都能由同一条退出链释放。
+ */
+function beginBrowserShutdown() {
+  browserShutdownRequested = true;
+}
+
+export async function closeAllBrowserContexts({ timeoutMs = 3_000 } = {}) {
+  beginBrowserShutdown();
+  const contexts = [...activeBrowserContexts];
+  await Promise.all(contexts.map(async (context) => {
+    let timer;
+    const closing = Promise.resolve().then(() => context.close()).catch((error) => {
+      log.warn(`关闭 Chrome 上下文失败：${String(error?.message || error)}`);
+    });
+    await Promise.race([
+      closing,
+      new Promise((resolve) => {
+        timer = setTimeout(resolve, timeoutMs);
+      }),
+    ]);
+    clearTimeout(timer);
+  }));
+  return contexts.length;
+}
 
 export function normalizeHeadlessUserAgent(userAgent) {
   return String(userAgent ?? "").replace(/\bHeadlessChrome\//g, "Chrome/");
@@ -742,6 +771,8 @@ export async function initializeLaunchedContext(context, options = {}) {
  * @returns {Promise<{context, page}>}
  */
 export async function launchForAccount(account, opts = {}) {
+  if (browserShutdownRequested) throw new Error("Agent 正在退出，已取消启动 Chrome");
+
   // 调用可能在账号锁后排队很久（例如用户一直开着“打开网页”窗口）。
   // 真正启动时重新读取，避免期间改过的分组/分组代理没生效、任务走了旧出口。
   const liveAccount = getAccount(account?.id) ?? account;
@@ -780,6 +811,8 @@ export async function launchForAccount(account, opts = {}) {
     headlessIdentity = await configureHeadlessLaunch(launchArgs);
   }
 
+  if (browserShutdownRequested) throw new Error("Agent 正在退出，已取消启动 Chrome");
+
   let context;
   const debugPortNotBefore = Date.now();
   try {
@@ -788,9 +821,15 @@ export async function launchForAccount(account, opts = {}) {
     throw normalizeChromeLaunchError(e);
   }
 
+  activeBrowserContexts.add(context);
   context.once("close", () => {
-    scheduleProfileCacheMaintenance(liveAccount.id);
+    activeBrowserContexts.delete(context);
+    if (!browserShutdownRequested) scheduleProfileCacheMaintenance(liveAccount.id);
   });
+  if (browserShutdownRequested) {
+    await context.close().catch(() => {});
+    throw new Error("Agent 正在退出，已取消启动 Chrome");
+  }
 
   return initializeLaunchedContext(context, {
     headless,

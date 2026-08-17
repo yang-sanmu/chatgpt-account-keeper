@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 const SCHEMA_V1 = String.raw`
 CREATE TABLE IF NOT EXISTS command_receipts (
@@ -199,6 +199,158 @@ CREATE INDEX IF NOT EXISTS idx_operations_started ON operations(started_at DESC)
 CREATE INDEX IF NOT EXISTS idx_operations_state ON operations(state);
 `;
 
+// 早期原生端迁移把旧网页自动生成的 topic_xxxxxxxx 原样写进了主键，随后只能在
+// 各页面临时隐藏它。这里一次性修正已经完成过旧版导入的数据库；新导入则由迁移
+// 计划在写库前完成同样的映射。候选序号会避开已有人工标识和重复主题。
+const SCHEMA_V3 = String.raw`
+CREATE TEMP TABLE _legacy_conversation_id_map (
+  legacy_id TEXT PRIMARY KEY,
+  new_id TEXT NOT NULL UNIQUE
+);
+
+WITH RECURSIVE
+generated AS (
+  SELECT
+    id AS legacy_id,
+    CASE WHEN trim(topic) <> '' THEN trim(topic) ELSE '未命名会话' END AS base,
+    row_number() OVER (
+      PARTITION BY CASE WHEN trim(topic) <> '' THEN trim(topic) ELSE '未命名会话' END
+      ORDER BY sort_order, id
+    ) AS ordinal
+  FROM conversation_sets
+  WHERE EXISTS (SELECT 1 FROM migration_imports WHERE state = 'completed')
+    AND length(id) = 14
+    AND lower(substr(id, 1, 6)) = 'topic_'
+    AND substr(id, 7) NOT GLOB '*[^A-Za-z0-9]*'
+),
+candidate_numbers(number) AS (
+  VALUES (1)
+  UNION ALL
+  SELECT number + 1
+  FROM candidate_numbers
+  WHERE number <= (SELECT count(*) FROM conversation_sets)
+),
+candidate_names AS (
+  SELECT
+    bases.base,
+    candidate_numbers.number,
+    CASE
+      WHEN candidate_numbers.number = 1 THEN bases.base
+      ELSE bases.base || ' (' || candidate_numbers.number || ')'
+    END AS candidate
+  FROM (SELECT DISTINCT base FROM generated) AS bases
+  CROSS JOIN candidate_numbers
+),
+available AS (
+  SELECT
+    base,
+    candidate,
+    row_number() OVER (PARTITION BY base ORDER BY number) AS ordinal
+  FROM candidate_names
+  WHERE NOT EXISTS (
+    SELECT 1
+    FROM conversation_sets AS existing
+    WHERE existing.id = candidate_names.candidate
+      AND NOT (
+        length(existing.id) = 14
+        AND lower(substr(existing.id, 1, 6)) = 'topic_'
+        AND substr(existing.id, 7) NOT GLOB '*[^A-Za-z0-9]*'
+      )
+  )
+    AND (
+      candidate_names.candidate = candidate_names.base
+      OR NOT EXISTS (
+        SELECT 1
+        FROM generated AS reserved
+        WHERE reserved.base = candidate_names.candidate
+      )
+    )
+)
+INSERT INTO _legacy_conversation_id_map(legacy_id, new_id)
+SELECT generated.legacy_id, available.candidate
+FROM generated
+JOIN available USING (base, ordinal);
+
+UPDATE accounts
+SET rotation_current_set = (
+  SELECT new_id
+  FROM _legacy_conversation_id_map
+  WHERE legacy_id = accounts.rotation_current_set
+)
+WHERE length(rotation_current_set) = 14
+  AND lower(substr(rotation_current_set, 1, 6)) = 'topic_'
+  AND substr(rotation_current_set, 7) NOT GLOB '*[^A-Za-z0-9]*'
+  AND EXISTS (SELECT 1 FROM migration_imports WHERE state = 'completed');
+
+UPDATE scheduler_state
+SET last_result_json = json_set(
+  last_result_json,
+  '$.setName',
+  COALESCE(
+    (
+      SELECT new_id
+      FROM _legacy_conversation_id_map
+      WHERE legacy_id = json_extract(scheduler_state.last_result_json, '$.setName')
+    ),
+    CASE
+      WHEN trim(COALESCE(json_extract(last_result_json, '$.topic'), '')) <> ''
+        THEN trim(json_extract(last_result_json, '$.topic'))
+      ELSE '未命名会话'
+    END
+  )
+)
+WHERE json_valid(last_result_json)
+  AND length(json_extract(last_result_json, '$.setName')) = 14
+  AND lower(substr(json_extract(last_result_json, '$.setName'), 1, 6)) = 'topic_'
+  AND substr(json_extract(last_result_json, '$.setName'), 7) NOT GLOB '*[^A-Za-z0-9]*'
+  AND EXISTS (SELECT 1 FROM migration_imports WHERE state = 'completed');
+
+UPDATE run_history
+SET payload_json = json_set(
+  payload_json,
+  '$.setName',
+  COALESCE(
+    (
+      SELECT new_id
+      FROM _legacy_conversation_id_map
+      WHERE legacy_id = json_extract(run_history.payload_json, '$.setName')
+    ),
+    CASE
+      WHEN trim(COALESCE(json_extract(payload_json, '$.topic'), '')) <> ''
+        THEN trim(json_extract(payload_json, '$.topic'))
+      ELSE '未命名会话'
+    END
+  )
+)
+WHERE source = 'legacy'
+  AND json_valid(payload_json)
+  AND length(json_extract(payload_json, '$.setName')) = 14
+  AND lower(substr(json_extract(payload_json, '$.setName'), 1, 6)) = 'topic_'
+  AND substr(json_extract(payload_json, '$.setName'), 7) NOT GLOB '*[^A-Za-z0-9]*'
+  AND EXISTS (SELECT 1 FROM migration_imports WHERE state = 'completed');
+
+CREATE TEMP TABLE _legacy_conversation_rows AS
+SELECT
+  mapping.new_id AS id,
+  conversation_sets.sort_order,
+  conversation_sets.topic,
+  conversation_sets.min_rounds,
+  conversation_sets.max_rounds,
+  conversation_sets.legacy_extra_json
+FROM conversation_sets
+JOIN _legacy_conversation_id_map AS mapping ON mapping.legacy_id = conversation_sets.id;
+
+DELETE FROM conversation_sets
+WHERE id IN (SELECT legacy_id FROM _legacy_conversation_id_map);
+
+INSERT INTO conversation_sets(id, sort_order, topic, min_rounds, max_rounds, legacy_extra_json)
+SELECT id, sort_order, topic, min_rounds, max_rounds, legacy_extra_json
+FROM _legacy_conversation_rows;
+
+DROP TABLE _legacy_conversation_rows;
+DROP TABLE _legacy_conversation_id_map;
+`;
+
 export const MIGRATIONS = Object.freeze([
   Object.freeze({
     version: 1,
@@ -211,6 +363,12 @@ export const MIGRATIONS = Object.freeze([
     name: "durable-operations",
     sql: SCHEMA_V2,
     checksum: createHash("sha256").update(SCHEMA_V2).digest("hex"),
+  }),
+  Object.freeze({
+    version: 3,
+    name: "normalize-legacy-conversation-ids",
+    sql: SCHEMA_V3,
+    checksum: createHash("sha256").update(SCHEMA_V3).digest("hex"),
   }),
 ]);
 

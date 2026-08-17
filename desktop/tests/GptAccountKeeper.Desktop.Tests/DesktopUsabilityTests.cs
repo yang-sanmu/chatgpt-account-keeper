@@ -646,6 +646,108 @@ public sealed class DesktopUsabilityTests
     }
 
     [Fact]
+    public void LinkedProfileDisplaysItsAccountAndOnlyReportsMultipleLinksAsAnError()
+    {
+        var linked = new ProfileEntryDto
+        {
+            Name = "acc_internal_id",
+            Linked = true,
+            AccountIds = ["acc_internal_id"],
+            AccountLabels = ["owner@example.com"],
+        };
+        var invalidShared = new ProfileEntryDto
+        {
+            Name = "shared",
+            Linked = true,
+            AccountIds = ["one", "two"],
+            AccountLabels = ["one@example.com", "two@example.com"],
+        };
+        var unnamed = new ProfileEntryDto
+        {
+            Name = "acc_internal_id",
+            Linked = true,
+            AccountIds = ["acc_internal_id"],
+        };
+
+        Assert.Equal("owner@example.com", linked.DisplayName);
+        Assert.Equal("已关联", linked.StateText);
+        Assert.Equal("异常：关联 2 个账号", invalidShared.StateText);
+        Assert.Equal("未命名账号", unnamed.DisplayName);
+    }
+
+    [Fact]
+    public async Task ProfileScanFromAnOlderAgentWithoutAccountLabelsStillOpens()
+    {
+        await using var fixture = CreateShellFixture();
+        using var document = JsonDocument.Parse("""
+            {
+              "profiles": [
+                {
+                  "name": "acc_internal_id",
+                  "linked": true,
+                  "accountIds": ["acc_internal_id"],
+                  "busy": false,
+                  "bytes": 10,
+                  "files": 1,
+                  "cacheBytes": 0
+                }
+              ],
+              "orphans": [],
+              "totals": { "profiles": 1, "linked": 1, "orphans": 0 }
+            }
+            """);
+
+        fixture.Shell.Profiles.ApplyAccounts(
+        [
+            new AccountDto
+            {
+                Id = "acc_internal_id",
+                Email = "owner@example.com",
+            },
+        ]);
+        fixture.Shell.Profiles.ApplyScan(document.RootElement);
+
+        var profile = Assert.Single(fixture.Shell.Profiles.Items);
+        Assert.Equal("owner@example.com", profile.DisplayName);
+        Assert.Equal("已关联", profile.StateText);
+    }
+
+    [Fact]
+    public async Task ProfileStopsShowingThePreviousNameAfterTheAccountNameIsCleared()
+    {
+        await using var fixture = CreateShellFixture();
+        using var document = JsonDocument.Parse("""
+            {
+              "profiles": [
+                {
+                  "name": "profile-one",
+                  "linked": true,
+                  "accountIds": ["account-one"],
+                  "accountLabels": ["旧名称"],
+                  "busy": false,
+                  "bytes": 10,
+                  "files": 1,
+                  "cacheBytes": 0
+                }
+              ],
+              "orphans": [],
+              "totals": { "profiles": 1, "linked": 1, "orphans": 0 }
+            }
+            """);
+
+        fixture.Shell.Profiles.ApplyAccounts(
+        [
+            new AccountDto { Id = "account-one", Note = "旧名称" },
+        ]);
+        fixture.Shell.Profiles.ApplyScan(document.RootElement);
+        Assert.Equal("旧名称", Assert.Single(fixture.Shell.Profiles.Items).DisplayName);
+
+        fixture.Shell.Profiles.ApplyAccount(new AccountDto { Id = "account-one" });
+
+        Assert.Equal("未命名账号", Assert.Single(fixture.Shell.Profiles.Items).DisplayName);
+    }
+
+    [Fact]
     public async Task OperationSnapshotRetainsTerminalFailuresAndFilters()
     {
         await using var fixture = CreateShellFixture();

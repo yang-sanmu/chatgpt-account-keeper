@@ -164,7 +164,7 @@ internal sealed class ConversationsPageViewModel : PageViewModel
         var topic = Topic.Trim();
         if (name.Length == 0 || topic.Length == 0)
         {
-            _session.Toasts.Error("会话集名称和对话主题都不能为空");
+            _session.Toasts.Error("会话集标识和对话主题都不能为空");
             return;
         }
         if (ValidationError.Length > 0)

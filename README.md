@@ -126,20 +126,42 @@ Canonical JSON Schema 位于 `contracts/ipc-v1.schema.json`（消息信封/共�
 
 ### 发布新版本
 
-Windows 发布入口封装在 `scripts/publish-windows-release.ps1`。它要求当前 `main` 工作树干净且与 `origin/main` 一致，并把发布拆成三个显式阶段：
+有两条路径，产物布局一致，都要求 `main` 工作树干净且与 `origin/main` 一致。发布前先把版本号写进 `package.json`、`package-lock.json` 和桌面 csproj 的 `<Version>` 并提交 —— 二进制里嵌的是 HEAD 的 commit，脏工作树构建出的包无法由 tag 源码复现。
+
+**本地构建（不依赖 GitHub Actions）**
 
 ```powershell
-# 1. 构建候选包并下载到本地做 N-1 → N 安装验收（不创建 Release）
+# 1. 本地完成测试、NativeAOT publish、打包、SBOM、源码归档与校验和
+.\scripts\build-local-release.ps1 -Version 0.1.2
+
+# 2. 用 artifacts\Releases\ 里的 Setup.exe 完成 N-1 → N 安装验收后，
+#    打 tag 并创建 GitHub Draft Release
+.\scripts\publish-windows-release.ps1 -Version 0.1.2 -Mode UploadDraft -NMinusOneVerified
+
+# 3. 人工检查 Draft 后公开
+.\scripts\publish-windows-release.ps1 -Version 0.1.2 -Mode PublishDraft
+```
+
+`build-local-release.ps1` 需要 .NET SDK、Node、Git 和带「使用 C++ 的桌面开发」工作负载的 Visual Studio（NativeAOT 要用 MSVC 链接器）。`vpk` 和 `syft` 缺失时会自动安装/下载，Node 与 mihomo 按 `build/runtime-versions.json` 校验 SHA-256，syft 校验官方 checksums。已下载的文件会复用，重跑不必重新下载。
+
+常用开关：`-SkipTests`（同一 commit 上重跑时跳过测试）、`-SkipDelta`（不生成增量包）、`-AllowDirty`（脏工作树构建，仅用于丢弃性验证）。
+
+**GitHub Actions 构建**
+
+```powershell
+# 1. 触发工作流构建候选包并下载到本地验收（不创建 Release）
 .\scripts\publish-windows-release.ps1 -Version 0.1.2 -Mode Candidate
 
 # 2. 验收通过后，构建正式包并创建 GitHub Draft Release
 .\scripts\publish-windows-release.ps1 -Version 0.1.2 -Mode Release -NMinusOneVerified
 
-# 3. 人工检查 Draft 中的安装包、完整包、更新清单、SBOM 与源码归档后公开
+# 3. 人工检查后公开
 .\scripts\publish-windows-release.ps1 -Version 0.1.2 -Mode PublishDraft
 ```
 
-使用 `-WhatIf` 可以只验证本地状态并显示将触发的操作。`Candidate` 不会创建 Release；`Release` 只创建 Draft；只有 `PublishDraft` 会使版本进入客户端的稳定更新通道。
+公开仓库的 Actions 用量免费；如果 job 因 `account is locked due to a billing issue` 无法启动，那是账号级别的欠费锁（可能来自其他仓库或订阅），与本仓库用量无关，在 Settings → Billing 处理后即可恢复，期间用本地构建路径。
+
+使用 `-WhatIf` 可以只验证状态并显示将执行的操作。`Candidate` 不创建 Release；`UploadDraft` 和 `Release` 只创建 Draft；只有 `PublishDraft` 会使版本进入客户端的稳定更新通道。
 
 ## 过渡期旧入口
 

@@ -1,11 +1,14 @@
-[CmdletBinding(SupportsShouldProcess = $true)]
+﻿[CmdletBinding(SupportsShouldProcess = $true)]
 param(
     [Parameter(Mandatory = $true)]
     [ValidatePattern('^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$')]
     [string] $Version,
 
+    # Candidate/Release dispatch the GitHub Actions workflow. UploadDraft uploads
+    # artifacts already built on this machine by build-local-release.ps1, which is
+    # the only path that works while Actions is unavailable.
     [Parameter(Mandatory = $true)]
-    [ValidateSet('Candidate', 'Release', 'PublishDraft')]
+    [ValidateSet('Candidate', 'Release', 'UploadDraft', 'PublishDraft')]
     [string] $Mode,
 
     [switch] $NMinusOneVerified,
@@ -76,7 +79,9 @@ function Invoke-NativeCommand {
 function Assert-ReleaseSourceReady {
     param(
         [Parameter(Mandatory = $true)]
-        [string] $GitHubCli
+        [string] $GitHubCli,
+
+        [switch] $AllowExistingTag
     )
 
     $status = Invoke-NativeCommand -FilePath 'git.exe' -ArgumentList @('status', '--porcelain') -CaptureOutput
@@ -105,12 +110,14 @@ function Assert-ReleaseSourceReady {
         throw "Release $tag already exists. Use a new version number."
     }
 
-    $existingTag = Invoke-NativeCommand `
-        -FilePath 'git.exe' `
-        -ArgumentList @('ls-remote', '--tags', 'origin', "refs/tags/$tag") `
-        -CaptureOutput
-    if (-not [string]::IsNullOrWhiteSpace($existingTag.Output)) {
-        throw "Tag $tag already exists on origin. Use a new version number."
+    if (-not $AllowExistingTag) {
+        $existingTag = Invoke-NativeCommand `
+            -FilePath 'git.exe' `
+            -ArgumentList @('ls-remote', '--tags', 'origin', "refs/tags/$tag") `
+            -CaptureOutput
+        if (-not [string]::IsNullOrWhiteSpace($existingTag.Output)) {
+            throw "Tag $tag already exists on origin. Use a new version number."
+        }
     }
 }
 
@@ -166,6 +173,115 @@ function Invoke-ReleaseWorkflow {
     return $runId
 }
 
+function Get-RequiredAssetName {
+    $runtimeVersions = Get-Content (Join-Path $repositoryRoot 'build\runtime-versions.json') -Raw | ConvertFrom-Json
+    return @(
+        "GptAccountKeeper.Desktop-$Version-full.nupkg",
+        'GptAccountKeeper.Desktop-win-Setup.exe',
+        'RELEASES',
+        'releases.win.json',
+        "GptAccountKeeper.Desktop-$Version.spdx.json",
+        "chatgpt-account-keeper-$Version-source.zip",
+        "mihomo-v$($runtimeVersions.mihomo.version)-source.zip",
+        'SHA256SUMS.release.txt'
+    )
+}
+
+# Uploads artifacts produced locally by build-local-release.ps1. Creates the tag
+# and a draft Release, so nothing reaches update clients until PublishDraft runs.
+function Send-LocalBuild {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $GitHubCli
+    )
+
+    $releaseRoot = Join-Path $repositoryRoot 'artifacts\Releases'
+    $complianceRoot = Join-Path $repositoryRoot 'artifacts\compliance'
+    foreach ($directory in @($releaseRoot, $complianceRoot)) {
+        if (-not (Test-Path -LiteralPath $directory)) {
+            throw "${directory} does not exist. Run scripts\build-local-release.ps1 -Version $Version first."
+        }
+    }
+
+    # Only assets for this exact version may ship. A stale delta or full package
+    # left over from an earlier build would otherwise be published silently.
+    $candidates = @(
+        Get-ChildItem $releaseRoot -File | Where-Object {
+            $_.Name -in @(
+                'GptAccountKeeper.Desktop-win-Setup.exe',
+                'GptAccountKeeper.Desktop-win-Portable.zip',
+                'RELEASES',
+                'releases.win.json',
+                'assets.win.json'
+            ) -or $_.Name -like "*$Version*"
+        }
+        Get-ChildItem $complianceRoot -File
+    ) | Sort-Object FullName -Unique
+
+    $assetNames = @($candidates | ForEach-Object { $_.Name })
+    $missing = @(Get-RequiredAssetName | Where-Object { $_ -notin $assetNames })
+    if ($missing.Count -gt 0) {
+        throw "The local build is missing required assets: $($missing -join ', ')"
+    }
+
+    $stray = @($candidates | Where-Object {
+        $_.Name -match '\d+\.\d+\.\d+' -and $_.Name -notlike "*$Version*"
+    })
+    if ($stray.Count -gt 0) {
+        throw "artifacts contain files from another version: $(($stray | ForEach-Object { $_.Name }) -join ', '). Rebuild to clear them."
+    }
+
+    $setup = $candidates | Where-Object { $_.Name -eq 'GptAccountKeeper.Desktop-win-Setup.exe' } | Select-Object -First 1
+    $signature = (Get-AuthenticodeSignature -LiteralPath $setup.FullName).Status
+    Write-Host "Installer signature: ${signature} (unsigned is expected)"
+    Write-Host "Uploading $($candidates.Count) asset(s) for $tag :"
+    $candidates | ForEach-Object { Write-Host ("  {0,-46} {1,8:N1} MB" -f $_.Name, ($_.Length / 1MB)) }
+
+    if (-not $PSCmdlet.ShouldProcess("$Repository $tag", 'Create tag and draft GitHub Release from local artifacts')) {
+        return
+    }
+
+    $existingTag = Invoke-NativeCommand `
+        -FilePath 'git.exe' `
+        -ArgumentList @('ls-remote', '--tags', 'origin', "refs/tags/$tag") `
+        -CaptureOutput
+    if ([string]::IsNullOrWhiteSpace($existingTag.Output)) {
+        Invoke-NativeCommand -FilePath 'git.exe' -ArgumentList @('tag', '-a', $tag, '-m', "ChatGPT Account Keeper $Version") | Out-Null
+        Invoke-NativeCommand -FilePath 'git.exe' -ArgumentList @('push', 'origin', $tag) | Out-Null
+        Write-Host "Pushed tag $tag"
+    } else {
+        Write-Host "Tag $tag already exists on origin; reusing it."
+    }
+
+    $notes = @(
+        '本版本采用 GNU AGPL-3.0-only，安装包内附许可证、第三方组件声明、隐私说明与对应源码说明（`licenses/` 目录，也可在设置页「关于与许可」打开）。',
+        '',
+        '**安装包未经数字签名。** Windows 首次运行可能提示「未知发布者」，需点击「更多信息 → 仍要运行」。可用 `SHA256SUMS.release.txt` 核对下载完整性。',
+        '',
+        '附带项目与 mihomo 对应源码归档及 SPDX SBOM。'
+    ) -join [Environment]::NewLine
+    $notesFile = Join-Path ([IO.Path]::GetTempPath()) "keeper-notes-$Version.md"
+    [IO.File]::WriteAllText($notesFile, $notes, [Text.UTF8Encoding]::new($false))
+    try {
+        $arguments = @(
+            'release', 'create', $tag,
+            '--repo', $Repository,
+            '--title', "ChatGPT Account Keeper $Version",
+            '--draft',
+            '--notes-file', $notesFile
+        ) + @($candidates | ForEach-Object { $_.FullName })
+        Invoke-NativeCommand -FilePath $GitHubCli -ArgumentList $arguments | Out-Null
+    }
+    finally {
+        Remove-Item -LiteralPath $notesFile -Force -ErrorAction SilentlyContinue
+    }
+
+    Write-Host ''
+    Write-Host "Draft created: https://github.com/$Repository/releases/tag/$tag"
+    Write-Host 'Verify an installed N-1 -> N upgrade, then run:'
+    Write-Host "  .\scripts\publish-windows-release.ps1 -Version $Version -Mode PublishDraft"
+}
+
 function Publish-ReleaseDraft {
     param(
         [Parameter(Mandatory = $true)]
@@ -190,18 +306,7 @@ function Publish-ReleaseDraft {
     }
 
     $assetNames = @($release.assets | ForEach-Object { $_.name })
-    $runtimeVersions = Get-Content (Join-Path $repositoryRoot 'build\runtime-versions.json') -Raw | ConvertFrom-Json
-    $requiredAssets = @(
-        "GptAccountKeeper.Desktop-$Version-full.nupkg",
-        'GptAccountKeeper.Desktop-win-Setup.exe',
-        'RELEASES',
-        'releases.win.json',
-        "GptAccountKeeper.Desktop-$Version.spdx.json",
-        "chatgpt-account-keeper-$Version-source.zip",
-        "mihomo-v$($runtimeVersions.mihomo.version)-source.zip",
-        'SHA256SUMS.release.txt'
-    )
-    $missingAssets = @($requiredAssets | Where-Object { $_ -notin $assetNames })
+    $missingAssets = @(Get-RequiredAssetName | Where-Object { $_ -notin $assetNames })
     if ($missingAssets.Count -gt 0) {
         throw "Release $tag is missing required assets: $($missingAssets -join ', ')"
     }
@@ -227,11 +332,12 @@ function Publish-ReleaseDraft {
     Write-Host "Published: https://github.com/$Repository/releases/tag/$tag"
 }
 
-if ($Mode -eq 'Release' -and -not $NMinusOneVerified) {
-    throw 'Release mode requires -NMinusOneVerified after the installed previous version has been upgraded to this candidate with Agent restart and data intact.'
+$attestingModes = @('Release', 'UploadDraft')
+if ($Mode -in $attestingModes -and -not $NMinusOneVerified) {
+    throw "$Mode mode requires -NMinusOneVerified after the installed previous version has been upgraded to this candidate with Agent restart and data intact."
 }
-if ($Mode -ne 'Release' -and $NMinusOneVerified) {
-    throw '-NMinusOneVerified is only valid with -Mode Release.'
+if ($Mode -notin $attestingModes -and $NMinusOneVerified) {
+    throw "-NMinusOneVerified is only valid with -Mode $($attestingModes -join ' or ')."
 }
 
 $githubCli = Resolve-GitHubCli
@@ -242,6 +348,14 @@ try {
 
     if ($Mode -eq 'PublishDraft') {
         Publish-ReleaseDraft -GitHubCli $githubCli
+        return
+    }
+
+    if ($Mode -eq 'UploadDraft') {
+        # The tag is created here rather than beforehand, so the release-readiness
+        # check must not reject an already-existing tag the way dispatch does.
+        Assert-ReleaseSourceReady -GitHubCli $githubCli -AllowExistingTag
+        Send-LocalBuild -GitHubCli $githubCli
         return
     }
 

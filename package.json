@@ -2,6 +2,7 @@
   "name": "chatgpt-account-keeper",
   "version": "0.1.0-alpha.6",
   "description": "多 ChatGPT 网页账号会话管理与定时对话工具（手动登录 + 持久化会话态）",
+  "license": "AGPL-3.0-only",
   "type": "module",
   "bin": {
     "chatgpt-account-keeper": "src/cli.js"

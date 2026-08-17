@@ -7,6 +7,11 @@
     <ApplicationTitle>ChatGPT Account Keeper</ApplicationTitle>
     <ApplicationId>io.github.yang-sanmu.gptaccountkeeper</ApplicationId>
     <BundleIdentifier>io.github.yang-sanmu.gptaccountkeeper</BundleIdentifier>
+    <Product>ChatGPT Account Keeper</Product>
+    <Authors>yang-sanmu</Authors>
+    <Copyright>Copyright © 2026 yang-sanmu</Copyright>
+    <PackageLicenseExpression>AGPL-3.0-only</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/yang-sanmu/chatgpt-account-keeper</RepositoryUrl>
     <Version>0.1.0-alpha.6</Version>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     <PublishAot>true</PublishAot>
@@ -32,5 +37,9 @@
   <ItemGroup>
     <AvaloniaResource Include="Assets\**" />
     <None Include="Info.plist" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\..\LICENSE" Link="licenses\LICENSE" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="..\..\..\THIRD_PARTY_NOTICES.md" Link="licenses\THIRD_PARTY_NOTICES.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="..\..\..\PRIVACY.md" Link="licenses\PRIVACY.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="..\..\..\SOURCE.md" Link="licenses\SOURCE.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

@@ -19,7 +19,7 @@ internal sealed class SettingsPageViewModel : PageViewModel
     private readonly EditableField<bool> _profileAutoClean = new(true);
 
     public SettingsPageViewModel(AgentSession session, AppPaths paths)
-        : base("settings", "⚙", "设置", "调度、风控、桌面行为与更新")
+        : base("settings", "⚙", "设置", "调度、桌面行为、更新与许可")
     {
         _session = session;
         _paths = paths;
@@ -29,6 +29,7 @@ internal sealed class SettingsPageViewModel : PageViewModel
         OpenLogFileCommand = new AsyncRelayCommand(() => Reveal(_paths.AgentLogFile));
         CopyDataDirectoryCommand = new AsyncRelayCommand(() => CopyAsync(_paths.DataDirectory, "数据目录"));
         CopyLogPathCommand = new AsyncRelayCommand(() => CopyAsync(_paths.AgentLogFile, "日志路径"));
+        OpenLegalDocumentsCommand = new AsyncRelayCommand(() => Reveal(LegalDocumentsDirectory));
     }
 
     public ObservableCollection<CloseBehaviorOptionViewModel> CloseBehaviorOptions { get; } = [];
@@ -41,6 +42,7 @@ internal sealed class SettingsPageViewModel : PageViewModel
     public ICommand OpenLogFileCommand { get; }
     public ICommand CopyDataDirectoryCommand { get; }
     public ICommand CopyLogPathCommand { get; }
+    public ICommand OpenLegalDocumentsCommand { get; }
 
     /// <summary>“打开所在文件夹”和“复制路径”由窗口实现，避免 ViewModel 依赖顶层控件。</summary>
     public Func<string, Task>? RevealRequested { get; set; }
@@ -53,6 +55,8 @@ internal sealed class SettingsPageViewModel : PageViewModel
     public string DataDirectory => _paths.DataDirectory;
 
     public string AgentLogFile => _paths.AgentLogFile;
+
+    public string LegalDocumentsDirectory => Path.Combine(AppContext.BaseDirectory, "licenses");
 
     public string RuntimeMode => _paths.IsDevelopment
         ? "开发模式：使用独立数据目录和 IPC 通道，Agent 来自当前仓库"

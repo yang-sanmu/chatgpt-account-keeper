@@ -100,12 +100,13 @@ Canonical JSON Schema 位于 `contracts/ipc-v1.schema.json`（消息信封/共�
 `.github/workflows/windows-release.yml` 会：
 
 1. 运行完整 Node 测试和真实 NativeAOT publish。
-2. 下载固定版本的 Node 与 mihomo并校验 SHA-256。
+2. 下载固定版本的 Node 与 mihomo 并校验 SHA-256。
 3. 使用 `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1` 安装生产依赖。
 4. 拒绝 Chromium、`ms-playwright` 和旧 `public/` 管理页进入产物。
 5. 用私有 Node 对 staged Agent 执行 IPC/SQLite 启动烟测。
-6. 生成 SBOM，通过 VeloPack `GptAccountKeeper.Desktop` 打包。
-7. 稳定/草稿发行必须完成 Authenticode SHA-256 与可信时间戳签名；无证书只产生内部测试 artifact。
+6. 将项目许可证、第三方声明、隐私和源码说明写入安装包的 `licenses/`。
+7. 通过 VeloPack `GptAccountKeeper.Desktop` 打包。
+8. 生成 SBOM、项目与 mihomo 对应源码归档，以及 `SHA256SUMS.release.txt`。
 
 固定发行标识：
 
@@ -114,6 +115,31 @@ Canonical JSON Schema 位于 `contracts/ipc-v1.schema.json`（消息信封/共�
 - Bundle ID：`io.github.yang-sanmu.gptaccountkeeper`
 
 更新源是公开的 [GitHub Releases](https://github.com/yang-sanmu/chatgpt-account-keeper/releases)，客户端不含 GitHub Token。VeloPack 草稿不会被客户端看到，人工发布前应完成 N-1 → N 安装更新验收。
+
+### 无签名发布
+
+发行产物**不做 Authenticode 签名**。Windows SmartScreen 在首次下载或运行安装程序时可能提示"未知发布者"，用户需要点击"更多信息 → 仍要运行"；这对未签名软件是预期行为，不影响 VeloPack 自动更新（更新完整性由 `RELEASES` 中的 SHA 校验，与签名无关）。
+
+每个 Release 附带 `SHA256SUMS.release.txt`，用户可据此核对下载。
+
+如果以后配置了 `WINDOWS_SIGNING_CERTIFICATE_BASE64` 和 `WINDOWS_SIGNING_CERTIFICATE_PASSWORD` 两个 secret，工作流会自动改为签名打包并校验签名状态，发布流程本身不用改。
+
+### 发布新版本
+
+Windows 发布入口封装在 `scripts/publish-windows-release.ps1`。它要求当前 `main` 工作树干净且与 `origin/main` 一致，并把发布拆成三个显式阶段：
+
+```powershell
+# 1. 构建候选包并下载到本地做 N-1 → N 安装验收（不创建 Release）
+.\scripts\publish-windows-release.ps1 -Version 0.1.2 -Mode Candidate
+
+# 2. 验收通过后，构建正式包并创建 GitHub Draft Release
+.\scripts\publish-windows-release.ps1 -Version 0.1.2 -Mode Release -NMinusOneVerified
+
+# 3. 人工检查 Draft 中的安装包、完整包、更新清单、SBOM 与源码归档后公开
+.\scripts\publish-windows-release.ps1 -Version 0.1.2 -Mode PublishDraft
+```
+
+使用 `-WhatIf` 可以只验证本地状态并显示将触发的操作。`Candidate` 不会创建 Release；`Release` 只创建 Draft；只有 `PublishDraft` 会使版本进入客户端的稳定更新通道。
 
 ## 过渡期旧入口
 
@@ -124,6 +150,18 @@ npm run start:legacy
 ```
 
 它会在 `127.0.0.1:5173` 启动旧 Express 页面，不属于最终安装包。生产 staging 脚本明确排除 `server.js`、`cli.js` 与 `public/`。
+
+## 许可证、隐私与源码
+
+Copyright © 2026 yang-sanmu。项目代码以 [GNU Affero General Public License v3.0 only](LICENSE) 发布。通过网络向用户提供修改版程序功能时，AGPL 第 13 条要求向这些用户提供相应版本的完整对应源码。
+
+- [第三方组件与许可证](THIRD_PARTY_NOTICES.md)
+- [隐私政策](PRIVACY.md)
+- [对应源码与构建信息](SOURCE.md)
+
+这些说明随安装包复制到 `licenses/`，也可在应用内"设置 → 关于与许可"打开。AGPL 不会把第三方组件改成 AGPL；Node.js、mihomo、Playwright、Avalonia 等仍各自遵循上游许可证。
+
+本项目是非官方个人项目，与 OpenAI、Google 或其他服务提供方无隶属、赞助或背书关系。ChatGPT、OpenAI 和 Google Chrome 等名称仅用于说明兼容对象。
 
 ## 安全与限制
 

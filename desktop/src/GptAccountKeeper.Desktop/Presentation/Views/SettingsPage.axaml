@@ -183,8 +183,22 @@
 
             <Border Padding="12" Background="#0F172A" BorderBrush="#1E2D4A" BorderThickness="1" CornerRadius="8">
               <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#94A3B8" LineHeight="16"
-                         Text="🔒 安装更新前会自动让 Agent 安全排空：所有打开的网页 Chrome 窗口和正在运行的任务均安全结束后才进行升级，绝不强杀进程。" />
+                         Text="🔒 安装更新前 Agent 必须先排空：仍有 Chrome 窗口或关键任务时会拒绝安装，调度任务最多等待 60 秒，超时则放弃本次升级并恢复原状态，不会强杀任务。" />
             </Border>
+          </StackPanel>
+        </Border>
+
+        <!-- 关于、许可与隐私 -->
+        <Border Classes="card" Padding="20">
+          <StackPanel Spacing="11">
+            <TextBlock Text="关于与许可" FontSize="16" FontWeight="Bold" Foreground="#F8FAFC" />
+            <TextBlock Text="ChatGPT Account Keeper" FontSize="13" FontWeight="SemiBold" Foreground="#93C5FD" />
+            <TextBlock Text="GNU AGPL-3.0-only · 非官方个人项目，与 OpenAI、Google 无隶属或背书关系。"
+                       TextWrapping="Wrap" FontSize="11" Foreground="#CBD5E1" LineHeight="16" />
+            <TextBlock Text="安装包附带项目许可证、第三方组件声明、隐私说明与对应源码说明。安装包未经数字签名，Windows 首次运行可能显示 SmartScreen 提示。"
+                       TextWrapping="Wrap" FontSize="11" Foreground="#94A3B8" LineHeight="16" />
+            <Button Content="📂 打开许可与政策目录" HorizontalAlignment="Left" Padding="10,5" FontSize="11"
+                    Command="{Binding OpenLegalDocumentsCommand}" />
           </StackPanel>
         </Border>
       </StackPanel>

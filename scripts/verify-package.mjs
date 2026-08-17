@@ -65,6 +65,10 @@ const requiredPatterns = [
   /^licenses\/mihomo-GPL-3\.0\.txt$/i,
   /^licenses\/Node\.js-LICENSE\.txt$/i,
   /^licenses\/runtime-versions\.json$/i,
+  /^licenses\/LICENSE$/i,
+  /^licenses\/THIRD_PARTY_NOTICES\.md$/i,
+  /^licenses\/PRIVACY\.md$/i,
+  /^licenses\/SOURCE\.md$/i,
 ];
 const missing = requiredPatterns.filter((pattern) =>
   !relativeFiles.some((file) => pattern.test(file))
@@ -77,6 +81,13 @@ if (missing.length) {
 
 const agentPackage = JSON.parse(fs.readFileSync(path.join(root, "agent", "package.json"), "utf8"));
 const agentLock = JSON.parse(fs.readFileSync(path.join(root, "agent", "package-lock.json"), "utf8"));
+if (
+  agentPackage.license !== "AGPL-3.0-only" ||
+  agentLock.packages?.[""]?.license !== "AGPL-3.0-only"
+) {
+  console.error("Release Agent metadata must declare AGPL-3.0-only.");
+  process.exit(1);
+}
 if (
   expectedVersion &&
   (agentPackage.version !== expectedVersion ||

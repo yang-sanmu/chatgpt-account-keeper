@@ -90,6 +90,16 @@ Copy-Item -LiteralPath $mihomoFile -Destination (Join-Path $agentBin 'mihomo.exe
 Copy-Item -LiteralPath $mihomoLicenseFile -Destination (Join-Path $licenseRoot 'mihomo-GPL-3.0.txt')
 Copy-Item -LiteralPath (Join-Path $repositoryRoot 'build\runtime-versions.json') -Destination (Join-Path $licenseRoot 'runtime-versions.json')
 
+$legalDocuments = @(
+    'LICENSE',
+    'THIRD_PARTY_NOTICES.md',
+    'PRIVACY.md',
+    'SOURCE.md'
+)
+foreach ($document in $legalDocuments) {
+    Copy-Item -LiteralPath (Join-Path $repositoryRoot $document) -Destination (Join-Path $licenseRoot $document) -Force
+}
+
 $previousSkip = $env:PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD
 $env:PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = '1'
 try {

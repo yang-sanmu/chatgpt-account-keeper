@@ -63,7 +63,7 @@ internal sealed class CloseChoiceDialog : Window
                     },
                     new TextBlock
                     {
-                        Text = "隐藏到托盘会保留 Agent、自动对话和巡检；退出全部会先检查正在使用的 Chrome 与关键任务，再安全停止 Agent。可在设置中记住默认行为。",
+                        Text = "隐藏到托盘会保留 Agent、自动对话和巡检；退出全部会请求 Agent 关闭本程序管理的 Chrome、结束任务并完成数据库检查点，未能在数秒内收尾的任务会被中止。可在设置中记住默认行为。",
                         TextWrapping = TextWrapping.Wrap,
                         Foreground = Palette.TextSecondary,
                         LineHeight = 18,

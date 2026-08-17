@@ -1,4 +1,4 @@
-name: Windows signed release candidate
+name: Windows release candidate
 
 on:
   push:
@@ -10,10 +10,10 @@ on:
         description: SemVer without the v prefix
         required: true
         type: string
-      internal_unsigned:
-        description: Build an unsigned internal artifact (never upload to Releases)
+      publish_draft:
+        description: Upload to a GitHub draft Release (leave false to keep the build as a workflow artifact only)
         required: true
-        default: true
+        default: false
         type: boolean
       n_minus_one_verified:
         description: Confirm an installed N-1 to N update run completed with Agent restart and data intact
@@ -61,14 +61,21 @@ jobs:
           }
           "version=$version" >> $env:GITHUB_OUTPUT
 
-      - name: Require signing credentials for distributable builds
-        if: github.ref_type == 'tag' || inputs.internal_unsigned == false
+      # Signing is optional. Releases are published unsigned unless a maintainer certificate
+      # happens to be configured, so a missing certificate is reported and never fatal.
+      - name: Report signing mode
         shell: pwsh
         run: |
           if ([string]::IsNullOrWhiteSpace($env:SIGNING_CERTIFICATE_BASE64) -or
               [string]::IsNullOrWhiteSpace($env:SIGNING_CERTIFICATE_PASSWORD)) {
-            throw 'Stable/draft release builds require Authenticode signing credentials.'
+            Write-Host 'No signing certificate configured: building UNSIGNED artifacts.'
+            Write-Host 'Windows SmartScreen will warn on first run of the installer and main executable.'
+            'signed=false' >> $env:GITHUB_OUTPUT
+          } else {
+            Write-Host 'Signing certificate present: artifacts will be Authenticode signed.'
+            'signed=true' >> $env:GITHUB_OUTPUT
           }
+        id: signing
 
       - name: Install dependencies and test
         run: |
@@ -160,8 +167,8 @@ jobs:
             --outputDir artifacts/Releases `
             --signParams $signParams
 
-      - name: Create unsigned internal VeloPack package
-        if: env.SIGNING_CERTIFICATE_BASE64 == '' && inputs.internal_unsigned == true
+      - name: Create unsigned VeloPack package
+        if: env.SIGNING_CERTIFICATE_BASE64 == ''
         run: >-
           vpk pack
           --packId GptAccountKeeper.Desktop
@@ -185,20 +192,58 @@ jobs:
             }
           }
 
+      # The SBOM lands in artifacts/compliance, not artifacts/Releases: `vpk upload github`
+      # only publishes the files it recognises as VeloPack output, so anything extra left in
+      # artifacts/Releases would silently never reach the Release.
+      - name: Create compliance directory
+        shell: pwsh
+        run: New-Item -ItemType Directory artifacts/compliance -Force | Out-Null
+
       - name: Generate release SBOM
         uses: anchore/sbom-action@v0
         with:
           path: artifacts/stage
           format: spdx-json
-          output-file: artifacts/Releases/GptAccountKeeper.Desktop-${{ steps.version.outputs.version }}.spdx.json
+          output-file: artifacts/compliance/GptAccountKeeper.Desktop-${{ steps.version.outputs.version }}.spdx.json
 
-      - name: Upload signed assets to a GitHub draft
-        # Tag builds intentionally stop at the signed artifact. Publishing remains a manual action
-        # until the installed N-1 -> N candidate has been exercised and explicitly attested.
+      - name: Bundle corresponding source and release checksums
+        shell: pwsh
+        run: |
+          $version = '${{ steps.version.outputs.version }}'
+          $versions = Get-Content build/runtime-versions.json -Raw | ConvertFrom-Json
+          New-Item -ItemType Directory artifacts/compliance -Force | Out-Null
+
+          git archive --format=zip --output "artifacts/compliance/chatgpt-account-keeper-$version-source.zip" HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'Project source archive generation failed' }
+
+          $mihomoSource = "artifacts/compliance/mihomo-v$($versions.mihomo.version)-source.zip"
+          Invoke-WebRequest `
+            "https://github.com/MetaCubeX/mihomo/archive/refs/tags/v$($versions.mihomo.version).zip" `
+            -OutFile $mihomoSource
+
+          $releaseFiles = @(
+            Get-ChildItem artifacts/Releases -File | Where-Object {
+              $_.Name -in @('GptAccountKeeper.Desktop-win-Setup.exe', 'RELEASES', 'releases.win.json') -or
+              $_.Name -like "*$version*"
+            }
+            Get-ChildItem artifacts/compliance -File
+          ) | Sort-Object Name
+          if ($releaseFiles.Count -eq 0) { throw 'No release files were available for checksums' }
+          $checksumLines = $releaseFiles | ForEach-Object {
+            "{0}  {1}" -f (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), $_.Name
+          }
+          [IO.File]::WriteAllLines(
+            (Join-Path (Resolve-Path artifacts/compliance) 'SHA256SUMS.release.txt'),
+            $checksumLines,
+            [Text.UTF8Encoding]::new($false))
+
+      # Tag builds intentionally stop at the artifact. Publishing remains a manual action
+      # until the installed N-1 -> N candidate has been exercised and explicitly attested.
+      # Signing is not required: unsigned packages upload the same way.
+      - name: Upload package assets to a GitHub draft
         if: >-
-          env.SIGNING_CERTIFICATE_BASE64 != '' &&
           github.event_name == 'workflow_dispatch' &&
-          inputs.internal_unsigned == false &&
+          inputs.publish_draft == true &&
           inputs.n_minus_one_verified == true
         run: >-
           vpk upload github
@@ -208,19 +253,36 @@ jobs:
           --tag v${{ steps.version.outputs.version }}
           --releaseName "ChatGPT Account Keeper ${{ steps.version.outputs.version }}"
 
+      - name: Upload source and checksum assets to draft
+        if: >-
+          github.event_name == 'workflow_dispatch' &&
+          inputs.publish_draft == true &&
+          inputs.n_minus_one_verified == true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $assets = Get-ChildItem artifacts/compliance -File | Select-Object -ExpandProperty FullName
+          if ($assets.Count -eq 0) { throw 'No compliance assets were generated' }
+          gh release upload v${{ steps.version.outputs.version }} @assets `
+            --repo ${{ github.repository }} `
+            --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'Compliance asset upload failed' }
+
       - name: Report why release upload was withheld
         if: >-
-          env.SIGNING_CERTIFICATE_BASE64 != '' &&
           !(github.event_name == 'workflow_dispatch' &&
-            inputs.internal_unsigned == false &&
+            inputs.publish_draft == true &&
             inputs.n_minus_one_verified == true)
         shell: pwsh
-        run: Write-Host 'Signed candidate retained as a workflow artifact; GitHub Release upload requires an attested installed N-1 -> N run.'
+        run: Write-Host 'Candidate retained as a workflow artifact; GitHub Release upload requires publish_draft and an attested installed N-1 -> N run.'
 
       - uses: actions/upload-artifact@v4
         with:
           name: GptAccountKeeper.Desktop-win-x64-${{ steps.version.outputs.version }}
-          path: artifacts/Releases
+          path: |
+            artifacts/Releases
+            artifacts/compliance
           if-no-files-found: error
 
       - name: Remove signing material

@@ -25,11 +25,15 @@ function fixture() {
   fs.writeFileSync(path.join(dir, "agent", "src", "agent", "launcher.js"), "agent");
   fs.writeFileSync(
     path.join(dir, "agent", "package.json"),
-    JSON.stringify({ name: "fixture", version: "1.2.3" })
+    JSON.stringify({ name: "fixture", version: "1.2.3", license: "AGPL-3.0-only" })
   );
   fs.writeFileSync(
     path.join(dir, "agent", "package-lock.json"),
-    JSON.stringify({ name: "fixture", version: "1.2.3", packages: { "": { version: "1.2.3" } } })
+    JSON.stringify({
+      name: "fixture",
+      version: "1.2.3",
+      packages: { "": { version: "1.2.3", license: "AGPL-3.0-only" } },
+    })
   );
   fs.writeFileSync(path.join(dir, "agent", "contracts", "ipc-v1.schema.json"), "{}");
   fs.writeFileSync(path.join(dir, "agent", "contracts", "ipc-v1.methods.schema.json"), "{}");
@@ -41,6 +45,9 @@ function fixture() {
   fs.writeFileSync(path.join(dir, "licenses", "mihomo-GPL-3.0.txt"), "gpl");
   fs.writeFileSync(path.join(dir, "licenses", "Node.js-LICENSE.txt"), "node license");
   fs.writeFileSync(path.join(dir, "licenses", "runtime-versions.json"), "{}");
+  for (const document of ["LICENSE", "THIRD_PARTY_NOTICES.md", "PRIVACY.md", "SOURCE.md"]) {
+    fs.writeFileSync(path.join(dir, "licenses", document), document);
+  }
   fs.writeFileSync(path.join(dir, "GptAccountKeeper.Desktop.exe"), "desktop");
   return dir;
 }
@@ -81,6 +88,15 @@ test("release verifier rejects a package without the site selectors", (t) => {
   const result = spawnSync(process.execPath, [script, dir], { encoding: "utf8" });
   assert.equal(result.status, 1);
   assert.match(result.stderr, /selectors/i);
+});
+
+test("release verifier rejects a package without the project license", (t) => {
+  const dir = fixture();
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.rmSync(path.join(dir, "licenses", "LICENSE"));
+  const result = spawnSync(process.execPath, [script, dir], { encoding: "utf8" });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /LICENSE/i);
 });
 
 test("release verifier rejects a staged Agent whose version differs from the release", (t) => {

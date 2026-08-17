@@ -25,6 +25,7 @@ $ErrorActionPreference = 'Stop'
 
 $workflow = 'windows-release.yml'
 $tag = "v$Version"
+$script:ReplaceExistingDraft = $false
 $repositoryRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 
 function Resolve-GitHubCli {
@@ -103,11 +104,18 @@ function Assert-ReleaseSourceReady {
 
     $existingRelease = Invoke-NativeCommand `
         -FilePath $GitHubCli `
-        -ArgumentList @('release', 'view', $tag, '--repo', $Repository, '--json', 'tagName') `
+        -ArgumentList @('release', 'view', $tag, '--repo', $Repository, '--json', 'tagName,isDraft') `
         -CaptureOutput `
         -AllowFailure
     if ($existingRelease.ExitCode -eq 0) {
-        throw "Release $tag already exists. Use a new version number."
+        # A leftover draft is recoverable: re-uploading replaces its assets and
+        # nothing has reached update clients yet. A public release is not.
+        $isDraft = ($existingRelease.Output | ConvertFrom-Json).isDraft
+        if (-not ($AllowExistingTag -and $isDraft)) {
+            throw "Release $tag already exists. Use a new version number."
+        }
+        Write-Warning "Draft release $tag already exists; its assets will be replaced."
+        $script:ReplaceExistingDraft = $true
     }
 
     if (-not $AllowExistingTag) {
@@ -263,13 +271,21 @@ function Send-LocalBuild {
     $notesFile = Join-Path ([IO.Path]::GetTempPath()) "keeper-notes-$Version.md"
     [IO.File]::WriteAllText($notesFile, $notes, [Text.UTF8Encoding]::new($false))
     try {
-        $arguments = @(
-            'release', 'create', $tag,
-            '--repo', $Repository,
-            '--title', "ChatGPT Account Keeper $Version",
-            '--draft',
-            '--notes-file', $notesFile
-        ) + @($candidates | ForEach-Object { $_.FullName })
+        if ($script:ReplaceExistingDraft) {
+            $arguments = @(
+                'release', 'upload', $tag,
+                '--repo', $Repository,
+                '--clobber'
+            ) + @($candidates | ForEach-Object { $_.FullName })
+        } else {
+            $arguments = @(
+                'release', 'create', $tag,
+                '--repo', $Repository,
+                '--title', "ChatGPT Account Keeper $Version",
+                '--draft',
+                '--notes-file', $notesFile
+            ) + @($candidates | ForEach-Object { $_.FullName })
+        }
         Invoke-NativeCommand -FilePath $GitHubCli -ArgumentList $arguments | Out-Null
     }
     finally {

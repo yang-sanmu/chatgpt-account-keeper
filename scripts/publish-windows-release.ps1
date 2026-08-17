@@ -56,8 +56,23 @@ function Invoke-NativeCommand {
     )
 
     if ($CaptureOutput) {
-        $output = & $FilePath @ArgumentList 2>&1
-        $exitCode = $LASTEXITCODE
+        # Windows PowerShell wraps a native command's stderr in an ErrorRecord, so
+        # under $ErrorActionPreference = 'Stop' the 2>&1 redirect turns any stderr
+        # output into a terminating error before -AllowFailure can be honoured.
+        # `gh release view` writes "release not found" to stderr for a version that
+        # does not exist yet, which is the normal case for a new release.
+        $previousPreference = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            $output = & $FilePath @ArgumentList 2>&1
+            $exitCode = $LASTEXITCODE
+        }
+        finally {
+            $ErrorActionPreference = $previousPreference
+        }
+        $output = @($output | ForEach-Object {
+            if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.ToString() } else { $_ }
+        })
         if (-not $AllowFailure -and $exitCode -ne 0) {
             throw "Command failed with exit code ${exitCode}: $FilePath $($ArgumentList -join ' ')`n$($output -join [Environment]::NewLine)"
         }

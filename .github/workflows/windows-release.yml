@@ -1,9 +1,10 @@
 name: Windows release candidate
 
+# Only workflow_dispatch. Both release paths create the tag *after* the package
+# has been built and uploaded, so a tag trigger would rebuild a version that is
+# already in the win channel -- which VeloPack refuses, failing every release
+# with a misleading "equal or greater version" error.
 on:
-  push:
-    tags:
-      - "v*"
   workflow_dispatch:
     inputs:
       version:
@@ -51,11 +52,7 @@ jobs:
         id: version
         shell: pwsh
         run: |
-          if ('${{ github.ref_type }}' -eq 'tag') {
-            $version = '${{ github.ref_name }}'.TrimStart('v')
-          } else {
-            $version = '${{ inputs.version }}'
-          }
+          $version = '${{ inputs.version }}'
           if ($version -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$') {
             throw "Version must be SemVer: $version"
           }

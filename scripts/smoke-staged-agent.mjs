@@ -17,7 +17,10 @@ const launcher = path.join(stage, "agent", "src", "agent", "launcher.js");
 const suffix = `${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 const endpoint = process.platform === "win32"
   ? `\\\\.\\pipe\\gpt-account-keeper-stage-smoke-${suffix}`
-  : path.join(os.tmpdir(), `gpt-account-keeper-stage-smoke-${suffix}.sock`);
+  // macOS counts the resolved runner temp directory against sockaddr_un.sun_path.
+  // Keep release-smoke endpoints deliberately short just like the production
+  // endpoint resolver does.
+  : path.join("/tmp", `gak-smoke-${process.pid}-${randomUUID().slice(0, 8)}.sock`);
 const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "keeper-staged-agent-"));
 const dataRoot = path.join(temporaryRoot, "data");
 const expectedAgentVersion = JSON.parse(

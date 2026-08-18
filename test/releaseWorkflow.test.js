@@ -8,6 +8,10 @@ import YAML from "yaml";
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const workflowPath = path.join(repositoryRoot, ".github", "workflows", "windows-release.yml");
 const source = fs.readFileSync(workflowPath, "utf8");
+const smokeSource = fs.readFileSync(
+  path.join(repositoryRoot, "scripts", "smoke-staged-agent.mjs"),
+  "utf8",
+);
 const workflow = YAML.parse(source);
 
 test("release workflow builds every supported RID and aggregates once", () => {
@@ -28,4 +32,10 @@ test("only the aggregate job may create a GitHub release", () => {
   assert.match(source, /UNSIGNED-win-x64/);
   assert.match(source, /UNSIGNED-\$\{\{ matrix\.rid \}\}/);
   assert.match(source, /UNSIGNED-linux-x64/);
+});
+
+test("Unix release smoke and AppImage compression remain runnable on native hosts", () => {
+  assert.match(smokeSource, /path\.join\("\/tmp", `gak-smoke-/);
+  assert.match(source, /--compression zstd/);
+  assert.doesNotMatch(source, /--compression xz/);
 });

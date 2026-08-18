@@ -36,6 +36,6 @@ test("only the aggregate job may create a GitHub release", () => {
 
 test("Unix release smoke and AppImage compression remain runnable on native hosts", () => {
   assert.match(smokeSource, /path\.join\("\/tmp", `gak-smoke-/);
-  assert.match(source, /--compression zstd/);
+  assert.match(source, /--compression gzip/);
   assert.doesNotMatch(source, /--compression xz/);
 });

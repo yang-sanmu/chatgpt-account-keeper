@@ -633,7 +633,7 @@ jobs:
           --mainExe GptAccountKeeper.Desktop
           --icon desktop/src/GptAccountKeeper.Desktop/icons/hicolor/512x512/apps/gpt-account-keeper.png
           --categories 'Utility;Network'
-          --compression zstd
+          --compression gzip
           --runtime linux-x64
           --channel linux-x64
           --outputDir artifacts/Releases

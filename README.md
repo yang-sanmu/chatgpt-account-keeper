@@ -130,6 +130,7 @@ Canonical JSON Schema 位于 `contracts/ipc-v1.schema.json`（消息信封/共�
 
 - **[远端发布流程](docs/RELEASE_REMOTE.md)** —— 用 GitHub Actions 构建。日常首选。
 - **[本地发布流程](docs/RELEASE_LOCAL.md)** —— 在本机构建。Actions 不可用时的备用路径。
+- **[N-1 → N 验收](docs/RELEASE_VERIFY.md)** —— 两条路径共用的升级验收清单。
 
 两者都以 Draft Release 为中间态，只有显式执行 `-Mode PublishDraft` 才会让版本进入客户端的稳定更新通道。
 

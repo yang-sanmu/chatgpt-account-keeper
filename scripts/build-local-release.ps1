@@ -395,10 +395,15 @@ try {
 
     Write-Host ''
     Write-Host '  Package assets:' -ForegroundColor Green
-    Get-ChildItem $releaseRoot -File | Where-Object { $_.Name -notlike "*${Version}*" -or $true } |
-        Sort-Object Name | ForEach-Object {
-            Write-Host ("    {0,-46} {1,8:N1} MB" -f $_.Name, ($_.Length / 1MB))
-        }
+    # The previous release downloaded for delta generation also lives here, so
+    # flag anything that is not part of this version rather than hiding it.
+    Get-ChildItem $releaseRoot -File | Sort-Object Name | ForEach-Object {
+        $isOtherVersion = $_.Name -like 'GptAccountKeeper.Desktop-*' -and
+            $_.Name -match '\d+\.\d+\.\d+' -and
+            $_.Name -notlike "*${Version}*"
+        $note = if ($isOtherVersion) { '  <- delta source, not uploaded' } else { '' }
+        Write-Host ("    {0,-46} {1,8:N1} MB{2}" -f $_.Name, ($_.Length / 1MB), $note)
+    }
     Write-Host '  Compliance assets:' -ForegroundColor Green
     Get-ChildItem $complianceRoot -File | Sort-Object Name | ForEach-Object {
         Write-Host ("    {0,-46} {1,8:N1} MB" -f $_.Name, ($_.Length / 1MB))

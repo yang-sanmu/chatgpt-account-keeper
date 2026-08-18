@@ -77,14 +77,9 @@ git push origin main
 
 ### 3. N-1 → N 验收（手动）
 
-这是公开发布前唯一的人工闸门，不要跳过。
+这是公开发布前唯一的人工闸门，不要跳过。完整清单和原理见 **[N-1 → N 验收](RELEASE_VERIFY.md)**。
 
-1. 安装**当前线上版本**，正常使用一段时间（加账号、跑一次任务）
-2. 用 `artifacts\Releases\GptAccountKeeper.Desktop-win-Setup.exe` 覆盖安装
-3. 确认：
-   - 账号、Profile、历史、代理配置都还在
-   - Agent 正常重启，调度恢复
-   - 设置页「关于与许可」能打开 `licenses/`，四个文档都在
+简版：装当前线上版本 → 造出真实数据（账号、登录、跑一次任务）→ 用 `artifacts\Releases\GptAccountKeeper.Desktop-win-Setup.exe` **覆盖安装**（不要先卸载）→ 确认账号 / Profile / 登录态 / 历史 / 代理都在，Agent 正常重启。
 
 首次运行会出现 SmartScreen「未知发布者」提示，点「更多信息 → 仍要运行」。这是未签名软件的预期行为，见 [无签名发布](#无签名发布)。
 

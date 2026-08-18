@@ -41,20 +41,18 @@ git push origin main
 .\scripts\publish-windows-release.ps1 -Version 0.1.5 -Mode Candidate
 ```
 
-触发工作流并实时跟踪日志，跑完才返回（Windows runner 上约 15-25 分钟）。成功后产物自动下载到 `artifacts\candidate-0.1.5\`。
+触发工作流并实时跟踪日志，跑完才返回（Windows runner 上约 15-25 分钟）。成功后产物自动下载到 `artifacts\candidate-0.1.5\`，其中分成两个子目录：
+
+- `Releases\` —— 安装包、完整包、增量包、更新清单
+- `compliance\` —— SBOM、源码归档、校验和
 
 这一步**不打 tag、不创建 Release**，只为验收提供安装包。
 
 ### 3. N-1 → N 验收（手动）
 
-这是公开发布前唯一的人工闸门，不要跳过。
+这是公开发布前唯一的人工闸门，不要跳过。完整清单和原理见 **[N-1 → N 验收](RELEASE_VERIFY.md)**。
 
-1. 安装**当前线上版本**，正常使用一段时间（加账号、跑一次任务）
-2. 用 `artifacts\candidate-0.1.5\GptAccountKeeper.Desktop-win-Setup.exe` 覆盖安装
-3. 确认：
-   - 账号、Profile、历史、代理配置都还在
-   - Agent 正常重启，调度恢复
-   - 设置页「关于与许可」能打开 `licenses/`，四个文档都在
+简版：装当前线上版本 → 造出真实数据（账号、登录、跑一次任务）→ 用 `artifacts\candidate-0.1.5\Releases\GptAccountKeeper.Desktop-win-Setup.exe` **覆盖安装**（不要先卸载）→ 确认账号 / Profile / 登录态 / 历史 / 代理都在，Agent 正常重启。
 
 首次运行会出现 SmartScreen「未知发布者」提示，点「更多信息 → 仍要运行」。这是未签名软件的预期行为，见 [无签名发布](#无签名发布)。
 

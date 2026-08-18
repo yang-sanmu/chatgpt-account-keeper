@@ -10,8 +10,10 @@
     <string>ChatGPT Account Keeper</string>
     <key>CFBundleExecutable</key>
     <string>GptAccountKeeper.Desktop</string>
+    <!-- Replaced with $(Version) by the StampInfoPlist target. Do not hardcode
+         a real version here: the build output is what ships. -->
     <key>CFBundleShortVersionString</key>
-    <string>0.1.0-alpha.6</string>
+    <string>0.0.0-template</string>
     <key>CFBundleVersion</key>
     <string>1</string>
     <key>NSHighResolutionCapable</key>

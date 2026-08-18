@@ -39,10 +39,31 @@
 
   <ItemGroup>
     <AvaloniaResource Include="Assets\**" />
-    <None Include="Info.plist" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Not copied verbatim: CFBundleShortVersionString is stamped from $(Version)
+         by the StampInfoPlist target below, so the template's placeholder version
+         can never ship in a macOS bundle. -->
+    <None Include="Info.plist" CopyToOutputDirectory="Never" />
     <None Include="..\..\..\LICENSE" Link="licenses\LICENSE" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <None Include="..\..\..\THIRD_PARTY_NOTICES.md" Link="licenses\THIRD_PARTY_NOTICES.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <None Include="..\..\..\PRIVACY.md" Link="licenses\PRIVACY.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <None Include="..\..\..\SOURCE.md" Link="licenses\SOURCE.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
+
+  <!-- Info.plist ships inside the macOS .app bundle, so its version has to match
+       the build. Copying the template verbatim silently shipped a stale
+       CFBundleShortVersionString; regenerate it from $(Version) instead. -->
+  <Target Name="StampInfoPlist"
+          AfterTargets="Build"
+          Inputs="Info.plist"
+          Outputs="$(OutDir)Info.plist">
+    <PropertyGroup>
+      <_PlistTemplate>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)Info.plist'))</_PlistTemplate>
+      <_PlistStamped>$(_PlistTemplate.Replace('&lt;string&gt;0.0.0-template&lt;/string&gt;', '&lt;string&gt;$(Version)&lt;/string&gt;'))</_PlistStamped>
+    </PropertyGroup>
+    <WriteLinesToFile File="$(OutDir)Info.plist" Lines="$(_PlistStamped)" Overwrite="true" WriteOnlyWhenDifferent="true" />
+  </Target>
+
+  <Target Name="PublishInfoPlist" AfterTargets="Publish">
+    <Copy SourceFiles="$(OutDir)Info.plist" DestinationFolder="$(PublishDir)" />
+  </Target>
 </Project>

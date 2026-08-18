@@ -1,0 +1,161 @@
+name: Publish an existing cross-platform candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: SemVer without the v prefix
+        required: true
+        type: string
+      source_run_id:
+        description: Successful Cross-platform release candidate run containing the aggregate artifact
+        required: true
+        type: string
+      allow_unsigned:
+        description: Explicitly allow unsigned and unnotarized artifacts to be published
+        required: true
+        default: false
+        type: boolean
+      skip_n_minus_one_verification:
+        description: Explicitly publish without the installed N-1 to N manual acceptance check
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: publish-existing-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Promote successful candidate to public release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ inputs.version }}
+      SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+      ALLOW_UNSIGNED: ${{ inputs.allow_unsigned }}
+      SKIP_N_MINUS_ONE: ${{ inputs.skip_n_minus_one_verification }}
+    steps:
+      - name: Validate explicit override and source run
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Version must be SemVer: $VERSION" >&2
+            exit 1
+          fi
+          if [[ ! "$SOURCE_RUN_ID" =~ ^[0-9]+$ ]]; then
+            echo "Source run id must be numeric: $SOURCE_RUN_ID" >&2
+            exit 1
+          fi
+          if [[ "$ALLOW_UNSIGNED" != true || "$SKIP_N_MINUS_ONE" != true ]]; then
+            echo 'Direct publication requires both explicit unsigned and N-1 override inputs.' >&2
+            exit 1
+          fi
+
+          metadata="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID")"
+          test "$(jq -r .status <<<"$metadata")" = completed
+          test "$(jq -r .conclusion <<<"$metadata")" = success
+          test "$(jq -r .event <<<"$metadata")" = workflow_dispatch
+          test "$(jq -r .name <<<"$metadata")" = 'Cross-platform release candidate'
+          test "$(jq -r .head_branch <<<"$metadata")" = main
+          source_sha="$(jq -r .head_sha <<<"$metadata")"
+          [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]]
+
+          artifact="GptAccountKeeper.Desktop-all-$VERSION"
+          artifacts="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID/artifacts")"
+          jq -e --arg name "$artifact" \
+            '.artifacts[] | select(.name == $name and .expired == false)' \
+            <<<"$artifacts" >/dev/null
+          echo "sha=$source_sha" >> "$GITHUB_OUTPUT"
+          echo "artifact=$artifact" >> "$GITHUB_OUTPUT"
+
+      - name: Download the successful aggregate artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh run download "$SOURCE_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name '${{ steps.source.outputs.artifact }}' \
+            --dir release-assets
+
+      - name: Verify release contents and aggregate checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          root=release-assets
+          for channel in win osx-arm64 osx-x64 linux-x64; do
+            test -s "$root/releases.$channel.json"
+          done
+          test "$(find "$root" -maxdepth 1 -type f -name '*.dmg' | wc -l | tr -d ' ')" = 2
+          test "$(find "$root" -maxdepth 1 -type f -name '*.pkg' | wc -l | tr -d ' ')" = 2
+          test "$(find "$root" -maxdepth 1 -type f -name '*.AppImage' | wc -l | tr -d ' ')" = 1
+          test "$(find "$root" -maxdepth 1 -type f -name '*.exe' | wc -l | tr -d ' ')" -ge 1
+          test "$(find "$root" -maxdepth 1 -type f -name '*-full.nupkg' | wc -l | tr -d ' ')" -ge 4
+          test "$(find "$root" -maxdepth 1 -type f -name '*.spdx.json' | wc -l | tr -d ' ')" = 4
+          test -s "$root/chatgpt-account-keeper-$VERSION-source.zip"
+          test -n "$(find "$root" -maxdepth 1 -type f -name 'mihomo-v*-source.zip' -print -quit)"
+
+          mapfile -t markers < <(find "$root" -maxdepth 1 -type f -name 'UNSIGNED-*' -print | sort)
+          test "${#markers[@]}" -gt 0
+          printf 'Publishing explicitly authorized unsigned artifacts:\n%s\n' "${markers[*]}"
+
+          test -s "$root/SHA256SUMS.release.txt"
+          expected_count="$(find "$root" -maxdepth 1 -type f ! -name SHA256SUMS.release.txt | wc -l | tr -d ' ')"
+          manifest_count="$(grep -c '  ' "$root/SHA256SUMS.release.txt")"
+          test "$manifest_count" = "$expected_count"
+          (
+            cd "$root"
+            sha256sum --check SHA256SUMS.release.txt
+          )
+
+      - name: Create, verify and publish v${{ inputs.version }}
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="v$VERSION"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $tag already exists." >&2
+            exit 1
+          fi
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" >/dev/null 2>&1; then
+            echo "Tag $tag already exists without a release." >&2
+            exit 1
+          fi
+
+          notes="$RUNNER_TEMP/release-notes.md"
+          printf '%s\n' \
+            "# ChatGPT Account Keeper $VERSION" \
+            '' \
+            'Windows x64、Linux x64、macOS Apple Silicon 和 macOS Intel。' \
+            '' \
+            '> 此版本按维护者明确指示直接发布，未执行 N-1 → N 人工验收。仓库未配置代码签名凭据，因此 Windows、macOS 和 Linux 产物均未签名/公证；请使用随附的 `SHA256SUMS.release.txt` 核对完整性。' \
+            '' \
+            "Source commit: $SOURCE_SHA" \
+            > "$notes"
+
+          mapfile -d '' assets < <(find release-assets -maxdepth 1 -type f -print0 | sort -z)
+          test "${#assets[@]}" -gt 0
+          gh release create "$tag" "${assets[@]}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$SOURCE_SHA" \
+            --draft \
+            --title "ChatGPT Account Keeper $VERSION" \
+            --notes-file "$notes"
+
+          local_count="${#assets[@]}"
+          remote_count="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets | length')"
+          test "$remote_count" = "$local_count"
+          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          url="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json url --jq .url)"
+          printf 'Published %s from successful candidate run %s: %s\n' "$tag" "$SOURCE_RUN_ID" "$url" \
+            | tee -a "$GITHUB_STEP_SUMMARY"

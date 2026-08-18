@@ -87,6 +87,21 @@ git push origin main
 
 **只有这一步会让版本进入客户端的稳定更新通道。**
 
+### 维护者明确要求跳过人工验收或签名时
+
+正常流程仍应使用上面的签名门禁。如果维护者明确接受无签名产物并要求跳过 N-1 人工验收，可将一次已经成功的四平台 Candidate run 直接提升为公开 Release：
+
+```powershell
+gh workflow run publish-existing-candidate.yml `
+  --repo yang-sanmu/chatgpt-account-keeper `
+  -f version=0.1.5 `
+  -f source_run_id=<成功的 run id> `
+  -f allow_unsigned=true `
+  -f skip_n_minus_one_verification=true
+```
+
+该例外流程会再次校验来源 run、四平台资产和聚合 SHA-256，先上传为 Draft 并核对资产数量，再公开。Release 说明会明确标注未签名/未公证及跳过 N-1 验收，不会把例外发布伪装成通过正式门禁。
+
 ## 注意事项
 
 - **先干跑**：任何阶段都可以加 `-WhatIf`，只验证状态并显示将执行的操作，不实际执行。

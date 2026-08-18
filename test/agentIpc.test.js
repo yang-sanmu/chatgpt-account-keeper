@@ -16,6 +16,8 @@ import {
   dataRootFromArgs,
   endpointFromArgs,
   canonicalDataRoot,
+  assertUnixSocketPathFits,
+  unixSocketPathLimit,
 } from "../src/agent/endpoint.js";
 import { AgentIpcServer } from "../src/agent/ipcServer.js";
 import { createAgent } from "../src/agent/createAgent.js";
@@ -59,6 +61,57 @@ test("endpoint parsing supports explicit launch arguments and stable per-user de
   const secondRoot = currentUserEndpoint({ platform: "win32", identity: "same-user", dataRoot: "C:\\two" });
   assert.notEqual(firstRoot, secondRoot);
   assert.equal(canonicalDataRoot("C:\\One", "win32"), canonicalDataRoot("c:\\one", "win32"));
+});
+
+/**
+ * macOS 的 sun_path 只有 104 字节，而 os.tmpdir() 在 macOS 上是
+ * /var/folders/xx/<32 字符哈希>/T（约 50 字节）。默认端点曾经只剩 2 字节余量，
+ * 用户名更长或多一段后缀就会 bind 失败，而底层报的是 EINVAL 不是"路径太长"。
+ */
+test("Unix socket 端点必须留在平台的 sun_path 上限内", () => {
+  const longDataRoot = "/Users/a-fairly-long-account-name/Library/Application Support/GptAccountKeeper";
+
+  // runtimeDir 显式给定：否则 linux 分支会去取宿主的 os.tmpdir()，在 Windows
+  // 上拿到 C:\... 而让断言反映宿主而不是被测代码。
+  for (const [platform, uid, runtimeDir] of [
+    ["darwin", 501, "/tmp"],
+    ["linux", 1000, "/run/user/1000"],
+  ]) {
+    const endpoint = currentUserEndpoint({ platform, uid, runtimeDir, dataRoot: longDataRoot });
+    const bytes = Buffer.byteLength(endpoint, "utf8");
+    assert.ok(
+      bytes < unixSocketPathLimit(platform),
+      `${platform} 端点 ${bytes} 字节，超出 ${unixSocketPathLimit(platform)}：${endpoint}`
+    );
+    // Unix socket 路径永远是 posix，宿主是 Windows 时也不能出现反斜杠。
+    assert.ok(!endpoint.includes("\\"), `${platform} 端点不应包含反斜杠：${endpoint}`);
+    assert.ok(endpoint.startsWith("/"), `${platform} 端点应是绝对 posix 路径：${endpoint}`);
+  }
+
+  // macOS 默认不应落在 /var/folders 那条长路径上。XDG_RUNTIME_DIR 优先级更高，
+  // 而 Linux 宿主上通常设了它，所以断言默认值时必须显式排除。
+  const previousXdg = process.env.XDG_RUNTIME_DIR;
+  delete process.env.XDG_RUNTIME_DIR;
+  try {
+    assert.match(currentUserEndpoint({ platform: "darwin", uid: 501 }), /^\/tmp\//);
+  } finally {
+    if (previousXdg === undefined) delete process.env.XDG_RUNTIME_DIR;
+    else process.env.XDG_RUNTIME_DIR = previousXdg;
+  }
+
+  assert.equal(unixSocketPathLimit("darwin"), 104);
+  assert.equal(unixSocketPathLimit("linux"), 108);
+
+  // 超限时要给出可读错误，而不是把 EINVAL 留给调用方。
+  assert.throws(
+    () => assertUnixSocketPathFits(`/tmp/${"x".repeat(120)}.sock`, "darwin"),
+    /超出系统上限/
+  );
+  // Windows 命名管道不受这个限制约束。
+  assert.equal(
+    assertUnixSocketPathFits(`\\\\.\\pipe\\${"x".repeat(200)}`, "win32"),
+    `\\\\.\\pipe\\${"x".repeat(200)}`
+  );
 });
 
 test("createAgent accepts persistence adapters, receipt store, and a pre-start dataRoot hook", async () => {
@@ -144,11 +197,17 @@ function minimalRuntime() {
   };
 }
 
+// macOS 上 os.tmpdir() + 完整 UUID 会超过 104 字节的 sun_path 上限，所以用
+// /tmp 加截短的随机段：够唯一，又给测试留足余量。
 function testEndpoint() {
   if (process.platform === "win32") {
     return `\\\\.\\pipe\\gptaccountkeeper-test-${randomUUID()}`;
   }
-  return path.join(os.tmpdir(), `gptaccountkeeper-test-${randomUUID()}.sock`);
+  const base = process.platform === "darwin" ? "/tmp" : os.tmpdir();
+  return path.posix.join(
+    base.replace(/\\/g, "/"),
+    `kpr-test-${randomUUID().replace(/-/g, "").slice(0, 12)}.sock`
+  );
 }
 
 async function connect(endpoint) {

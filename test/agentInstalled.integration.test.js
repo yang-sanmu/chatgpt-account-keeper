@@ -11,11 +11,15 @@ import { FrameDecoder, encodeFrame, decodeJsonFrame } from "../src/agent/framing
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
+// 短名 + /tmp：macOS 的 sun_path 上限是 104 字节，而 os.tmpdir() 在 macOS 上
+// 本身就占约 50 字节，原来的长名在那里必然 bind 失败。
 function uniqueEndpoint() {
-  const suffix = `${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  return process.platform === "win32"
-    ? `\\\\.\\pipe\\gpt-account-keeper-integration-${suffix}`
-    : path.join(os.tmpdir(), `gpt-account-keeper-integration-${suffix}.sock`);
+  const suffix = `${process.pid}-${Math.random().toString(16).slice(2, 8)}`;
+  if (process.platform === "win32") {
+    return `\\\\.\\pipe\\gpt-account-keeper-integration-${suffix}`;
+  }
+  const base = process.platform === "darwin" ? "/tmp" : os.tmpdir();
+  return path.posix.join(base.replace(/\\/g, "/"), `kpr-int-${suffix}.sock`);
 }
 
 async function connectWithRetry(endpoint, child, timeoutMs = 10_000) {

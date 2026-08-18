@@ -95,6 +95,7 @@ internal sealed class ShellViewModel : ObservableObject
         RefreshDataCommand = new AsyncRelayCommand(RefreshAsync);
         ImportLegacyCommand = new AsyncRelayCommand(RequestLegacyImportAsync);
         ChooseDataDirectoryCommand = new AsyncRelayCommand(RequestDataDirectoryAsync);
+        Settings.ImportLegacyCommand = ImportLegacyCommand;
 
         Overview.ImportLegacyCommand = ImportLegacyCommand;
         Overview.CreateFreshDataCommand = StartAgentCommand;
@@ -168,6 +169,9 @@ internal sealed class ShellViewModel : ObservableObject
 
     public event EventHandler? DataDirectoryRestartRequested;
 
+    /// <summary>重启后需要继续执行的旧项目导入；窗口据此重新走预检+确认流程。</summary>
+    public event EventHandler<string>? LegacyImportResumeRequested;
+
     /// <summary>切页时重置滚动位置由视图处理；这里只负责通知。</summary>
     public event EventHandler<PageViewModel>? PageChanged;
 
@@ -207,6 +211,33 @@ internal sealed class ShellViewModel : ObservableObject
         try
         {
             await Behavior.LoadAsync(_lifetime.Token);
+            // 重启前安排的导入任务在这里接着做：新数据目录此时尚未建库，
+            // 走的仍然是首次启动那条经过校验的迁移路径。
+            var pendingImport = Behavior.PendingLegacyImportRoot;
+            if (!string.IsNullOrWhiteSpace(pendingImport))
+            {
+                await Behavior.RememberPendingLegacyImportAsync(null);
+                if (File.Exists(_paths.DatabaseFile))
+                {
+                    Toasts.Error("待导入的数据目录已经建库，已取消这次导入以避免覆盖数据");
+                }
+                else if (!Directory.Exists(pendingImport))
+                {
+                    Toasts.Error($"待导入的旧项目目录已不存在：{pendingImport}");
+                }
+                else
+                {
+                    Overview.NeedsFirstRun = true;
+                    Overview.ConnectionStatus = "继续导入旧项目";
+                    Overview.ConnectionDetail = $"已切换到新数据目录，正在继续导入：{pendingImport}";
+                    if (!string.IsNullOrWhiteSpace(_paths.BootstrapWarning))
+                    {
+                        Toasts.Error(_paths.BootstrapWarning);
+                    }
+                    LegacyImportResumeRequested?.Invoke(this, pendingImport);
+                    return;
+                }
+            }
             if (File.Exists(_paths.DatabaseFile))
             {
                 Overview.NeedsFirstRun = false;
@@ -298,11 +329,57 @@ internal sealed class ShellViewModel : ObservableObject
         return snapshot.IsConnected;
     }
 
+    /// <summary>当前数据目录是否已经初始化过；决定导入旧项目要不要先换数据目录。</summary>
+    public bool DataDirectoryInitialized => File.Exists(_paths.DatabaseFile);
+
+    /// <summary>
+    /// 首次启动之后再导入旧项目。
+    ///
+    /// 迁移只能写进一个尚未建库的数据目录（它靠"keeper.db 不存在"来保证不覆盖
+    /// 任何现有数据），所以这条路径先把新数据目录和待导入的旧项目根一起记下来，
+    /// 重启后再由 InitializeAsync 接着做。当前数据目录一个字节都不会被改。
+    /// </summary>
+    public async Task ScheduleLegacyImportAsync(string legacyRoot, string dataDirectory)
+    {
+        try
+        {
+            var target = _dataLocation.Validate(dataDirectory);
+            if (File.Exists(Path.Combine(target, "keeper.db")))
+            {
+                Toasts.Error($"所选目录已存在 keeper.db，不能作为导入目标：{target}");
+                return;
+            }
+            if (PathsEqual(target, _paths.DataDirectory))
+            {
+                Toasts.Error("导入旧项目需要一个尚未建库的新数据目录，不能沿用当前目录");
+                return;
+            }
+
+            // 先把旧数据目录的 Agent 停掉，之后才写任何配置。
+            // IPC 端点按数据目录隔离，如果放着不管，重启后的新实例会另起一个
+            // Agent，而旧 Agent 仍在后台对着旧数据目录跑调度和巡检。
+            // 用非强制停止：有任务在跑时它会被拒绝，那时本来也不该换数据目录。
+            if (_connection.IsConnected)
+            {
+                await ShutdownAgentAsync("data-directory-change", force: false, requireDisconnect: true);
+            }
+
+            await Behavior.RememberPendingLegacyImportAsync(legacyRoot);
+            await _dataLocation.SaveAsync(target, _lifetime.Token);
+            Toasts.Success($"已记录导入任务，正在重启到新数据目录：{target}");
+            DataDirectoryRestartRequested?.Invoke(this, EventArgs.Empty);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            Toasts.Error($"安排旧项目导入失败：{exception.Message}");
+        }
+    }
+
     public async Task ImportLegacyAsync(string legacyRoot)
     {
         if (File.Exists(_paths.DatabaseFile))
         {
-            Toasts.Error("当前数据目录已经初始化，不能覆盖导入；请在首次创建数据库前迁移");
+            Toasts.Error("当前数据目录已经初始化，不能覆盖导入；请先选择一个新的数据目录");
             return;
         }
 
@@ -443,6 +520,12 @@ internal sealed class ShellViewModel : ObservableObject
         (ConnectAgentCommand as AsyncRelayCommand)?.RaiseCanExecuteChanged();
         (StartAgentCommand as AsyncRelayCommand)?.RaiseCanExecuteChanged();
     }
+
+    private static bool PathsEqual(string left, string right) =>
+        string.Equals(
+            Path.TrimEndingDirectorySeparator(Path.GetFullPath(left)),
+            Path.TrimEndingDirectorySeparator(Path.GetFullPath(right)),
+            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
 
     private static string ResolveDesktopVersion()
     {

@@ -15,6 +15,99 @@ internal enum CloseChoice
 
 internal sealed record CloseChoiceResult(CloseChoice Choice, bool Remember);
 
+internal enum UpdateChoice
+{
+    /// <summary>关掉弹窗但不记任何压制状态：下一轮后台检查仍会提示。</summary>
+    Dismiss,
+    UpdateNow,
+    RemindNextLaunch,
+    IgnoreThisVersion,
+}
+
+/// <summary>
+/// 发现新版本时的提示窗。
+///
+/// 三个选择对应三种压制范围：立即更新（下载并在安全点安装）、下次启动提醒
+/// （只压制本次会话）、忽略本次更新（把该版本号写进 desktop.json 永久压制，
+/// 但更高版本仍会提示，手动检查更新也仍会重新提供）。
+/// </summary>
+internal sealed class UpdateAvailableDialog : Window
+{
+    public UpdateAvailableDialog(string version, string currentVersion, bool alreadyDownloaded)
+    {
+        Title = "发现新版本";
+        Width = 520;
+        Height = 290;
+        CanResize = false;
+        WindowStartupLocation = WindowStartupLocation.CenterOwner;
+        Background = Palette.BgDark;
+
+        var ignore = new Button { Content = "忽略本次更新", Padding = new Thickness(14, 8) };
+        ignore.Click += (_, _) => Close(UpdateChoice.IgnoreThisVersion);
+        var later = new Button { Content = "下次启动提醒", Padding = new Thickness(14, 8) };
+        later.Click += (_, _) => Close(UpdateChoice.RemindNextLaunch);
+        var now = new Button
+        {
+            Content = alreadyDownloaded ? "立即安装" : "立即更新",
+            Padding = new Thickness(14, 8),
+            Classes = { "primary" },
+        };
+        now.Click += (_, _) => Close(UpdateChoice.UpdateNow);
+
+        Content = new Border
+        {
+            Classes = { "card" },
+            Margin = new Thickness(16),
+            Padding = new Thickness(22),
+            Child = new StackPanel
+            {
+                Spacing = 14,
+                Children =
+                {
+                    new TextBlock
+                    {
+                        Text = $"新版本 {version} 可用",
+                        FontSize = 18,
+                        FontWeight = FontWeight.Bold,
+                        Foreground = Palette.TextPrimary,
+                    },
+                    new TextBlock
+                    {
+                        Text = $"当前版本 {currentVersion}",
+                        Foreground = Palette.TextSecondary,
+                        FontSize = 12,
+                    },
+                    new TextBlock
+                    {
+                        Text = alreadyDownloaded
+                            ? "更新包已下载完成。安装前 Agent 会先安全排空：仍有 Chrome 窗口或运行中的任务时会拒绝安装，不会强杀任务。"
+                            : "选择“立即更新”会下载更新包，并在 Agent 安全排空后安装重启：仍有 Chrome 窗口或运行中的任务时会拒绝安装，不会强杀任务。",
+                        TextWrapping = TextWrapping.Wrap,
+                        Foreground = Palette.TextSecondary,
+                        LineHeight = 18,
+                        FontSize = 12,
+                    },
+                    new TextBlock
+                    {
+                        Text = "“忽略本次更新”只跳过这个版本，更高版本仍会提示；随时可在设置里手动检查更新。",
+                        TextWrapping = TextWrapping.Wrap,
+                        Foreground = Palette.Muted,
+                        LineHeight = 16,
+                        FontSize = 11,
+                    },
+                    new StackPanel
+                    {
+                        Orientation = Orientation.Horizontal,
+                        HorizontalAlignment = HorizontalAlignment.Right,
+                        Spacing = 8,
+                        Children = { ignore, later, now },
+                    },
+                },
+            },
+        };
+    }
+}
+
 internal sealed class CloseChoiceDialog : Window
 {
     public CloseChoiceDialog()

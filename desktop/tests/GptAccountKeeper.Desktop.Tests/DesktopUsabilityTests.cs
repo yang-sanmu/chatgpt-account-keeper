@@ -877,6 +877,361 @@ public sealed class DesktopUsabilityTests
         Assert.True(fixture.Shell.IsSafeInstallMonitorRunning);
     }
 
+    /// <summary>
+    /// 启动后必须立刻检查一次，不能再等 30 秒。开发/便携运行下 Velopack 报告
+    /// 未安装，首检会落在 portable 状态；关键是它得在启动后很快发生。
+    /// </summary>
+    [Fact]
+    public async Task TheFirstUpdateCheckStartsImmediatelyAtLaunch()
+    {
+        using var updates = new UpdateService();
+        using var checked_ = new ManualResetEventSlim();
+        updates.Changed += (_, snapshot) =>
+        {
+            if (snapshot.State is not "idle") checked_.Set();
+        };
+
+        updates.Start(UpdatePolicy.NotifyOnly);
+
+        Assert.True(checked_.Wait(TimeSpan.FromSeconds(10)));
+        Assert.NotEqual("idle", updates.Snapshot.State);
+        await Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// 下载完成后再检查一次更新，不能把"可安全安装"降级成"需要再下载一次"。
+    /// 这正是"点下载更新、下载完还得再点一次才能安装"的根因。
+    /// </summary>
+    [Fact]
+    public void ARecheckAfterDownloadKeepsTheUpdateInstallable()
+    {
+        var gate = new UpdateGate();
+        gate.MarkDownloaded("1.4.0");
+
+        var recheck = gate.Coalesce(new UpdateSnapshot(
+            "available",
+            "发现新版本 1.4.0",
+            "1.4.0",
+            CanDownload: true));
+
+        Assert.Equal("downloaded", recheck.State);
+        Assert.True(recheck.CanInstall);
+    }
+
+    /// <summary>Velopack 的进度回调是异步的，迟到那一次不能把状态推回 downloading。</summary>
+    [Fact]
+    public void ALateDownloadProgressCallbackDoesNotRevokeInstallability()
+    {
+        var gate = new UpdateGate();
+        gate.MarkDownloaded("1.4.0");
+
+        var late = gate.Coalesce(new UpdateSnapshot("downloading", "正在下载 1.4.0 · 99%", "1.4.0", 99));
+
+        Assert.Equal("downloaded", late.State);
+        Assert.True(late.CanInstall);
+        Assert.Equal(100, late.Progress);
+    }
+
+    /// <summary>
+    /// 每 6 小时一轮的后台检查会先发 checking、失败时再发 error，两者都不带版本号。
+    /// 它们不能把已下载的更新变成不可安装 —— 否则一次断网就让"安全安装"永久变灰。
+    /// </summary>
+    [Fact]
+    public void VersionlessCheckingAndErrorStatesKeepADownloadedUpdateInstallable()
+    {
+        var gate = new UpdateGate();
+        gate.MarkDownloaded("1.4.0");
+
+        var checking = gate.Coalesce(new UpdateSnapshot("checking", "正在后台检查更新…"));
+        Assert.True(checking.CanInstall);
+        Assert.Equal("1.4.0", checking.Version);
+
+        var failed = gate.Coalesce(new UpdateSnapshot("error", "更新检查失败：网络不可达"));
+        Assert.True(failed.CanInstall);
+        // 错误信息必须保留，用户要靠它判断是不是断网。
+        Assert.Contains("网络不可达", failed.Message);
+    }
+
+    [Fact]
+    public void ANewerVersionIsStillOfferedForDownloadAfterAnEarlierOneWasStaged()
+    {
+        var gate = new UpdateGate();
+        gate.MarkDownloaded("1.4.0");
+
+        var newer = gate.Coalesce(new UpdateSnapshot(
+            "available",
+            "发现新版本 1.5.0",
+            "1.5.0",
+            CanDownload: true));
+
+        Assert.Equal("available", newer.State);
+        Assert.True(newer.CanDownload);
+        Assert.False(newer.CanInstall);
+    }
+
+    [Fact]
+    public void IgnoringAVersionSuppressesOnlyThatVersionAndNeverAManualCheck()
+    {
+        var gate = new UpdateGate();
+        gate.Ignore("1.4.0");
+
+        Assert.False(gate.ShouldPrompt("1.4.0", manual: false));
+        Assert.True(gate.ShouldPrompt("1.5.0", manual: false));
+        // 手动点“检查更新”必须仍然给出提示，否则界面上什么都不发生。
+        Assert.True(gate.ShouldPrompt("1.4.0", manual: true));
+    }
+
+    /// <summary>
+    /// 只有真的要弹窗时才能记 MarkPrompted。之前是先记后下载，"后台下载后提醒"
+    /// 策略下一次下载异常就会让这个版本在本次会话里再也不提示。
+    /// </summary>
+    [Fact]
+    public void AVersionIsStillPromptableUntilItHasActuallyBeenPrompted()
+    {
+        var gate = new UpdateGate();
+        // 预下载失败的那条路径不调用 MarkPrompted，提示资格必须还在。
+        Assert.True(gate.ShouldPrompt("1.4.0", manual: false));
+        gate.MarkPrompted("1.4.0");
+        Assert.False(gate.ShouldPrompt("1.4.0", manual: false));
+    }
+
+    /// <summary>“下次启动提醒”只压制本次会话：新的 UpdateGate 代表新进程。</summary>
+    [Fact]
+    public void DeferringAVersionSuppressesThisSessionOnly()
+    {
+        var session = new UpdateGate();
+        session.Defer("1.4.0");
+        Assert.False(session.ShouldPrompt("1.4.0", manual: false));
+
+        var nextLaunch = new UpdateGate();
+        Assert.True(nextLaunch.ShouldPrompt("1.4.0", manual: false));
+    }
+
+    /// <summary>自动检查只在同一版本第一次出现时弹窗，之后每 6 小时一轮不再重复打扰。</summary>
+    [Fact]
+    public void AnAutomaticRecheckDoesNotPromptTwiceForTheSameVersion()
+    {
+        var gate = new UpdateGate();
+        Assert.True(gate.ShouldPrompt("1.4.0", manual: false));
+        gate.MarkPrompted("1.4.0");
+        Assert.False(gate.ShouldPrompt("1.4.0", manual: false));
+    }
+
+    [Fact]
+    public void ConfirmingThereIsNoUpdateClearsThePendingInstall()
+    {
+        var gate = new UpdateGate();
+        gate.MarkDownloaded("1.4.0");
+        gate.ClearDownloaded();
+
+        var snapshot = gate.Coalesce(new UpdateSnapshot(
+            "available",
+            "发现新版本 1.4.0",
+            "1.4.0",
+            CanDownload: true));
+
+        Assert.Equal("available", snapshot.State);
+    }
+
+    /// <summary>忽略的版本号要落到 desktop.json，否则重启后又会弹同一个版本。</summary>
+    [Fact]
+    public async Task TheIgnoredUpdateVersionAndPendingImportSurviveARestart()
+    {
+        var root = NewTemporaryDirectory();
+        try
+        {
+            var store = new DesktopSettingsStore(TestPaths(root));
+            await store.SaveAsync(new DesktopSettings
+            {
+                IgnoredUpdateVersion = "1.4.0",
+                PendingLegacyImportRoot = Path.Combine(root, "legacy"),
+            });
+
+            var reloaded = await store.LoadAsync();
+
+            Assert.Equal("1.4.0", reloaded.IgnoredUpdateVersion);
+            Assert.Equal(Path.Combine(root, "legacy"), reloaded.PendingLegacyImportRoot);
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// 首次启动没导入不该变成"永远不能导入"：数据目录已建库时导入入口仍然存在，
+    /// 只是要先安排一个新的数据目录，重启后继续。
+    /// </summary>
+    [Fact]
+    public async Task LegacyImportRemainsReachableAfterTheDataDirectoryHasBeenInitialized()
+    {
+        await using var fixture = CreateShellFixture();
+        Directory.CreateDirectory(Path.GetDirectoryName(fixture.Paths.DatabaseFile)!);
+        await File.WriteAllBytesAsync(fixture.Paths.DatabaseFile, []);
+        Assert.True(fixture.Shell.DataDirectoryInitialized);
+        Assert.NotNull(fixture.Shell.Settings.ImportLegacyCommand);
+
+        var legacy = Path.Combine(fixture.Paths.DataDirectory, "..", "legacy-source");
+        Directory.CreateDirectory(legacy);
+        var target = Path.Combine(Path.GetFullPath(Path.Combine(fixture.Paths.DataDirectory, "..")), "imported-data");
+        var restartRequested = 0;
+        fixture.Shell.DataDirectoryRestartRequested += (_, _) => Interlocked.Increment(ref restartRequested);
+
+        await fixture.Shell.Behavior.LoadAsync(fixture.Shell.Lifetime);
+        await fixture.Shell.ScheduleLegacyImportAsync(Path.GetFullPath(legacy), target);
+
+        Assert.Equal(1, Volatile.Read(ref restartRequested));
+        var settings = await new DesktopSettingsStore(fixture.Paths).LoadAsync();
+        Assert.Equal(Path.GetFullPath(legacy), settings.PendingLegacyImportRoot);
+        var pointer = await File.ReadAllTextAsync(fixture.Paths.BootstrapFile);
+        Assert.Contains("imported-data", pointer);
+    }
+
+    /// <summary>安排导入时绝不能选中当前目录：那会让迁移撞上已存在的 keeper.db。</summary>
+    [Fact]
+    public async Task SchedulingALegacyImportRefusesToReuseTheCurrentDataDirectory()
+    {
+        await using var fixture = CreateShellFixture();
+        Directory.CreateDirectory(Path.GetDirectoryName(fixture.Paths.DatabaseFile)!);
+        await File.WriteAllBytesAsync(fixture.Paths.DatabaseFile, []);
+        var legacy = Path.Combine(Path.GetFullPath(Path.Combine(fixture.Paths.DataDirectory, "..")), "legacy-same");
+        Directory.CreateDirectory(legacy);
+        var restartRequested = 0;
+        fixture.Shell.DataDirectoryRestartRequested += (_, _) => Interlocked.Increment(ref restartRequested);
+
+        await fixture.Shell.Behavior.LoadAsync(fixture.Shell.Lifetime);
+        await fixture.Shell.ScheduleLegacyImportAsync(legacy, fixture.Paths.DataDirectory);
+
+        Assert.Equal(0, Volatile.Read(ref restartRequested));
+        Assert.False(File.Exists(fixture.Paths.BootstrapFile));
+    }
+
+    /// <summary>
+    /// 重启到新数据目录后，导入任务要被自动接着做，并且必须先从 desktop.json 清除，
+    /// 否则一旦导入失败就会每次启动都重试同一个目录。
+    /// </summary>
+    [Fact]
+    public async Task APendingLegacyImportResumesOnceAndIsClearedBeforeRunning()
+    {
+        await using var fixture = CreateShellFixture();
+        var legacy = Path.Combine(Path.GetFullPath(Path.Combine(fixture.Paths.DataDirectory, "..")), "legacy-resume");
+        Directory.CreateDirectory(legacy);
+        await new DesktopSettingsStore(fixture.Paths).SaveAsync(new DesktopSettings
+        {
+            PendingLegacyImportRoot = legacy,
+        });
+
+        var resumed = new List<string>();
+        fixture.Shell.LegacyImportResumeRequested += (_, root) => resumed.Add(root);
+        await fixture.Shell.InitializeAsync();
+
+        Assert.Equal([legacy], resumed);
+        Assert.True(fixture.Shell.Overview.NeedsFirstRun);
+        var settings = await new DesktopSettingsStore(fixture.Paths).LoadAsync();
+        Assert.Null(settings.PendingLegacyImportRoot);
+    }
+
+    /// <summary>
+    /// 待导入目录里已经有 keeper.db 时必须放弃这次导入。迁移本身也会拒绝，
+    /// 但那要等到 Agent 启动之后；提前挡掉可以不打扰用户的现有数据。
+    /// </summary>
+    [Fact]
+    public async Task APendingLegacyImportIsAbandonedWhenTheTargetIsAlreadyInitialized()
+    {
+        await using var fixture = CreateShellFixture();
+        var legacy = Path.Combine(Path.GetFullPath(Path.Combine(fixture.Paths.DataDirectory, "..")), "legacy-occupied");
+        Directory.CreateDirectory(legacy);
+        Directory.CreateDirectory(Path.GetDirectoryName(fixture.Paths.DatabaseFile)!);
+        await File.WriteAllBytesAsync(fixture.Paths.DatabaseFile, []);
+        await new DesktopSettingsStore(fixture.Paths).SaveAsync(new DesktopSettings
+        {
+            PendingLegacyImportRoot = legacy,
+        });
+
+        var resumed = 0;
+        fixture.Shell.LegacyImportResumeRequested += (_, _) => Interlocked.Increment(ref resumed);
+        await fixture.Shell.InitializeAsync();
+
+        Assert.Equal(0, Volatile.Read(ref resumed));
+        var settings = await new DesktopSettingsStore(fixture.Paths).LoadAsync();
+        Assert.Null(settings.PendingLegacyImportRoot);
+    }
+
+    /// <summary>“立即更新”要一步走完：尚未下载时先下载，然后直接进入安装流程。</summary>
+    [Fact]
+    public async Task ChoosingUpdateNowDownloadsAndInstallsWithoutASecondClick()
+    {
+        await using var fixture = CreateShellFixture();
+        var installs = 0;
+        fixture.Shell.Behavior.InstallRequested = () =>
+        {
+            Interlocked.Increment(ref installs);
+            return Task.CompletedTask;
+        };
+        fixture.Shell.Behavior.UpdatePromptRequested = _ => Task.FromResult(UpdateChoice.UpdateNow);
+
+        await fixture.Shell.Behavior.HandleUpdatePromptAsync(
+            new UpdatePrompt("1.4.0", Manual: true, AlreadyDownloaded: true));
+
+        Assert.Equal(1, Volatile.Read(ref installs));
+    }
+
+    /// <summary>
+    /// 一次“立即更新”的下载可能跨过下一轮后台检查。第二个提示不能叠出第二个
+    /// 模态窗，否则第一个会被挡在后面，界面看起来像卡住了。
+    /// </summary>
+    [Fact]
+    public async Task ASecondUpdatePromptIsSuppressedWhileTheFirstDialogIsStillOpen()
+    {
+        await using var fixture = CreateShellFixture();
+        var opened = 0;
+        var firstDialogShown = new TaskCompletionSource();
+        var release = new TaskCompletionSource();
+        fixture.Shell.Behavior.InstallRequested = () => Task.CompletedTask;
+        fixture.Shell.Behavior.UpdatePromptRequested = async _ =>
+        {
+            if (Interlocked.Increment(ref opened) == 1) firstDialogShown.TrySetResult();
+            await release.Task;
+            return UpdateChoice.Dismiss;
+        };
+
+        var first = fixture.Shell.Behavior.HandleUpdatePromptAsync(
+            new UpdatePrompt("1.4.0", Manual: false, AlreadyDownloaded: false));
+        await firstDialogShown.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        // 加了闩之后这一次会立刻返回；没有闩时它会停在第二个对话框上，
+        // 所以这里必须限时等待，让缺陷表现为断言失败而不是整个测试挂住。
+        var second = fixture.Shell.Behavior.HandleUpdatePromptAsync(
+            new UpdatePrompt("1.4.0", Manual: false, AlreadyDownloaded: false));
+        var returnedImmediately = second == await Task.WhenAny(second, Task.Delay(TimeSpan.FromSeconds(2)));
+
+        release.TrySetResult();
+        await first;
+        Assert.True(returnedImmediately, "第二次提示应当立即返回，而不是再开一个模态窗");
+        Assert.Equal(1, Volatile.Read(ref opened));
+    }
+
+    [Fact]
+    public async Task ChoosingIgnorePersistsTheVersionAndSkipsInstalling()
+    {
+        await using var fixture = CreateShellFixture();
+        var installs = 0;
+        fixture.Shell.Behavior.InstallRequested = () =>
+        {
+            Interlocked.Increment(ref installs);
+            return Task.CompletedTask;
+        };
+        fixture.Shell.Behavior.UpdatePromptRequested = _ => Task.FromResult(UpdateChoice.IgnoreThisVersion);
+        await fixture.Shell.Behavior.LoadAsync(fixture.Shell.Lifetime);
+
+        await fixture.Shell.Behavior.HandleUpdatePromptAsync(
+            new UpdatePrompt("1.4.0", Manual: false, AlreadyDownloaded: false));
+
+        Assert.Equal(0, Volatile.Read(ref installs));
+        var settings = await new DesktopSettingsStore(fixture.Paths).LoadAsync();
+        Assert.Equal("1.4.0", settings.IgnoredUpdateVersion);
+    }
+
     [Fact]
     public void DefaultAgentEndpointIsScopedToTheCanonicalDataDirectory()
     {

@@ -44,6 +44,12 @@ internal sealed class SettingsPageViewModel : PageViewModel
     public ICommand CopyLogPathCommand { get; }
     public ICommand OpenLegalDocumentsCommand { get; }
 
+    /// <summary>
+    /// 导入旧项目。由 Shell 提供，和首次启动引导用的是同一条命令：
+    /// 首次启动后这个入口不会消失，只是会先要求选一个新的数据目录。
+    /// </summary>
+    public ICommand? ImportLegacyCommand { get; set; }
+
     /// <summary>“打开所在文件夹”和“复制路径”由窗口实现，避免 ViewModel 依赖顶层控件。</summary>
     public Func<string, Task>? RevealRequested { get; set; }
 

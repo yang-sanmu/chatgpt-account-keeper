@@ -4,6 +4,7 @@ using Avalonia.Controls;
 using Avalonia.Input.Platform;
 using Avalonia.Platform.Storage;
 using GptAccountKeeper.Desktop.Application;
+using GptAccountKeeper.Desktop.Infrastructure.Updates;
 using GptAccountKeeper.Desktop.Models;
 
 namespace GptAccountKeeper.Desktop.Presentation;
@@ -25,6 +26,8 @@ internal sealed partial class MainWindow : Window
 
         ViewModel.LegacyFolderRequested += OnLegacyFolderRequested;
         ViewModel.DataFolderRequested += OnDataFolderRequested;
+        ViewModel.LegacyImportResumeRequested += OnLegacyImportResumeRequested;
+        ViewModel.Behavior.UpdatePromptRequested = ShowUpdatePromptAsync;
 
         // 对话框、剪贴板和"打开文件夹"都由窗口提供，页面 ViewModel 不依赖顶层控件。
         ViewModel.Session.ConfirmAsync = (title, message, destructive) =>
@@ -211,23 +214,80 @@ internal sealed partial class MainWindow : Window
             });
             var folder = folders.FirstOrDefault();
             if (folder is null) return;
-
-            var preview = await ViewModel.InspectLegacyAsync(folder.Path.LocalPath);
-            if (!preview.Ok)
-            {
-                await new NoticeDialog(
-                    "无法导入所选目录",
-                    $"[{preview.Error?.Code ?? "MIGRATION_PROBE_FAILED"}] {preview.Error?.Message ?? "迁移预检失败"}\n\n请选择包含 config、profiles 和 logs 的旧项目根目录。")
-                    .ShowDialog(this);
-                return;
-            }
-            var confirmed = await new MigrationPreviewDialog(preview).ShowDialog<bool>(this);
-            if (confirmed) await ViewModel.ImportLegacyAsync(preview.SourceRoot);
+            await RunLegacyImportAsync(folder.Path.LocalPath);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             await new NoticeDialog("旧项目导入失败", exception.Message).ShowDialog(this);
         }
+    }
+
+    /// <summary>换数据目录重启后继续之前安排的导入，不再让用户重新选一次旧目录。</summary>
+    private async void OnLegacyImportResumeRequested(object? sender, string legacyRoot)
+    {
+        try
+        {
+            // 导入要走确认对话框，而开机自启会带 --hidden 把窗口隐藏。
+            // 隐藏窗口上开模态窗不可靠，先把主窗口显示出来。
+            ShowAndActivate();
+            await RunLegacyImportAsync(legacyRoot);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            await new NoticeDialog("继续导入旧项目失败", exception.Message).ShowDialog(this);
+        }
+    }
+
+    /// <summary>
+    /// 预检旧项目并导入。
+    ///
+    /// 当前数据目录已经建库时不能就地覆盖导入，改为让用户选一个新的空数据目录，
+    /// 记下任务后重启到那里继续 —— 这样"首次启动没导入就永远没法导入"不再成立。
+    /// </summary>
+    private async Task RunLegacyImportAsync(string selectedRoot)
+    {
+        var preview = await ViewModel.InspectLegacyAsync(selectedRoot);
+        if (!preview.Ok)
+        {
+            await new NoticeDialog(
+                "无法导入所选目录",
+                $"[{preview.Error?.Code ?? "MIGRATION_PROBE_FAILED"}] {preview.Error?.Message ?? "迁移预检失败"}\n\n请选择包含 config、profiles 和 logs 的旧项目根目录。")
+                .ShowDialog(this);
+            return;
+        }
+        var confirmed = await new MigrationPreviewDialog(preview).ShowDialog<bool>(this);
+        if (!confirmed) return;
+
+        if (!ViewModel.DataDirectoryInitialized)
+        {
+            await ViewModel.ImportLegacyAsync(preview.SourceRoot);
+            return;
+        }
+
+        var proceed = await new ConfirmationDialog(
+            "需要一个新的数据目录",
+            $"当前数据目录已经初始化，导入不能覆盖它。\n\n接下来请选择一个空的新数据目录；确认后程序会重启并在新目录中完成导入，当前数据保持原样。\n\n旧项目：{preview.SourceRoot}")
+            .ShowDialog<bool>(this);
+        if (!proceed) return;
+
+        var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        {
+            Title = "选择导入目标数据目录（必须是本地固定磁盘上尚未建库的目录）",
+            AllowMultiple = false,
+        });
+        var target = folders.FirstOrDefault();
+        if (target is null) return;
+        await ViewModel.ScheduleLegacyImportAsync(preview.SourceRoot, target.Path.LocalPath);
+    }
+
+    private Task<UpdateChoice> ShowUpdatePromptAsync(UpdatePrompt prompt)
+    {
+        ShowAndActivate();
+        return new UpdateAvailableDialog(
+                prompt.Version,
+                ViewModel.DesktopVersion,
+                prompt.AlreadyDownloaded)
+            .ShowDialog<UpdateChoice>(this);
     }
 
     private async void OnDataFolderRequested(object? sender, EventArgs e)

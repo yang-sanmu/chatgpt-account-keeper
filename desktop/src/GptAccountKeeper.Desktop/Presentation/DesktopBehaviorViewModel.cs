@@ -22,9 +22,12 @@ internal sealed class DesktopBehaviorViewModel : ObservableObject
     private UpdatePolicyOptionViewModel _updatePolicy;
     private bool _startAtLogin;
     private bool _loaded;
-    private string _updateStatus = "启动 30 秒后自动检查更新";
+    private string _updateStatus = "启动时会自动检查一次更新，之后每 6 小时后台检查";
     private bool _canDownloadUpdate;
     private bool _canInstallUpdate;
+    private string? _ignoredUpdateVersion;
+    private string? _pendingLegacyImportRoot;
+    private int _promptOpen;
     private int? _windowX;
     private int? _windowY;
     private double _windowWidth = 1260;
@@ -51,8 +54,8 @@ internal sealed class DesktopBehaviorViewModel : ObservableObject
         _closeBehavior = CloseBehaviorOptions[0];
         UpdatePolicyOptions =
         [
-            new(UpdatePolicy.NotifyOnly, "仅提醒", "默认；只有点击下载后才获取更新"),
-            new(UpdatePolicy.DownloadAndPrompt, "后台下载后提醒", "发现更新后下载，安装仍需确认"),
+            new(UpdatePolicy.NotifyOnly, "仅提醒", "默认；发现新版本时弹窗询问，下载前不占用带宽"),
+            new(UpdatePolicy.DownloadAndPrompt, "后台下载后提醒", "发现更新后先下载好再弹窗，安装仍需确认"),
             new(UpdatePolicy.InstallAtSafePoint, "安全空闲时安装", "下载后等待没有登录窗口和运行任务的安全点"),
         ];
         _updatePolicy = UpdatePolicyOptions[0];
@@ -61,6 +64,7 @@ internal sealed class DesktopBehaviorViewModel : ObservableObject
         DownloadUpdateCommand = new AsyncRelayCommand(DownloadUpdateAsync, () => CanDownloadUpdate);
         InstallUpdateCommand = new AsyncRelayCommand(InstallUpdateAsync, () => CanInstallUpdate);
         _updates.Changed += OnUpdateChanged;
+        _updates.UpdatePromptRequested += OnUpdatePromptRequested;
     }
 
     public ObservableCollection<CloseBehaviorOptionViewModel> CloseBehaviorOptions { get; }
@@ -73,6 +77,12 @@ internal sealed class DesktopBehaviorViewModel : ObservableObject
 
     /// <summary>安装更新前必须先 drain Agent，由 Shell 提供实现。</summary>
     public Func<Task>? InstallRequested { get; set; }
+
+    /// <summary>弹出“发现新版本”提示窗，由窗口提供实现（ViewModel 不依赖顶层控件）。</summary>
+    public Func<UpdatePrompt, Task<UpdateChoice>>? UpdatePromptRequested { get; set; }
+
+    /// <summary>下次启动时要执行的旧项目导入源目录；导入完成后由 Shell 清除。</summary>
+    public string? PendingLegacyImportRoot => _pendingLegacyImportRoot;
 
     public CancellationToken Lifetime { get; set; } = CancellationToken.None;
 
@@ -167,8 +177,17 @@ internal sealed class DesktopBehaviorViewModel : ObservableObject
         _windowWidth = Math.Clamp(settings.WindowWidth, 1120, 4000);
         _windowHeight = Math.Clamp(settings.WindowHeight, 720, 2400);
         _windowMaximized = settings.WindowMaximized;
+        _ignoredUpdateVersion = settings.IgnoredUpdateVersion;
+        _pendingLegacyImportRoot = settings.PendingLegacyImportRoot;
         _loaded = true;
-        _updates.Start(settings.UpdatePolicy);
+        _updates.Start(settings.UpdatePolicy, settings.IgnoredUpdateVersion);
+    }
+
+    /// <summary>记下待执行的旧项目导入；换数据目录重启后由 Shell 接着做。</summary>
+    public Task RememberPendingLegacyImportAsync(string? legacyRoot)
+    {
+        _pendingLegacyImportRoot = string.IsNullOrWhiteSpace(legacyRoot) ? null : legacyRoot;
+        return PersistAsync();
     }
 
     public async Task RememberCloseChoiceAsync(CloseChoice choice)
@@ -213,6 +232,8 @@ internal sealed class DesktopBehaviorViewModel : ObservableObject
                     StartAtLogin = StartAtLogin,
                     CloseBehavior = SelectedCloseBehavior.Value,
                     UpdatePolicy = SelectedUpdatePolicy.Value,
+                    IgnoredUpdateVersion = _ignoredUpdateVersion,
+                    PendingLegacyImportRoot = _pendingLegacyImportRoot,
                     WindowX = _windowX,
                     WindowY = _windowY,
                     WindowWidth = _windowWidth,
@@ -251,6 +272,64 @@ internal sealed class DesktopBehaviorViewModel : ObservableObject
         catch (Exception exception)
         {
             _toasts.Error($"{action}失败：{exception.Message}");
+        }
+    }
+
+    /// <summary>
+    /// 处理“发现新版本”的用户选择。
+    ///
+    /// 立即更新会补齐缺失的步骤：还没下载就先下载，下载好直接进入安装流程；
+    /// 用户不必像以前那样点两次“下载更新”再自己找“安全安装”。
+    /// </summary>
+    private void OnUpdatePromptRequested(object? sender, UpdatePrompt prompt)
+    {
+        if (UpdatePromptRequested is null) return;
+        Avalonia.Threading.Dispatcher.UIThread.Post(() => _ = HandleUpdatePromptAsync(prompt));
+    }
+
+    internal async Task HandleUpdatePromptAsync(UpdatePrompt prompt)
+    {
+        if (UpdatePromptRequested is null) return;
+        // 后台每 6 小时一轮，一次"立即更新"的下载可能跨过下一轮检查。
+        // 不加这道闩会叠出第二个模态窗，把第一个挡在后面。
+        if (Interlocked.Exchange(ref _promptOpen, 1) != 0) return;
+        try
+        {
+            var choice = await UpdatePromptRequested(prompt);
+            switch (choice)
+            {
+                case UpdateChoice.UpdateNow:
+                    await Guard("更新", async () =>
+                    {
+                        if (!prompt.AlreadyDownloaded && !CanInstallUpdate)
+                        {
+                            await _updates.DownloadPendingAsync(Lifetime);
+                        }
+                        await (InstallRequested?.Invoke() ?? Task.CompletedTask);
+                    });
+                    break;
+                case UpdateChoice.RemindNextLaunch:
+                    _updates.DeferVersion(prompt.Version);
+                    _toasts.Info($"已跳过本次提醒，下次启动会重新提示版本 {prompt.Version}");
+                    break;
+                case UpdateChoice.IgnoreThisVersion:
+                    _updates.IgnoreVersion(prompt.Version);
+                    _ignoredUpdateVersion = prompt.Version;
+                    await PersistAsync();
+                    _toasts.Info($"已忽略版本 {prompt.Version}；更高版本仍会提示");
+                    break;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            _toasts.Error($"处理更新提示失败：{exception.Message}");
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _promptOpen, 0);
         }
     }
 

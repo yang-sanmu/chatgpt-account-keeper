@@ -66,16 +66,35 @@ jobs:
           - os: macos-latest
             rid: osx-arm64
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
     steps:
       - uses: actions/checkout@v4
+
+      # Several desktop tests spawn the real Node Agent over the platform's IPC
+      # transport, so this job needs Node and installed dependencies exactly like
+      # the Windows job does -- not just the .NET SDK.
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
 
       - uses: actions/setup-dotnet@v4
         with:
           global-json-file: desktop/global.json
 
+      # Bounded: a hung apt mirror otherwise holds the runner for hours instead
+      # of failing, which is what happened on the first multi-platform run.
       - name: Install NativeAOT prerequisites
         if: matrix.rid == 'linux-x64'
-        run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev
+        timeout-minutes: 10
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends clang zlib1g-dev
+
+      - name: Install Node dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
       - name: Avalonia build (warnings are errors)
         run: >-
@@ -84,9 +103,9 @@ jobs:
           -c Release
           -r ${{ matrix.rid }}
 
-      - name: Native desktop tests
-        run: dotnet test desktop/tests/GptAccountKeeper.Desktop.Tests/GptAccountKeeper.Desktop.Tests.csproj -c Release
-
+      # Ahead of the tests on purpose: whether NativeAOT works on this RID is the
+      # question that decides the packaging approach, and a test failure for an
+      # unrelated reason would otherwise skip this step and leave it unanswered.
       - name: NativeAOT publish gate
         run: >-
           dotnet publish
@@ -94,6 +113,9 @@ jobs:
           -c Release
           -r ${{ matrix.rid }}
           -o artifacts/desktop-${{ matrix.rid }}
+
+      - name: Native desktop tests
+        run: dotnet test desktop/tests/GptAccountKeeper.Desktop.Tests/GptAccountKeeper.Desktop.Tests.csproj -c Release
 
       - uses: actions/upload-artifact@v4
         with:

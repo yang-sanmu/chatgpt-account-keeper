@@ -66,6 +66,8 @@ test("mihomo locator accepts a quoted configured executable path", () => {
   }
 });
 
+// LOCALAPPDATA\Programs 是 Windows 专有布局，所以要显式声明平台：
+// 否则这条用例只在 Windows 宿主上有意义，在 Linux/macOS 上永远找不到核心。
 test("mihomo locator finds a user-level Clash Verge Rev core", () => {
   const fx = fixture();
   try {
@@ -77,6 +79,7 @@ test("mihomo locator finds a user-level Clash Verge Rev core", () => {
       projectRoot: fx.root,
       env: { LOCALAPPDATA: localAppData },
       registryInstallDirs: [],
+      platform: "win32",
     });
 
     assert.equal(found, executable);

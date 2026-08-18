@@ -282,7 +282,15 @@ test(
           );
         }
       } catch (error) {
-        if (/Executable doesn't exist|browser.*not found/i.test(String(error))) {
+        // 也要认自己的 ChromeNotFoundError：CI runner 和干净的 Linux/macOS 机器
+        // 上没有 branded Chrome，落到的是 CHROME_NOT_FOUND 而不是 Playwright 的
+        // "Executable doesn't exist"，只匹配后者会让这条用例在那些机器上变成失败。
+        if (
+          error?.code === "CHROME_NOT_FOUND" ||
+          /Executable doesn't exist|browser.*not found|未找到可用的 Google Chrome/i.test(
+            String(error)
+          )
+        ) {
           t.skip(`本机没有可用的 Chrome/Chromium：${error.message}`);
           return;
         }

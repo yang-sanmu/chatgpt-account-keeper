@@ -26,22 +26,26 @@ test("platform paths match the per-user Windows layout", () => {
     paths.bootstrapFile,
     "C:\\Users\\Keeper\\AppData\\Roaming\\GptAccountKeeper\\bootstrap.json"
   );
-  assert.equal(paths.databaseFile, path.join(paths.dataRoot, "keeper.db"));
+  // path.win32, not the host path: on Linux the host join would produce forward
+  // slashes and this assertion would only hold on a Windows runner.
+  assert.equal(paths.databaseFile, path.win32.join(paths.dataRoot, "keeper.db"));
 });
 
+// posix fixtures and path.posix throughout: feeding a Windows temp path into the
+// linux resolver only worked because the host happened to be Windows.
 test("Linux paths honor XDG roots and never create directories", () => {
-  const marker = path.join(os.tmpdir(), `keeper-paths-${process.pid}-${Date.now()}`);
+  const marker = path.posix.join("/tmp", `keeper-paths-${process.pid}-${Date.now()}`);
   const paths = resolvePlatformPaths({
     platform: "linux",
-    homeDir: path.join(marker, "home"),
+    homeDir: path.posix.join(marker, "home"),
     env: {
-      XDG_DATA_HOME: path.join(marker, "data"),
-      XDG_CONFIG_HOME: path.join(marker, "config"),
-      XDG_CACHE_HOME: path.join(marker, "cache"),
-      XDG_RUNTIME_DIR: path.join(marker, "run"),
+      XDG_DATA_HOME: path.posix.join(marker, "data"),
+      XDG_CONFIG_HOME: path.posix.join(marker, "config"),
+      XDG_CACHE_HOME: path.posix.join(marker, "cache"),
+      XDG_RUNTIME_DIR: path.posix.join(marker, "run"),
     },
   });
-  assert.equal(paths.dataRoot, path.join(marker, "data", "gpt-account-keeper"));
+  assert.equal(paths.dataRoot, path.posix.join(marker, "data", "gpt-account-keeper"));
   assert.equal(fs.existsSync(marker), false);
 });
 

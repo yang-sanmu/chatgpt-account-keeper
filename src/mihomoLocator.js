@@ -304,8 +304,8 @@ export function platformInstallDirectories({
   return uniquePaths(directories);
 }
 
-function environmentInstallDirectories(env) {
-  return platformInstallDirectories({ env });
+function environmentInstallDirectories(env, platform = process.platform) {
+  return platformInstallDirectories({ env, platform });
 }
 
 function pathDirectories(env) {
@@ -318,6 +318,8 @@ export function findMihomoExecutable({
   projectRoot = process.cwd(),
   env = process.env,
   registryInstallDirs,
+  // 可注入，才能在任意宿主上断言某个平台的安装目录布局。
+  platform = process.platform,
 } = {}) {
   const configured = cleanConfiguredPath(configuredPath, projectRoot, env);
   if (configured) {
@@ -336,7 +338,7 @@ export function findMihomoExecutable({
   const projectCore = findCoreInDirectory(projectBin, 1);
   if (projectCore) return projectCore;
 
-  for (const directory of environmentInstallDirectories(env)) {
+  for (const directory of environmentInstallDirectories(env, platform)) {
     const found = findCoreInDirectory(directory);
     if (found) return found;
   }
@@ -348,8 +350,8 @@ export function findMihomoExecutable({
     }
   }
 
-  const discoveredDirectories = process.platform === "win32"
-    ? registryInstallDirs ?? discoverClashVergeInstallDirectories({ env })
+  const discoveredDirectories = platform === "win32"
+    ? registryInstallDirs ?? discoverClashVergeInstallDirectories({ env, platform })
     : registryInstallDirs ?? [];
   for (const directory of uniquePaths(discoveredDirectories)) {
     const found = findCoreInDirectory(directory);

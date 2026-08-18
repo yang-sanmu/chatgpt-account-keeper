@@ -3,6 +3,7 @@ import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { assertUnixSocketPathFits, unixSocketRuntimeDirectory } from "./endpoint.js";
 
 const LEGACY_STARTUP_GRACE_MS = 30 * 60 * 1000;
 
@@ -118,8 +119,16 @@ function instanceLockEndpoint(lockFile, options = {}) {
     .digest("hex")
     .slice(0, 24);
   if (platform === "win32") return `\\\\.\\pipe\\gptaccountkeeper-data-lock-${suffix}`;
-  const runtimeDirectory = options.runtimeDirectory ?? process.env.XDG_RUNTIME_DIR ?? os.tmpdir();
-  return path.join(runtimeDirectory, `gptaccountkeeper-data-lock-${suffix}.sock`);
+  // 与 currentUserEndpoint 同一套约束：macOS 的 sun_path 只有 104 字节，而
+  // os.tmpdir() 在 macOS 上就占约 50 字节，原来的名字算出来 107 字节，必然超限。
+  const runtimeDirectory =
+    options.runtimeDirectory ?? process.env.XDG_RUNTIME_DIR ?? unixSocketRuntimeDirectory(platform);
+  const endpoint = path.posix.join(
+    String(runtimeDirectory).replace(/\\/g, "/"),
+    `kpr-data-lock-${suffix}.sock`
+  );
+  assertUnixSocketPathFits(endpoint, platform);
+  return endpoint;
 }
 
 function canonicalPath(value, platform) {

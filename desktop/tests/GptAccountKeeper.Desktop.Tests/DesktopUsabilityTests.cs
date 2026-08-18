@@ -1,5 +1,6 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using System.Runtime.ExceptionServices;
+using System.Text;
 using GptAccountKeeper.Desktop.Application;
 using GptAccountKeeper.Desktop.Infrastructure.Agent;
 using GptAccountKeeper.Desktop.Infrastructure.Ipc;
@@ -78,7 +79,7 @@ public sealed class DesktopUsabilityTests
             var launcher = new AgentProcessLauncher(paths, "production-token");
             var endpoint = OperatingSystem.IsWindows()
                 ? new AgentEndpoint(AgentTransport.NamedPipe, $@"\\.\pipe\keeper-production-launch-{Guid.NewGuid():N}")
-                : new AgentEndpoint(AgentTransport.UnixDomainSocket, Path.Combine(root, "agent.sock"));
+                : new AgentEndpoint(AgentTransport.UnixDomainSocket, ShortSocketPath("a"));
 
             var result = launcher.TryStart(endpoint);
 
@@ -844,6 +845,37 @@ public sealed class DesktopUsabilityTests
         SingleInstanceGuard.Release();
     }
 
+    /// <summary>
+    /// macOS 的 sun_path 只有 104 字节，而 Path.GetTempPath() 在 macOS 上是
+    /// /var/folders/xx/&lt;32 字符哈希&gt;/T/。开发模式的默认端点原本算出来 106 字节，
+    /// 已经越界；生产模式 102 字节，只剩两字节余量。
+    /// </summary>
+    [Fact]
+    public void DefaultUnixEndpointStaysInsideTheSunPathLimit()
+    {
+        if (OperatingSystem.IsWindows()) return;
+
+        var longDataRoot = Path.Combine(
+            "/Users/a-fairly-long-account-name/Library/Application Support",
+            "GptAccountKeeper");
+        var endpoint = AgentEndpointResolver.ResolveDefault(longDataRoot);
+
+        Assert.Equal(AgentTransport.UnixDomainSocket, endpoint.Transport);
+        var bytes = Encoding.UTF8.GetByteCount(endpoint.Address);
+        Assert.True(
+            bytes < AgentEndpointResolver.UnixSocketPathLimit(),
+            $"端点 {bytes} 字节，超出 {AgentEndpointResolver.UnixSocketPathLimit()}：{endpoint.Address}");
+
+        if (OperatingSystem.IsMacOS())
+        {
+            Assert.StartsWith("/tmp/", endpoint.Address);
+            Assert.Equal(104, AgentEndpointResolver.UnixSocketPathLimit());
+        }
+
+        Assert.Throws<InvalidOperationException>(
+            () => AgentEndpointResolver.EnsureUnixSocketPathFits("/tmp/" + new string('x', 120) + ".sock"));
+    }
+
     [Fact]
     public void SingleInstanceActivationSignalIsScopedToTheDataDirectory()
     {
@@ -1353,7 +1385,7 @@ public sealed class DesktopUsabilityTests
         var paths = TestPaths(root);
         var endpoint = OperatingSystem.IsWindows()
             ? new AgentEndpoint(AgentTransport.NamedPipe, $@"\\.\pipe\keeper-desktop-integration-{Guid.NewGuid():N}")
-            : new AgentEndpoint(AgentTransport.UnixDomainSocket, Path.Combine(root, "agent.sock"));
+            : new AgentEndpoint(AgentTransport.UnixDomainSocket, ShortSocketPath("a"));
         var entry = Path.Combine(FindRepositoryRoot(), "src", "agent", "launcher.js");
         var previousEntry = Environment.GetEnvironmentVariable("GPTACCOUNTKEEPER_AGENT_ENTRY");
         Environment.SetEnvironmentVariable("GPTACCOUNTKEEPER_AGENT_ENTRY", entry);
@@ -1506,7 +1538,7 @@ public sealed class DesktopUsabilityTests
         var paths = TestPaths(root);
         var endpoint = OperatingSystem.IsWindows()
             ? new AgentEndpoint(AgentTransport.NamedPipe, $@"\\.\pipe\keeper-exit-all-integration-{Guid.NewGuid():N}")
-            : new AgentEndpoint(AgentTransport.UnixDomainSocket, Path.Combine(root, "exit-all-agent.sock"));
+            : new AgentEndpoint(AgentTransport.UnixDomainSocket, ShortSocketPath("x"));
         var previousEntry = Environment.GetEnvironmentVariable("GPTACCOUNTKEEPER_AGENT_ENTRY");
         Environment.SetEnvironmentVariable(
             "GPTACCOUNTKEEPER_AGENT_ENTRY",
@@ -1595,7 +1627,7 @@ public sealed class DesktopUsabilityTests
         WriteLegacyFixture(source);
         var endpoint = OperatingSystem.IsWindows()
             ? new AgentEndpoint(AgentTransport.NamedPipe, $@"\\.\pipe\keeper-migration-integration-{Guid.NewGuid():N}")
-            : new AgentEndpoint(AgentTransport.UnixDomainSocket, Path.Combine(root, "migration-agent.sock"));
+            : new AgentEndpoint(AgentTransport.UnixDomainSocket, ShortSocketPath("m"));
         var previousEntry = Environment.GetEnvironmentVariable("GPTACCOUNTKEEPER_AGENT_ENTRY");
         Environment.SetEnvironmentVariable("GPTACCOUNTKEEPER_AGENT_ENTRY", Path.Combine(FindRepositoryRoot(), "src", "agent", "launcher.js"));
         var connection = new AgentConnectionService(
@@ -1709,6 +1741,18 @@ public sealed class DesktopUsabilityTests
         var value = Path.Combine(Path.GetTempPath(), $"keeper-desktop-test-{Guid.NewGuid():N}");
         Directory.CreateDirectory(value);
         return value;
+    }
+
+    /// <summary>
+    /// Unix socket 路径不能放在测试用的临时目录里：那个目录名带 32 字符 GUID，
+    /// 在 macOS 上 Path.GetTempPath() 本身又占约 51 字节，加起来必然超过
+    /// sun_path 的 104 字节上限，而失败信息只是 EINVAL。
+    /// </summary>
+    private static string ShortSocketPath(string tag)
+    {
+        var directory = AgentEndpointResolver.DefaultUnixRuntimeDirectory();
+        var name = $"kpr-t{tag}-{Guid.NewGuid():N}"[..14] + ".sock";
+        return AgentEndpointResolver.EnsureUnixSocketPathFits(Path.Combine(directory, name));
     }
 
     private static string FindRepositoryRoot()

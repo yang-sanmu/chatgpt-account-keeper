@@ -55,14 +55,15 @@ internal static partial class AgentEndpointResolver
         var runtimeDirectory = Environment.GetEnvironmentVariable("XDG_RUNTIME_DIR");
         if (string.IsNullOrWhiteSpace(runtimeDirectory))
         {
-            runtimeDirectory = Path.GetTempPath();
+            runtimeDirectory = DefaultUnixRuntimeDirectory();
         }
 
         var uid = GetUnixUserId();
         var unixChannel = IsDevelopment() ? "dev-v1" : "v1";
         return new AgentEndpoint(
             AgentTransport.UnixDomainSocket,
-            Path.Combine(runtimeDirectory, $"gptaccountkeeper-agent-{unixChannel}-{uid}{dataScope}.sock"),
+            EnsureUnixSocketPathFits(
+                Path.Combine(runtimeDirectory, $"kpr-agent-{unixChannel}-{uid}{dataScope}.sock")),
             useLegacyEndpoint);
     }
 
@@ -70,6 +71,37 @@ internal static partial class AgentEndpointResolver
     {
         var canonical = Path.TrimEndingDirectorySeparator(Path.GetFullPath(dataRoot));
         return OperatingSystem.IsWindows() ? canonical.ToUpperInvariant() : canonical;
+    }
+
+    /// <summary>
+    /// sockaddr_un.sun_path 的硬上限：Darwin 104 字节，Linux 108（含结尾 NUL）。
+    /// </summary>
+    internal static int UnixSocketPathLimit() => OperatingSystem.IsMacOS() ? 104 : 108;
+
+    /// <summary>
+    /// macOS 的 Path.GetTempPath() 是 /var/folders/xx/&lt;32 字符哈希&gt;/T/，约 51 字节，
+    /// 拼上端点名后开发模式已经越界、生产模式只剩个位数余量。/tmp 短且稳定，
+    /// 文件名里已经带 uid 和数据根哈希，不同用户不会互相撞。
+    /// </summary>
+    internal static string DefaultUnixRuntimeDirectory() =>
+        OperatingSystem.IsMacOS() ? "/tmp" : Path.GetTempPath();
+
+    /// <summary>
+    /// 超限时 bind/connect 报的是 EINVAL 或静默截断，不会说"路径太长"，
+    /// 所以自己先给一个能看懂的错误。按字节算，非 ASCII 路径会占多个字节。
+    /// </summary>
+    internal static string EnsureUnixSocketPathFits(string endpoint)
+    {
+        if (OperatingSystem.IsWindows()) return endpoint;
+        var limit = UnixSocketPathLimit();
+        var length = Encoding.UTF8.GetByteCount(endpoint);
+        if (length >= limit)
+        {
+            throw new InvalidOperationException(
+                $"IPC socket 路径超出系统上限（{length} >= {limit} 字节）：{endpoint}。" +
+                "请把数据目录换到更短的路径，或设置 XDG_RUNTIME_DIR。");
+        }
+        return endpoint;
     }
 
     private static string Hash(string value)

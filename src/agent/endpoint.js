@@ -19,7 +19,7 @@ export function unixSocketPathLimit(platform = process.platform) {
  * 以后多一段后缀就会直接崩。所以 darwin 上优先用 /tmp：它短、稳定、按 uid
  * 区分文件名后不同用户不会撞。
  */
-function defaultRuntimeDirectory(platform) {
+export function unixSocketRuntimeDirectory(platform = process.platform) {
   if (platform === "darwin") return "/tmp";
   return os.tmpdir();
 }
@@ -39,7 +39,7 @@ export function currentUserEndpoint(options = {}) {
   const runtimeDir =
     options.runtimeDir ??
     process.env.XDG_RUNTIME_DIR ??
-    defaultRuntimeDirectory(platform);
+    unixSocketRuntimeDirectory(platform);
   // path.posix, not the host path: a Unix socket path is always posix, and on a
   // Windows host path.join would emit backslashes for a darwin/linux endpoint.
   const endpoint = path.posix.join(

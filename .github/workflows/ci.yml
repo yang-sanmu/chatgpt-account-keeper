@@ -50,3 +50,78 @@ jobs:
           name: native-aot-win-x64
           path: artifacts/desktop-win-x64
           if-no-files-found: error
+
+  # Compile-only gate for the platforms that are not released yet. NativeAOT
+  # cannot cross-compile (it invokes the target platform's native linker), so
+  # each RID has to build on its own runner. This job proves the platform
+  # guards in AppPaths/AgentEndpoint/StartupRegistrationService actually
+  # compile before any work is done on multi-platform packaging.
+  desktop-native-aot:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            rid: linux-x64
+          - os: macos-latest
+            rid: osx-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: desktop/global.json
+
+      - name: Install NativeAOT prerequisites
+        if: matrix.rid == 'linux-x64'
+        run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev
+
+      - name: Avalonia build (warnings are errors)
+        run: >-
+          dotnet build
+          desktop/src/GptAccountKeeper.Desktop/GptAccountKeeper.Desktop.csproj
+          -c Release
+          -r ${{ matrix.rid }}
+
+      - name: Native desktop tests
+        run: dotnet test desktop/tests/GptAccountKeeper.Desktop.Tests/GptAccountKeeper.Desktop.Tests.csproj -c Release
+
+      - name: NativeAOT publish gate
+        run: >-
+          dotnet publish
+          desktop/src/GptAccountKeeper.Desktop/GptAccountKeeper.Desktop.csproj
+          -c Release
+          -r ${{ matrix.rid }}
+          -o artifacts/desktop-${{ matrix.rid }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-aot-${{ matrix.rid }}
+          path: artifacts/desktop-${{ matrix.rid }}
+          if-no-files-found: error
+
+  agent-tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Install Node dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      # The Agent branches on process.platform for endpoints, instance locks,
+      # profile paths and the mihomo locator. Those branches are only exercised
+      # when the suite actually runs on the platform in question.
+      - name: Node tests
+        run: npm test

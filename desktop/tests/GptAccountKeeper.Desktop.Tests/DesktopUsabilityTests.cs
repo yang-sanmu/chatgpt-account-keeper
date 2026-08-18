@@ -1139,22 +1139,38 @@ public sealed class DesktopUsabilityTests
     public async Task APendingLegacyImportIsAbandonedWhenTheTargetIsAlreadyInitialized()
     {
         await using var fixture = CreateShellFixture();
-        var legacy = Path.Combine(Path.GetFullPath(Path.Combine(fixture.Paths.DataDirectory, "..")), "legacy-occupied");
-        Directory.CreateDirectory(legacy);
-        Directory.CreateDirectory(Path.GetDirectoryName(fixture.Paths.DatabaseFile)!);
-        await File.WriteAllBytesAsync(fixture.Paths.DatabaseFile, []);
-        await new DesktopSettingsStore(fixture.Paths).SaveAsync(new DesktopSettings
+        var previousExecutable = Environment.GetEnvironmentVariable("GPTACCOUNTKEEPER_AGENT_EXECUTABLE");
+        try
         {
-            PendingLegacyImportRoot = legacy,
-        });
+            var legacy = Path.Combine(Path.GetFullPath(Path.Combine(fixture.Paths.DataDirectory, "..")), "legacy-occupied");
+            Directory.CreateDirectory(legacy);
+            Directory.CreateDirectory(Path.GetDirectoryName(fixture.Paths.DatabaseFile)!);
+            await File.WriteAllBytesAsync(fixture.Paths.DatabaseFile, []);
+            await new DesktopSettingsStore(fixture.Paths).SaveAsync(new DesktopSettings
+            {
+                PendingLegacyImportRoot = legacy,
+            });
+            // 放弃导入后 InitializeAsync 会继续走"已建库"分支去连 Agent，
+            // 那会真的拉起一个 node 进程并在测试结束后残留，它加载的
+            // better-sqlite3 原生模块会让后续 npm ci 无法删除文件。
+            // 指向不存在的可执行文件，让启动这一步干净地失败。
+            Environment.SetEnvironmentVariable(
+                "GPTACCOUNTKEEPER_AGENT_EXECUTABLE",
+                Path.Combine(Path.GetDirectoryName(fixture.Paths.ConfigurationDirectory)!, "missing-agent.exe"));
 
-        var resumed = 0;
-        fixture.Shell.LegacyImportResumeRequested += (_, _) => Interlocked.Increment(ref resumed);
-        await fixture.Shell.InitializeAsync();
+            var resumed = 0;
+            fixture.Shell.LegacyImportResumeRequested += (_, _) => Interlocked.Increment(ref resumed);
+            await fixture.Shell.InitializeAsync();
 
-        Assert.Equal(0, Volatile.Read(ref resumed));
-        var settings = await new DesktopSettingsStore(fixture.Paths).LoadAsync();
-        Assert.Null(settings.PendingLegacyImportRoot);
+            Assert.Equal(0, Volatile.Read(ref resumed));
+            Assert.False(fixture.Shell.IsAgentConnected);
+            var settings = await new DesktopSettingsStore(fixture.Paths).LoadAsync();
+            Assert.Null(settings.PendingLegacyImportRoot);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("GPTACCOUNTKEEPER_AGENT_EXECUTABLE", previousExecutable);
+        }
     }
 
     /// <summary>“立即更新”要一步走完：尚未下载时先下载，然后直接进入安装流程。</summary>
@@ -1748,10 +1764,30 @@ public sealed class DesktopUsabilityTests
         public ShellViewModel Shell { get; }
         public async ValueTask DisposeAsync()
         {
+            // 兜底：任何用例只要真的连上了 Agent，就必须在这里把它停掉。
+            // 否则残留的 node 进程会一直持有 node_modules 里的 better-sqlite3
+            // 原生模块，让后续 npm ci 因 EPERM unlink 失败 —— 表现为本地发布
+            // 构建莫名跑不通，且和真正的原因隔着好几层。
+            if (_connection.IsConnected)
+            {
+                try
+                {
+                    await Shell.ShutdownAgentAsync("test-cleanup");
+                }
+                catch
+                {
+                    // 清理失败不该盖掉用例本身的失败原因。
+                }
+            }
             Shell.Stop();
             _updates.Dispose();
             await _connection.DisposeAsync();
-            if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true);
+            for (var attempt = 0; attempt < 20 && Directory.Exists(_root); attempt++)
+            {
+                try { Directory.Delete(_root, recursive: true); }
+                catch (IOException) { await Task.Delay(100); }
+                catch (UnauthorizedAccessException) { await Task.Delay(100); }
+            }
         }
     }
 }

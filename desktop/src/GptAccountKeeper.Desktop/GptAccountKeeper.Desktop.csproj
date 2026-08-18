@@ -24,6 +24,9 @@
     <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- Win32 icon resource on the exe. Without it Explorer, the Start menu and
+         the VeloPack shortcuts all fall back to the generic executable icon. -->
+    <ApplicationIcon>app-icon.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>

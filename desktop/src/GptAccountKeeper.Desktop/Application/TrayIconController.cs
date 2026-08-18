@@ -40,7 +40,7 @@ internal sealed class TrayIconController : IDisposable
 
         _trayIcon = new TrayIcon
         {
-            Icon = AppIcon.Create(),
+            Icon = AppIcon.CreateTrayIcon(),
             ToolTipText = "ChatGPT Account Keeper",
             Menu = menu,
             IsVisible = true,

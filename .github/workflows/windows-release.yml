@@ -158,8 +158,10 @@ jobs:
             --packId GptAccountKeeper.Desktop `
             --packVersion ${{ steps.version.outputs.version }} `
             --packTitle 'ChatGPT Account Keeper' `
+            --packAuthors 'yang-sanmu' `
             --packDir artifacts/stage `
             --mainExe GptAccountKeeper.Desktop.exe `
+            --icon desktop/src/GptAccountKeeper.Desktop/app-icon.ico `
             --runtime win-x64 `
             --outputDir artifacts/Releases `
             --signParams $signParams
@@ -171,8 +173,10 @@ jobs:
           --packId GptAccountKeeper.Desktop
           --packVersion ${{ steps.version.outputs.version }}
           --packTitle "ChatGPT Account Keeper"
+          --packAuthors "yang-sanmu"
           --packDir artifacts/stage
           --mainExe GptAccountKeeper.Desktop.exe
+          --icon desktop/src/GptAccountKeeper.Desktop/app-icon.ico
           --runtime win-x64
           --outputDir artifacts/Releases
 

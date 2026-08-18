@@ -317,12 +317,21 @@ try {
         }
     }
 
+    # Without --icon the Setup.exe, the uninstall entry and the Desktop/Start
+    # menu shortcuts all get VeloPack's placeholder icon.
+    $packIcon = Join-Path $repositoryRoot 'desktop\src\GptAccountKeeper.Desktop\app-icon.ico'
+    if (-not (Test-Path -LiteralPath $packIcon)) {
+        throw "The application icon is missing: ${packIcon}. Run: node scripts/generate-app-icon.mjs"
+    }
+
     & $vpk pack `
         --packId GptAccountKeeper.Desktop `
         --packVersion $Version `
         --packTitle 'ChatGPT Account Keeper' `
+        --packAuthors 'yang-sanmu' `
         --packDir $stageRoot `
         --mainExe GptAccountKeeper.Desktop.exe `
+        --icon $packIcon `
         --runtime win-x64 `
         --outputDir $releaseRoot
     if ($LASTEXITCODE -ne 0) { throw 'VeloPack packaging failed' }

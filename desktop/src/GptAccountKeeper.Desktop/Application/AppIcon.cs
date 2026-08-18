@@ -2,18 +2,124 @@ using Avalonia.Controls;
 
 namespace GptAccountKeeper.Desktop.Application;
 
+/// <summary>
+/// 应用图标。两份 PNG 直接内嵌为 base64，窗口和托盘创建图标就不依赖任何外部文件，
+/// NativeAOT 裁剪和 VeloPack 打包都不会把它弄丢。
+///
+/// 图形由 scripts/generate-app-icon.mjs 生成：要改图形就改那个脚本再重新跑，
+/// 不要手改这里的 base64。同一个脚本还会生成 app-icon.ico（exe 图标资源和安装器用）。
+/// </summary>
 internal static class AppIcon
 {
-    // Embedded PNG keeps window/tray creation self-contained across NativeAOT publishes.
+    // 窗口/任务栏用 256px：窗口图标由合成器缩放，像素给足才不会发虚。
     // Keep this value covered by AppIconTests so an invalid resource cannot crash startup.
-    private const string PngBase64 =
-        "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAQwSURBVHhe7Zu/axRBFMfzH0RCSKKexh/RCzHkCtEiIkjAIiCIIGJhQEghYqFYKFgEJVgoHGhnZ5NUdlaxsopN7KyEFJLGyjTXeeRGvhsPjjdvZt/bmdm7kF34WHjj7LzPzrz5sevQ8Hj92vB4/eVhZQh/HJmYNoeVSkAloBJQCShfQK1hJi4vWeDvrbKJKUXA0asPzdnlT2b2zR8z9+5vLig39eCzObbwJLmUZAIQNIKQBu2k2TLnHn0xx68/t+4Rg+gC0JWnX/ywA4nAzKtf+72CuW9RogkYm7tpzj/+ajU6BRCc5QymHVqiCDh5663VyDJAXgnNEWECao1snNOGlcn0s+9mZPKS3TYhhQWMTF1JNta1IDdgCNI2SigkYLS+kN2UNqSfYLYpIkEvoNYYmCdPwUNBz7Ta7EEtoN9jPo/602+qxKgS0K9sr+XM/TWr7S7EAjC+6I0GGaxEaQwcYgHoWvQmg8zMyk/RUBAJgE16AwlLWx1jXdttq9w+bbO+SwvvX5sbtKyMEzdWrVgoIgFFs75GAFvWGLOzxZeXMPv6d24vyBVQ9OkDNihOwNqe2aHlcHFlleT1glwBIRscmQBX1++YVaZOLVkuYOKSCag1sv04rVSKSMAGUyZg3HNg5WrFJhGAvTetTEO+gLbZpL/jopICwfqFxiYSELrqyxOwuk1/NMbs7pklpq4QsGOksYkEhHR/4BXAdv2OWV+z64mBa8vsFoDxz1SkwS2A7/ohU14eoxcW7Rh9ApA4aCVaXALK6vq9uI7QnALwD2glWlgBux1mzo8z5flwnSo7BYTOAIAVwF7pxn4X10zgFFBbXLEq0cIK2O6w4z/1EJi8/d6K0SsAXYZWooUX0HbMAGmToFpAshzwfxpkE2HCoaDOAZg2aCVafAJcU2GqoTAxv2zF6BWAhQOtRItfgON3XJGXwsB1YuwUAGglWtgAyV6A3wnG3QwB12mxV0DoMVi+AM9ZQMS1AY7LaWwiAaFToUiAqxwupmwRTt39YMUmEoBuQyvTwAbGBuUeCjGmxrGLd6zYRAIAtpK0QilyAf6hEDI1ZueCTFxiAThTo5VKUQlwlc+u4vng9L2PVkwqAdgWwyKt+EDQbDmzv1xAYC/oJ3lPXyzgQPYCwdOXC4i0PS4T1/aXIhYAQt4RlAneZOW9EeqiEoD9AV400BsOEhiqvvcAFJUAgMqDP35MRbPlXfRwqAWA7Kwg8Mg8BUU+oiwkAEDCwPSEZst54JFHYQEAhyb9zgnZ12HKbt9LkACAxNiv2QHZXpPwOIIFdMFqsbTFUrOVHXK6XndpiCYAoEFoWMoEiS/AJCs8KVEFdEEDsQ6P1SMwzvFhdGh350gioBccRkKG9tNayMPTdr3Ti0VyAb1ARvb/g+aXs6FCwd/jd9cJbgpKFTCIVAIqAZWAwy3gH3Vuj2SM+jitAAAAAElFTkSuQmCC";
+    private const string WindowPngBase64 =
+        "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";
 
-    public static WindowIcon Create()
+    // 托盘用 64px 的简化图形（去掉气泡尾巴、加粗钥匙孔）。托盘图标最终被 Windows
+    // 画在 16-24px 上，直接缩完整图形会糊成一团。
+    private const string TrayPngBase64 =
+        "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAEk0lEQVR42u3bbUxTVxgH8H8nbg5KC3QUhGGBLkz8IKISUKqLG8ypiS5q4j6Q4V7tNnkR"
+        + "mUOmAxwCIvKuFqdoHZkSgQgZOCyTKS2WoCJ+EEeGyogOISgllbmJYyLrVru7rkjPifZ4Pp7z3Cfp7957Xm7P4flqi8Fy4T0FsAxgBYB5APwA8B/z36QH"
+        + "0A6gAUD5/wM07jPXngAgDoDrE3qDewFkA8j4TwAfzV6ueikAJYBQG3nSNQAiAXT8G0D9FdePV90H8LGx1/3KfYhwUwSed8Me00C1Dd15ridB9jDAySLT"
+        + "dz7dxjv+jcZ9As/7B4VxY88T3OGNpWMU/w0gqd9tPNSVMTL8rzQMkTzJiV2GylwAMYwA5AGIfQAwpW6nobIGwCJGAI4BWDwKoCo0VJ76a7bHQhmZJc4f"
+        + "BThewDaAV20+4wDH8tgGeLEmlyoA3+5ZhIt9ECB0g/uk0YVl9x09WnU3oOq5Av3Q75QBqnOoANhPmIh4vzl4x3sG7HjPcMYMDf+B/VfPI6v9NAbv3aUE"
+        + "8G02cYAgZ0/kzFgIib3QovjOQR3Wna9F861r5AE8q3YQBZjt4oHDISsxaYLdmK67c28Ib2nLcObmdcIAlVnEAEYe9e8XRELKd3mk6zv0N/FavfLBq0EO"
+        + "4Oh2YgAb/GWI9gsZV478di0y29TkADwqMokA8HjAxSXREEx8blx5Bu7+hmnV+RgeJgVQvo0IQJi7FMq5K6ySK7KxHHXdHWQAJpdlEAGI8w9F/DSZVXJl"
+        + "XVQju01DCOBIOhGAjMCFeFsaaJVcBztakNBSSwigNI0IQNrM17H6pVlWyXXgp7NIPHecDID74a1EAKL85yBx+gLrYF6oR0HbaUIAh1KJAISKJSh7NcI6"
+        + "369OlEDT00kGwO2bL4nNA5qXRsHLQTiuHF23dQiqKiA3D3Ar2UIMYI1/CFJmho8rR9I5FYratAQBvk4huhaoCI/EXDfJI13beKMTy1VKsmsB8cFkogBe"
+        + "Dk4oDYuAVCAa2zpgoA+r6krQdbufMIAyifhy2NNeiNzQZZg/2dei+FO/XEasphLXBnXkl8Pi/V9Q+yK0emoQ3p0ajJeduP98+rG/F8WXmnDgUjO9L0Ku"
+        + "xZupfhIbKXVL5Zgu8nio7kLfdYRVKUCpGAHs20QVwM/JFerl0Zxtsop8tPf30gV4Ye/nVAFiAl7BptncQ2PqGRXyWk9SBtiTSBXgu2VyzBJ7cbad7enC"
+        + "G5UKygBFG6kB+ApFaFq13mxMcOkOXNb10QMQKRKoAawNmIfkkMVmY5K1NShsbaAIsPszagDVb8oR7O5tNqap+yqWHFXQA3DZuYEKwBSBM1oiEiyKDSzJ"
+        + "wM8DtygBFH5KBUAeIIPoecv2WPb9qoeiVU0JoCCe+kToMSj/ADjnrWccIDeOcYCcdWwDOGXHMg6QFcM2gHB7NOMAmVGMA2xba6hkc6OkIP0TQyWbW2UF"
+        + "aR8bKtncLO249SPjBva2yzumyo0b2Tsw4bhljWkAW0dm+CkfmgaxdWiKn/wBVzA7x+Yckt43d6HtH5x02PyeJYls9+ishQA2W5gH+BPv65iwijNVnwAA"
+        + "AABJRU5ErkJggg==";
+
+    public static WindowIcon CreateWindowIcon() => Create(GetWindowPngBytes());
+
+    public static WindowIcon CreateTrayIcon() => Create(GetTrayPngBytes());
+
+    private static WindowIcon Create(byte[] png)
     {
-        using var stream = new MemoryStream(GetPngBytes(), writable: false);
+        using var stream = new MemoryStream(png, writable: false);
         return new WindowIcon(stream);
     }
 
-    internal static byte[] GetPngBytes() => Convert.FromBase64String(PngBase64);
+    internal static byte[] GetWindowPngBytes() => Convert.FromBase64String(WindowPngBase64);
+
+    internal static byte[] GetTrayPngBytes() => Convert.FromBase64String(TrayPngBase64);
 }

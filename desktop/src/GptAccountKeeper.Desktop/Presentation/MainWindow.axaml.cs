@@ -20,7 +20,7 @@ internal sealed partial class MainWindow : Window
         ViewModel = viewModel;
         _requestApplicationExit = requestApplicationExit;
         InitializeComponent();
-        Icon = AppIcon.Create();
+        Icon = AppIcon.CreateWindowIcon();
         DataContext = viewModel;
         Opened += OnOpened;
 

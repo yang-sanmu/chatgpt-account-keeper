@@ -3,6 +3,7 @@
  *
  * Outputs (all committed, so a normal build never needs this script):
  *   desktop/src/GptAccountKeeper.Desktop/app-icon.ico  -> <ApplicationIcon> + `vpk pack --icon`
+ *   desktop/src/GptAccountKeeper.Desktop/app-icon.icns -> macOS bundle / installer icon
  *   desktop/src/GptAccountKeeper.Desktop/app-icon.png  -> 256px master, embedded by AppIcon.cs
  *   Application/AppIcon.cs                             -> base64 payload rewritten in place
  *
@@ -16,12 +17,9 @@
  *   - a mid-tone badge fill. Near-black artwork is indistinguishable from a
  *     dark shell background.
  *
- * Currently Windows-only, because that is the only platform the project ships.
- * The artwork itself is platform neutral: `render(size)` takes any size, so the
- * M6 macOS/Linux assets are new container encoders over the same shapes, not new
- * artwork -- add an .icns writer (16/32/128/256/512 plus @2x) and an XDG hicolor
- * PNG set beside `encodeIco`. Keep `simplify` in mind for Linux trays, whose
- * sizes vary by desktop environment.
+ * The artwork itself is platform neutral: `render(size)` takes any size. Linux
+ * hicolor assets are emitted below from the same source as the Windows and
+ * macOS containers, so the three platforms cannot silently drift apart.
  */
 import { deflateSync } from "node:zlib";
 import fs from "node:fs";
@@ -318,10 +316,41 @@ function encodeIco(frames) {
 }
 
 // ---------------------------------------------------------------------------
+// ICNS container
+// ---------------------------------------------------------------------------
+
+/**
+ * Modern ICNS entries may contain complete PNG images. Each chunk length and
+ * the outer container length are big-endian and include their 8-byte header.
+ */
+function encodeIcns(frames) {
+  const chunks = frames.map(({ type, data }) => {
+    const header = Buffer.alloc(8);
+    header.write(type, 0, "ascii");
+    header.writeUInt32BE(data.length + 8, 4);
+    return Buffer.concat([header, data]);
+  });
+  const header = Buffer.alloc(8);
+  header.write("icns", 0, "ascii");
+  header.writeUInt32BE(8 + chunks.reduce((total, entry) => total + entry.length, 0), 4);
+  return Buffer.concat([header, ...chunks]);
+}
+
+// ---------------------------------------------------------------------------
 // Outputs
 // ---------------------------------------------------------------------------
 
 const ICO_SIZES = [16, 20, 24, 32, 40, 48, 64, 128, 256];
+const ICNS_FRAMES = [
+  ["icp4", 16],
+  ["icp5", 32],
+  ["icp6", 64],
+  ["ic07", 128],
+  ["ic08", 256],
+  ["ic09", 512],
+  ["ic10", 1024],
+];
+const LINUX_ICON_SIZES = [16, 24, 32, 48, 64, 128, 256, 512];
 
 // The window icon is downscaled by the compositor from a single raster, so it
 // ships large. The tray raster is smaller and uses the simplified artwork,
@@ -335,12 +364,34 @@ const frames = ICO_SIZES.map((size) => {
 });
 
 const icoPath = path.join(projectRoot, "app-icon.ico");
+const icnsPath = path.join(projectRoot, "app-icon.icns");
 const pngPath = path.join(projectRoot, "app-icon.png");
 const windowPng = encodePng(render(WINDOW_SIZE), WINDOW_SIZE);
 const trayPng = encodePng(render(TRAY_SIZE, true), TRAY_SIZE);
 
 fs.writeFileSync(icoPath, encodeIco(frames));
+fs.writeFileSync(
+  icnsPath,
+  encodeIcns(
+    ICNS_FRAMES.map(([type, size]) => ({ type, data: encodePng(render(size), size) })),
+  ),
+);
 fs.writeFileSync(pngPath, windowPng);
+
+for (const size of LINUX_ICON_SIZES) {
+  const iconDirectory = path.join(
+    projectRoot,
+    "icons",
+    "hicolor",
+    `${size}x${size}`,
+    "apps",
+  );
+  fs.mkdirSync(iconDirectory, { recursive: true });
+  fs.writeFileSync(
+    path.join(iconDirectory, "gpt-account-keeper.png"),
+    encodePng(render(size), size),
+  );
+}
 
 // Rewrite both base64 payloads in AppIcon.cs so the embedded copies can never
 // drift from the generated artwork.
@@ -397,4 +448,6 @@ console.log(
     `${ICO_SIZES.length} sizes, ${fs.statSync(icoPath).size} bytes`,
 );
 console.log(`${path.relative(repositoryRoot, pngPath)}  ${windowPng.length} bytes`);
+console.log(`${path.relative(repositoryRoot, icnsPath)}  ${fs.statSync(icnsPath).size} bytes`);
+console.log(`Linux hicolor icons  ${LINUX_ICON_SIZES.join(", ")}px`);
 console.log(`AppIcon.cs  window ${windowPng.length}B / tray ${trayPng.length}B embedded`);

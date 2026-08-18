@@ -20,6 +20,14 @@ internal static class PackagingIconAssets
     /// <summary>Windows：exe 图标资源和安装器/快捷方式图标。</summary>
     public static string WindowsIcon => Resolve("app-icon.ico");
 
+    /// <summary>macOS bundle、Dock 与安装器使用的多分辨率 ICNS。</summary>
+    public static string MacOsIcon => Resolve("app-icon.icns");
+
+    public static string InfoPlist => Resolve("Info.plist");
+
+    public static string LinuxIcon(int size) => Resolve(
+        Path.Combine("icons", "hicolor", $"{size}x{size}", "apps", "gpt-account-keeper.png"));
+
     /// <summary>窗口图标用的 256px 母版（各平台共用的矢量渲染结果）。</summary>
     public static string MasterPng => Resolve("app-icon.png");
 

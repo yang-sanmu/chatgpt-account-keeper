@@ -1,8 +1,10 @@
-# 本地发布流程（不依赖 GitHub Actions）
+# 本地 Windows 检查流程（不依赖 GitHub Actions）
 
-在本机完成构建、打包和产物生成，只用 GitHub 存放 Release。与 [远端发布流程](RELEASE_REMOTE.md) 产物布局完全一致。
+> **范围变更：** 本脚本只构建 Windows x64 检查包。四平台发布启用后，`UploadDraft` 已被禁用；本地产物不能创建正式 Draft Release，也不能替代 macOS 签名公证和 Linux AppImage/Minisign runner。正式发布请使用 [远端发布流程](RELEASE_REMOTE.md)。
 
-适用场景：GitHub Actions 不可用（账号欠费锁、服务故障），或不想等 CI。
+在本机完成 Windows 构建、打包和检查产物生成，不上传 Release。它与远端 Windows job 接近，但不是完整的四平台发布产物。
+
+适用场景：诊断 Windows 打包、签名前检查或 Actions 故障时验证 Windows 候选。
 
 ## 准备
 
@@ -83,47 +85,13 @@ git push origin main
 
 首次运行会出现 SmartScreen「未知发布者」提示，点「更多信息 → 仍要运行」。这是未签名软件的预期行为，见 [无签名发布](#无签名发布)。
 
-### 4. 上传并创建 Draft Release
+### 4. 不要上传这个本地包
 
-```powershell
-.\scripts\publish-windows-release.ps1 -Version 0.1.5 -Mode UploadDraft -NMinusOneVerified
-```
-
-`-NMinusOneVerified` 是强制的，不带这个开关脚本会拒绝执行 —— 它的作用就是挡住跳过第 3 步。
-
-这一步会校验本地产物齐全、拒绝混入其他版本的残留文件，然后打 tag 并创建 **Draft** Release。Draft 客户端看不到，此时还没有人会收到更新。
-
-上传失败可以直接重跑：草稿会被复用，同名 asset 覆盖，不用换版本号。
-
-### 5. 公开
-
-先在 Release 页面人工确认 8 个必需 asset 齐全：
-
-| Asset | 用途 |
-|---|---|
-| `GptAccountKeeper.Desktop-win-Setup.exe` | 安装程序 |
-| `GptAccountKeeper.Desktop-<版本>-full.nupkg` | VeloPack 完整包 |
-| `RELEASES` / `releases.win.json` | 更新清单 |
-| `GptAccountKeeper.Desktop-<版本>.spdx.json` | SBOM |
-| `chatgpt-account-keeper-<版本>-source.zip` | 项目对应源码（AGPL） |
-| `mihomo-v<版本>-source.zip` | mihomo 对应源码（GPL-3.0 强制） |
-| `SHA256SUMS.release.txt` | 校验和 |
-
-然后：
-
-```powershell
-.\scripts\publish-windows-release.ps1 -Version 0.1.5 -Mode PublishDraft
-```
-
-脚本会再核对一遍 asset 齐全、确认是 Draft 且非 prerelease，通过后转正并标记 `--latest`。
-
-**只有这一步会让版本进入客户端的稳定更新通道。**
+`publish-windows-release.ps1 -Mode UploadDraft` 会明确报错，因为本地目录缺少 macOS arm64/x64、Linux AppImage、Apple 公证和 Minisign 产物。完成 Windows 检查后，请回到 [远端发布流程](RELEASE_REMOTE.md)，由同一 commit 的四个平台原生 runner 重新构建并汇总 Draft。
 
 ## 注意事项
 
-- **先干跑**：第 4、5 步可以加 `-WhatIf`，只验证状态并显示将执行的操作。
-- **同一版本号只能发一次**（草稿重传除外，见第 4 步）。
-- **不需要手动 push tag**：tag 由第 4 步自动创建。远端工作流只接受手动触发，推 tag 不会触发重复构建。
+- **本地流程不创建 tag 或 Release**。
 - **重跑构建前不用手动清理**：脚本每次会重建 `artifacts\stage`、`artifacts\Releases`、`artifacts\compliance`，下载缓存则会复用。
 
 ## 无签名发布
@@ -132,7 +100,7 @@ git push origin main
 
 Windows SmartScreen 在首次下载或运行安装程序时可能提示"未知发布者"，用户需点击「更多信息 → 仍要运行」。这不影响 VeloPack 自动更新 —— 更新完整性由 `RELEASES` 中的 SHA 校验，与签名无关。
 
-每个 Release 附带 `SHA256SUMS.release.txt`，用户可据此核对下载。
+本地检查目录会生成 SHA-256 清单；正式 Release 的总清单由远端 aggregate job 重新生成。
 
 本地构建路径不支持签名。需要签名请用 [远端发布流程](RELEASE_REMOTE.md) 并配置仓库 secret。
 

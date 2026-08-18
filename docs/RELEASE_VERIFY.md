@@ -43,7 +43,7 @@
 
 - **N-1**：当前线上版本，从 [Releases](https://github.com/yang-sanmu/chatgpt-account-keeper/releases) 下载 `GptAccountKeeper.Desktop-win-Setup.exe`
 - **N**：本次候选包
-  - 远端流程：`artifacts\candidate-<版本>\Releases\GptAccountKeeper.Desktop-win-Setup.exe`
+  - 远端流程：`artifacts\candidate-<版本>\GptAccountKeeper.Desktop-win-Setup.exe`
   - 本地流程：`artifacts\Releases\GptAccountKeeper.Desktop-win-Setup.exe`
 
 > 在日常使用的机器上做要小心：安装 N-1 会覆盖你现有的安装，而数据目录是共用的。如果本机数据重要，先备份 `%APPDATA%\GptAccountKeeper`，或改用虚拟机 / 另一个 Windows 用户账户。

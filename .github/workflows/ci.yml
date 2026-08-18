@@ -51,20 +51,19 @@ jobs:
           path: artifacts/desktop-win-x64
           if-no-files-found: error
 
-  # Compile-only gate for the platforms that are not released yet. NativeAOT
-  # cannot cross-compile (it invokes the target platform's native linker), so
-  # each RID has to build on its own runner. This job proves the platform
-  # guards in AppPaths/AgentEndpoint/StartupRegistrationService actually
-  # compile before any work is done on multi-platform packaging.
+  # NativeAOT cannot cross-compile (it invokes the target platform's native
+  # linker), so every released RID builds and tests on its own architecture.
   desktop-native-aot:
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             rid: linux-x64
-          - os: macos-latest
+          - os: macos-15
             rid: osx-arm64
+          - os: macos-15-intel
+            rid: osx-x64
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     env:
@@ -127,7 +126,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-24.04, macos-15, macos-15-intel]
     runs-on: ${{ matrix.os }}
     env:
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"

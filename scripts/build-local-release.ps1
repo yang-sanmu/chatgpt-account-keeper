@@ -3,13 +3,12 @@
 Builds a complete Windows release on this machine, without GitHub Actions.
 
 .DESCRIPTION
-Mirrors every step of .github/workflows/windows-release.yml so a release can be
-produced while Actions is unavailable. Artifacts land in the same layout the CI
-job produces, so scripts/publish-windows-release.ps1 -Mode UploadDraft can
-upload them unchanged.
+Builds a Windows inspection package while Actions is unavailable. The formal
+release is assembled remotely because Linux and macOS packages and signatures
+cannot be produced or attested by this Windows-only script.
 
-Signing is intentionally absent: releases are published unsigned, and Windows
-SmartScreen will warn on first run. See SOURCE.md.
+Signing is intentionally absent. This output is for local validation only; it
+cannot pass the signed cross-platform draft-release gate. See SOURCE.md.
 #>
 [CmdletBinding()]
 param(
@@ -419,8 +418,8 @@ try {
     }
 
     Write-Host ''
-    Write-Host 'Next: verify an installed N-1 -> N upgrade with this Setup.exe, then run' -ForegroundColor Yellow
-    Write-Host "  .\scripts\publish-windows-release.ps1 -Version ${Version} -Mode UploadDraft -NMinusOneVerified" -ForegroundColor Yellow
+    Write-Host 'Next: verify an installed N-1 -> N upgrade with this Setup.exe.' -ForegroundColor Yellow
+    Write-Host 'For a publishable draft, run the remote Candidate workflow for all platforms, then rerun it in Release mode after verification.' -ForegroundColor Yellow
 }
 finally {
     Set-Location -LiteralPath $originalLocation

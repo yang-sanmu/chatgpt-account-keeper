@@ -60,23 +60,7 @@ export class AgentIpcServer {
       fs.mkdirSync(path.dirname(this.endpoint), { recursive: true, mode: 0o700 });
     }
     this.server = net.createServer((socket) => this._accept(socket));
-    await new Promise((resolve, reject) => {
-      const onError = (error) => {
-        this.server.off("listening", onListening);
-        reject(error);
-      };
-      const onListening = () => {
-        this.server.off("error", onError);
-        resolve();
-      };
-      this.server.once("error", onError);
-      this.server.once("listening", onListening);
-      this.server.listen({
-        path: this.endpoint,
-        readableAll: false,
-        writableAll: false,
-      });
-    });
+    await listenWithStaleSocketRecovery(this.server, this.endpoint);
     this._listening = true;
     if (process.platform !== "win32") fs.chmodSync(this.endpoint, 0o600);
     this._unsubscribe = this.services.events.subscribe((event) => this._broadcastEvent(event));
@@ -94,12 +78,7 @@ export class AgentIpcServer {
     }
     this._listening = false;
     if (process.platform !== "win32") {
-      try {
-        const stat = fs.lstatSync(this.endpoint);
-        if (stat.isSocket()) fs.unlinkSync(this.endpoint);
-      } catch (error) {
-        if (error?.code !== "ENOENT") throw error;
-      }
+      removeUnixSocket(this.endpoint);
     }
   }
 
@@ -168,4 +147,90 @@ export class AgentIpcServer {
 
 export function createAgentIpcServer(options) {
   return new AgentIpcServer(options);
+}
+
+async function listenWithStaleSocketRecovery(server, endpoint) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      await listenServer(server, endpoint);
+      return;
+    } catch (error) {
+      if (
+        process.platform === "win32" ||
+        error?.code !== "EADDRINUSE" ||
+        attempt !== 0 ||
+        !(await removeIfStaleUnixSocket(endpoint))
+      ) {
+        throw error;
+      }
+    }
+  }
+}
+
+function listenServer(server, endpoint) {
+  return new Promise((resolve, reject) => {
+    const onError = (error) => {
+      server.off("listening", onListening);
+      reject(error);
+    };
+    const onListening = () => {
+      server.off("error", onError);
+      resolve();
+    };
+    server.once("error", onError);
+    server.once("listening", onListening);
+    server.listen({
+      path: endpoint,
+      readableAll: false,
+      writableAll: false,
+    });
+  });
+}
+
+async function removeIfStaleUnixSocket(endpoint) {
+  const state = await probeUnixSocket(endpoint);
+  if (state !== "stale") return false;
+
+  try {
+    const stat = fs.lstatSync(endpoint);
+    if (!stat.isSocket()) return false;
+    fs.unlinkSync(endpoint);
+    return true;
+  } catch (error) {
+    // Another cleanup may win the race after bind reported EADDRINUSE. Retrying
+    // the bind is safe when the path has disappeared.
+    if (error?.code === "ENOENT") return true;
+    throw error;
+  }
+}
+
+function probeUnixSocket(endpoint) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const socket = net.createConnection({ path: endpoint });
+    const finish = (state) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket.destroy();
+      resolve(state);
+    };
+    // A timeout or an unexpected error is treated as occupied. Recovery only
+    // deletes paths for the two errors that unambiguously mean no listener.
+    const timer = setTimeout(() => finish("occupied"), 500);
+    timer.unref?.();
+    socket.once("connect", () => finish("occupied"));
+    socket.once("error", (error) => {
+      finish(error?.code === "ECONNREFUSED" || error?.code === "ENOENT" ? "stale" : "occupied");
+    });
+  });
+}
+
+function removeUnixSocket(endpoint) {
+  try {
+    const stat = fs.lstatSync(endpoint);
+    if (stat.isSocket()) fs.unlinkSync(endpoint);
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
 }

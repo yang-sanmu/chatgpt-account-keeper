@@ -11,8 +11,15 @@ internal sealed class StartupRegistrationService
 
     public void SetEnabled(bool enabled)
     {
-        var executable = Environment.ProcessPath
-            ?? throw new InvalidOperationException("无法确定桌面程序路径");
+        // Disabling a registration must not depend on resolving the current
+        // executable. In particular, first launch defaults to disabled and may
+        // run before any platform-specific registration directory exists.
+        var executable = enabled
+            ? ResolveExecutableForStartup(
+                Environment.ProcessPath,
+                Environment.GetEnvironmentVariable("APPIMAGE"),
+                OperatingSystem.IsLinux())
+            : null;
 
         if (OperatingSystem.IsWindows())
         {
@@ -20,7 +27,7 @@ internal sealed class StartupRegistrationService
                 ?? throw new InvalidOperationException("无法打开当前用户的开机启动注册表项");
             if (enabled)
             {
-                key.SetValue(RegistrationName, $"\"{executable}\" --hidden", RegistryValueKind.String);
+                key.SetValue(RegistrationName, $"\"{executable!}\" --hidden", RegistryValueKind.String);
             }
             else
             {
@@ -39,12 +46,12 @@ internal sealed class StartupRegistrationService
             var target = Path.Combine(directory, "io.github.yang-sanmu.gptaccountkeeper.plist");
             if (!enabled)
             {
-                File.Delete(target);
+                DeleteIfPresent(target);
                 return;
             }
 
             Directory.CreateDirectory(directory);
-            var escaped = SecurityElement.Escape(executable) ?? executable;
+            var escaped = SecurityElement.Escape(executable!) ?? executable;
             WriteAtomically(target, $"""
                 <?xml version="1.0" encoding="UTF-8"?>
                 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -69,13 +76,12 @@ internal sealed class StartupRegistrationService
         var desktopFile = Path.Combine(autostartDirectory, "gpt-account-keeper.desktop");
         if (!enabled)
         {
-            File.Delete(desktopFile);
+            DeleteIfPresent(desktopFile);
             return;
         }
 
         Directory.CreateDirectory(autostartDirectory);
-        var escapedExecutable = executable.Replace("\\", "\\\\", StringComparison.Ordinal)
-            .Replace("\"", "\\\"", StringComparison.Ordinal);
+        var escapedExecutable = EscapeDesktopExecArgument(executable!);
         WriteAtomically(desktopFile, $"""
             [Desktop Entry]
             Type=Application
@@ -84,6 +90,50 @@ internal sealed class StartupRegistrationService
             Terminal=false
             X-GNOME-Autostart-enabled=true
             """);
+    }
+
+    internal static string ResolveExecutableForStartup(
+        string? processPath,
+        string? appImagePath,
+        bool isLinux)
+    {
+        // AppImage runs the real executable from a transient /tmp/.mount_*
+        // directory. APPIMAGE is the stable path selected by the user and is
+        // the only path that remains valid for the next desktop session.
+        if (isLinux && !string.IsNullOrWhiteSpace(appImagePath))
+        {
+            if (!Path.IsPathFullyQualified(appImagePath))
+            {
+                throw new InvalidOperationException("APPIMAGE must be an absolute path");
+            }
+
+            return Path.GetFullPath(appImagePath);
+        }
+
+        return processPath
+            ?? throw new InvalidOperationException("无法确定桌面程序路径");
+    }
+
+    internal static string EscapeDesktopExecArgument(string value) => value
+        .Replace("\\", "\\\\", StringComparison.Ordinal)
+        .Replace("\"", "\\\"", StringComparison.Ordinal)
+        .Replace("`", "\\`", StringComparison.Ordinal)
+        .Replace("$", "\\$", StringComparison.Ordinal)
+        .Replace("%", "%%", StringComparison.Ordinal);
+
+    internal static void DeleteIfPresent(string target)
+    {
+        try
+        {
+            // File.Delete is idempotent for a missing file, but on Unix it can
+            // still throw when a parent directory does not exist. That is the
+            // normal first-launch state for ~/.config/autostart and, on a clean
+            // macOS account, ~/Library/LaunchAgents.
+            File.Delete(target);
+        }
+        catch (DirectoryNotFoundException)
+        {
+        }
     }
 
     private static void WriteAtomically(string target, string content)

@@ -5,8 +5,20 @@ import crypto from "node:crypto";
 
 const root = path.resolve(process.argv[2] ?? "");
 const expectedVersion = process.argv[3] ?? null;
+const expectedRid = process.argv[4] ?? null;
+const supportedRids = new Set(["win-x64", "linux-x64", "osx-arm64", "osx-x64"]);
+const nativePrebuildByRid = {
+  "win-x64": "win32-x64.node",
+  "linux-x64": "linux-x64.node",
+  "osx-arm64": "darwin-arm64.node",
+  "osx-x64": "darwin-x64.node",
+};
 if (!process.argv[2] || !fs.existsSync(root) || !fs.statSync(root).isDirectory()) {
-  console.error("usage: node scripts/verify-package.mjs <staged-package-dir>");
+  console.error("usage: node scripts/verify-package.mjs <staged-package-dir> [version] [rid]");
+  process.exit(2);
+}
+if (expectedRid && !supportedRids.has(expectedRid)) {
+  console.error(`Unsupported release RID: ${expectedRid}`);
   process.exit(2);
 }
 
@@ -77,6 +89,55 @@ if (missing.length) {
   console.error("Release package is missing required runtime/licensing assets:");
   for (const pattern of missing) console.error(`  - ${pattern}`);
   process.exit(1);
+}
+
+if (expectedRid) {
+  const windows = expectedRid === "win-x64";
+  const platformFiles = [
+    windows ? "GptAccountKeeper.Desktop.exe" : "GptAccountKeeper.Desktop",
+    windows ? "agent/runtime/node.exe" : "agent/runtime/node",
+    windows ? "agent/bin/mihomo.exe" : "agent/bin/mihomo",
+  ];
+  const missingPlatformFiles = platformFiles.filter((file) => !relativeFiles.includes(file));
+  if (missingPlatformFiles.length) {
+    console.error(`Release package does not match ${expectedRid}:`);
+    for (const file of missingPlatformFiles) console.error(`  - ${file}`);
+    process.exit(1);
+  }
+  // Windows cannot represent Unix executable mode bits. Unix release jobs run
+  // this verifier on their native runner, where a missing +x is meaningful.
+  if (!windows && process.platform !== "win32") {
+    const notExecutable = platformFiles.filter(
+      (file) => (fs.statSync(path.join(root, ...file.split("/"))).mode & 0o111) === 0
+    );
+    if (notExecutable.length) {
+      console.error(`Release package contains non-executable ${expectedRid} binaries:`);
+      for (const file of notExecutable) console.error(`  - ${file}`);
+      process.exit(1);
+    }
+  }
+
+  const runtimeManifest = JSON.parse(
+    fs.readFileSync(path.join(root, "licenses", "runtime-versions.json"), "utf8")
+  );
+  if (!runtimeManifest.node?.runtimes?.[expectedRid] || !runtimeManifest.mihomo?.runtimes?.[expectedRid]) {
+    console.error(`runtime-versions.json does not pin Node and mihomo for ${expectedRid}.`);
+    process.exit(1);
+  }
+
+  const nativePrebuilds = relativeFiles.filter((file) =>
+    /^agent\/node_modules\/better-sqlite3\/prebuilds\/[^/]+\.node$/i.test(file)
+  );
+  const expectedPrebuild =
+    `agent/node_modules/better-sqlite3/prebuilds/${nativePrebuildByRid[expectedRid]}`;
+  if (
+    nativePrebuilds.length > 0 &&
+    (nativePrebuilds.length !== 1 || nativePrebuilds[0] !== expectedPrebuild)
+  ) {
+    console.error(`Release package contains incorrect better-sqlite3 prebuilds for ${expectedRid}:`);
+    for (const file of nativePrebuilds) console.error(`  - ${file}`);
+    process.exit(1);
+  }
 }
 
 const agentPackage = JSON.parse(fs.readFileSync(path.join(root, "agent", "package.json"), "utf8"));

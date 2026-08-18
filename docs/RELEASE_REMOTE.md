@@ -1,8 +1,8 @@
 # 远端发布流程（GitHub Actions）
 
-用 GitHub Actions 构建并发布 Windows 版本。构建在 GitHub 的 runner 上完成，本机只负责触发和验收。
+用 GitHub Actions 在原生 runner 上同时构建 Windows x64、Linux x64、macOS arm64/x64，并汇总到同一个 Release。本机只负责触发和验收。脚本名 `publish-windows-release.ps1` 为兼容旧调用保留，实际触发的是四平台工作流。
 
-公开仓库的 Actions 用量免费。如果 job 无法启动并提示 `account is locked due to a billing issue`，那是账号级别的欠费锁（与本仓库用量无关），处理完才能用这条路径；期间改用 [本地发布流程](RELEASE_LOCAL.md)。
+如果 job 无法启动并提示账号或额度问题，需要先恢复 Actions；[本地 Windows 检查流程](RELEASE_LOCAL.md) 不能生成 macOS/Linux 正式产物，也不能替代本流程。
 
 ## 准备
 
@@ -41,10 +41,7 @@ git push origin main
 .\scripts\publish-windows-release.ps1 -Version 0.1.5 -Mode Candidate
 ```
 
-触发工作流并实时跟踪日志，跑完才返回（Windows runner 上约 15-25 分钟）。成功后产物自动下载到 `artifacts\candidate-0.1.5\`，其中分成两个子目录：
-
-- `Releases\` —— 安装包、完整包、增量包、更新清单
-- `compliance\` —— SBOM、源码归档、校验和
+触发四个平台 job 并实时跟踪日志，跑完才返回。成功后汇总产物平铺下载到 `artifacts\candidate-0.1.5\`，包括安装包、四个 VeloPack 更新通道、签名、SBOM、源码归档和校验和。
 
 这一步**不打 tag、不创建 Release**，只为验收提供安装包。
 
@@ -52,9 +49,7 @@ git push origin main
 
 这是公开发布前唯一的人工闸门，不要跳过。完整清单和原理见 **[N-1 → N 验收](RELEASE_VERIFY.md)**。
 
-简版：装当前线上版本 → 造出真实数据（账号、登录、跑一次任务）→ 用 `artifacts\candidate-0.1.5\Releases\GptAccountKeeper.Desktop-win-Setup.exe` **覆盖安装**（不要先卸载）→ 确认账号 / Profile / 登录态 / 历史 / 代理都在，Agent 正常重启。
-
-首次运行会出现 SmartScreen「未知发布者」提示，点「更多信息 → 仍要运行」。这是未签名软件的预期行为，见 [无签名发布](#无签名发布)。
+简版：在每个已有线上版本的平台上安装 N-1 → 造出真实数据（账号、登录、跑一次任务）→ 用候选目录里的对应安装包/AppImage/DMG 升级 → 确认账号、Profile、登录态、历史、代理都在，Agent 正常重启。首次增加的平台至少完成全新安装、退出重启、自启动和更新源检查。
 
 ### 4. 创建 Draft Release
 
@@ -64,21 +59,23 @@ git push origin main
 
 `-NMinusOneVerified` 是强制的，不带这个开关脚本会拒绝执行 —— 它的作用就是挡住跳过第 3 步。
 
-这一步会打 tag 并创建 **Draft** Release。Draft 客户端看不到，此时还没有人会收到更新。
+只有四个平台全部构建成功、N-1 验收已确认，且 Authenticode、Apple 公证与 Minisign 凭据全部配置时，这一步才会打 tag 并创建 **一个 Draft Release**。任何 `UNSIGNED-<rid>.txt` 标记都会阻止创建 Draft。
 
 ### 5. 公开
 
-先在 Release 页面人工确认 8 个必需 asset 齐全：
+先在 Release 页面人工确认下列资产组齐全：
 
 | Asset | 用途 |
 |---|---|
-| `GptAccountKeeper.Desktop-win-Setup.exe` | 安装程序 |
-| `GptAccountKeeper.Desktop-<版本>-full.nupkg` | VeloPack 完整包 |
-| `RELEASES` / `releases.win.json` | 更新清单 |
-| `GptAccountKeeper.Desktop-<版本>.spdx.json` | SBOM |
+| Windows `Setup.exe`、Portable.zip、full.nupkg | Windows x64 安装与更新 |
+| 两组 macOS `Setup.pkg`、Portable.zip、DMG、full.nupkg | Apple Silicon 与 Intel 安装/更新 |
+| Linux AppImage、`.minisig`、full.nupkg | Linux x64 运行与更新 |
+| `releases.win.json`、`releases.osx-arm64.json`、`releases.osx-x64.json`、`releases.linux-x64.json` | 四个隔离更新通道 |
+| 四份 `*.spdx.json` | 各 RID SBOM |
 | `chatgpt-account-keeper-<版本>-source.zip` | 项目对应源码（AGPL） |
 | `mihomo-v<版本>-source.zip` | mihomo 对应源码（GPL-3.0 强制） |
-| `SHA256SUMS.release.txt` | 校验和 |
+| `SHA256SUMS.linux-x64.txt`、`.minisig`、`minisign.pub` | Linux 独立签名材料 |
+| `SHA256SUMS.release.txt` | 全部资产总校验和 |
 
 然后：
 
@@ -98,28 +95,30 @@ git push origin main
 - **不需要手动 push tag**：tag 由第 4 步自动创建。工作流只接受手动触发（`workflow_dispatch`），推 tag 不会触发构建。
 - **仓库不是默认的**：加 `-Repository <owner>/<repo>`。
 
-## 无签名发布
+## 仓库签名配置
 
-发行产物**不做 Authenticode 签名**。
+正式 Draft 需要以下 Actions Secrets；缺失时只保留内部候选 artifact：
 
-Windows SmartScreen 在首次下载或运行安装程序时可能提示"未知发布者"，用户需点击「更多信息 → 仍要运行」。这不影响 VeloPack 自动更新 —— 更新完整性由 `RELEASES` 中的 SHA 校验，与签名无关。
+- Windows：`WINDOWS_SIGNING_CERTIFICATE_BASE64`、`WINDOWS_SIGNING_CERTIFICATE_PASSWORD`
+- macOS 证书：`MACOS_APP_CERTIFICATE_BASE64`、`MACOS_INSTALLER_CERTIFICATE_BASE64`、`MACOS_P12_PASSWORD`、`MACOS_KEYCHAIN_PASSWORD`
+- macOS 身份/公证：`MACOS_APP_IDENTITY`、`MACOS_INSTALLER_IDENTITY`、`APPLE_ID`、`APPLE_APP_SPECIFIC_PASSWORD`、`APPLE_TEAM_ID`
+- Linux：`LINUX_MINISIGN_SECRET_KEY_BASE64`、`LINUX_MINISIGN_PASSWORD`、`LINUX_MINISIGN_PUBLIC_KEY`
 
-每个 Release 附带 `SHA256SUMS.release.txt`，用户可据此核对下载。
-
-如果以后配置了 `WINDOWS_SIGNING_CERTIFICATE_BASE64` 和 `WINDOWS_SIGNING_CERTIFICATE_PASSWORD` 两个仓库 secret，工作流会自动改为签名打包并校验签名状态，**上面的流程一个字都不用改**。
+`LINUX_MINISIGN_PUBLIC_KEY` 是 `RW...` 单行公钥；私钥 secret 存放 Minisign 私钥文件的 Base64。公钥也会作为 `minisign.pub` 随 Release 发布，但维护者仍应通过仓库外渠道公布可信公钥指纹。
 
 ## 工作流做了什么
 
 `.github/workflows/windows-release.yml`：
 
-1. 运行完整 Node 测试和真实 NativeAOT publish
+1. 在四个发行 RID 的原生 runner 上运行完整 Node/.NET 测试和 NativeAOT publish
 2. 下载固定版本的 Node 与 mihomo 并校验 SHA-256
 3. 用 `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1` 安装生产依赖
 4. 拒绝 Chromium、`ms-playwright` 和旧 `public/` 管理页进入产物
 5. 用私有 Node 对 staged Agent 执行 IPC/SQLite 启动烟测
 6. 将许可证、第三方声明、隐私和源码说明写入安装包的 `licenses/`
-7. 通过 VeloPack 打包（有证书则签名）
-8. 生成 SBOM、项目与 mihomo 源码归档、`SHA256SUMS.release.txt`
+7. 生成 Windows 安装器、Linux AppImage、macOS `.pkg`/Portable.zip/DMG，并执行各平台签名门禁
+8. 从 `assets.<channel>.json` 只收集本次构建产物，排除为 delta 下载的历史包
+9. 生成四份 SBOM、源码归档与总校验和，由 aggregate job 创建唯一 Draft
 
 固定发行标识（不随品牌变更）：
 

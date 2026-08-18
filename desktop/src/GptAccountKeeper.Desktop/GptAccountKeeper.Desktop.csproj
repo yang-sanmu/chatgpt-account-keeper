@@ -52,13 +52,18 @@
   <!-- Info.plist ships inside the macOS .app bundle, so its version has to match
        the build. Copying the template verbatim silently shipped a stale
        CFBundleShortVersionString; regenerate it from $(Version) instead. -->
-  <Target Name="StampInfoPlist"
-          AfterTargets="Build"
-          Inputs="Info.plist"
-          Outputs="$(OutDir)Info.plist">
+  <!-- This target intentionally runs after every build. $(Version) may be
+       supplied on the command line, so file-only Inputs/Outputs tracking would
+       incorrectly reuse a plist stamped by an earlier build. The write itself
+       is cheap and WriteOnlyWhenDifferent avoids touching an unchanged file. -->
+  <Target Name="StampInfoPlist" AfterTargets="Build">
     <PropertyGroup>
+      <!-- Apple bundle version fields accept numeric dot-separated components,
+           not SemVer prerelease suffixes. VeloPack still receives the complete
+           package version; only Info.plist uses its numeric core. -->
+      <_AppleBundleVersion>$([System.Text.RegularExpressions.Regex]::Replace('$(Version)', '-.*$', ''))</_AppleBundleVersion>
       <_PlistTemplate>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)Info.plist'))</_PlistTemplate>
-      <_PlistStamped>$(_PlistTemplate.Replace('&lt;string&gt;0.0.0-template&lt;/string&gt;', '&lt;string&gt;$(Version)&lt;/string&gt;'))</_PlistStamped>
+      <_PlistStamped>$(_PlistTemplate.Replace('&lt;string&gt;0.0.0-template&lt;/string&gt;', '&lt;string&gt;$(_AppleBundleVersion)&lt;/string&gt;').Replace('&lt;string&gt;0.0.0-build-template&lt;/string&gt;', '&lt;string&gt;$(_AppleBundleVersion)&lt;/string&gt;'))</_PlistStamped>
     </PropertyGroup>
     <WriteLinesToFile File="$(OutDir)Info.plist" Lines="$(_PlistStamped)" Overwrite="true" WriteOnlyWhenDifferent="true" />
   </Target>

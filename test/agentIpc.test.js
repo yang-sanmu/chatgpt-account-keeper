@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import fs from "node:fs";
+import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { ApplicationServices } from "../src/application/services.js";
 import {
@@ -156,6 +158,67 @@ test("createAgent accepts persistence adapters, receipt store, and a pre-start d
   assert.deepEqual(shutdownContext, { reason: "user-exit-all" });
 });
 
+test("Unix IPC recovers a socket left behind by a crashed Agent", async (t) => {
+  if (process.platform === "win32") {
+    t.skip("Unix domain socket recovery is platform-specific");
+    return;
+  }
+
+  const endpoint = testEndpoint();
+  const child = spawnSync(
+    process.execPath,
+    [
+      "-e",
+      "const net=require('node:net');const s=net.createServer();s.listen(process.argv[1],()=>process.exit(0));",
+      endpoint,
+    ],
+    { encoding: "utf8", timeout: 10_000 }
+  );
+  assert.equal(child.status, 0, child.stderr || child.error?.message);
+  assert.equal(fs.lstatSync(endpoint).isSocket(), true);
+
+  const agent = createAgent({ endpoint, runtime: minimalRuntime() });
+  try {
+    await agent.start();
+    assert.equal(agent.started, true);
+  } finally {
+    if (agent.started) await agent.stop();
+    removeTestEndpoint(endpoint);
+  }
+});
+
+test("Unix IPC never removes a live listener or a non-socket path", async (t) => {
+  if (process.platform === "win32") {
+    t.skip("Unix domain socket recovery is platform-specific");
+    return;
+  }
+
+  const liveEndpoint = testEndpoint();
+  const live = net.createServer((socket) => socket.destroy());
+  await new Promise((resolve, reject) => {
+    live.once("error", reject);
+    live.listen(liveEndpoint, resolve);
+  });
+  const conflictingAgent = createAgent({ endpoint: liveEndpoint, runtime: minimalRuntime() });
+  try {
+    await assert.rejects(conflictingAgent.start(), (error) => error?.code === "EADDRINUSE");
+    assert.equal(fs.lstatSync(liveEndpoint).isSocket(), true);
+  } finally {
+    await new Promise((resolve) => live.close(resolve));
+    removeTestEndpoint(liveEndpoint);
+  }
+
+  const fileEndpoint = testEndpoint();
+  fs.writeFileSync(fileEndpoint, "do-not-delete");
+  const fileConflictAgent = createAgent({ endpoint: fileEndpoint, runtime: minimalRuntime() });
+  try {
+    await assert.rejects(fileConflictAgent.start(), (error) => error?.code === "EADDRINUSE");
+    assert.equal(fs.readFileSync(fileEndpoint, "utf8"), "do-not-delete");
+  } finally {
+    removeTestEndpoint(fileEndpoint);
+  }
+});
+
 function minimalRuntime() {
   const settings = { headless: true };
   return {
@@ -208,6 +271,14 @@ function testEndpoint() {
     base.replace(/\\/g, "/"),
     `kpr-test-${randomUUID().replace(/-/g, "").slice(0, 12)}.sock`
   );
+}
+
+function removeTestEndpoint(endpoint) {
+  try {
+    fs.unlinkSync(endpoint);
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
 }
 
 async function connect(endpoint) {

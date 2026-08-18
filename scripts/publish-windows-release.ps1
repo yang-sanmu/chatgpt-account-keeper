@@ -4,9 +4,9 @@ param(
     [ValidatePattern('^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$')]
     [string] $Version,
 
-    # Candidate/Release dispatch the GitHub Actions workflow. UploadDraft uploads
-    # artifacts already built on this machine by build-local-release.ps1, which is
-    # the only path that works while Actions is unavailable.
+    # Candidate/Release dispatch the cross-platform GitHub Actions workflow.
+    # UploadDraft is retained only to produce a clear migration error for callers
+    # of the former Windows-only local release path.
     [Parameter(Mandatory = $true)]
     [ValidateSet('Candidate', 'Release', 'UploadDraft', 'PublishDraft')]
     [string] $Mode,
@@ -201,9 +201,38 @@ function Get-RequiredAssetName {
     return @(
         "GptAccountKeeper.Desktop-$Version-full.nupkg",
         'GptAccountKeeper.Desktop-win-Setup.exe',
+        'GptAccountKeeper.Desktop-win-Portable.zip',
         'RELEASES',
         'releases.win.json',
-        "GptAccountKeeper.Desktop-$Version.spdx.json",
+        "GptAccountKeeper.Desktop-$Version-win-x64.spdx.json",
+
+        "GptAccountKeeper.Desktop-$Version-osx-arm64-full.nupkg",
+        'GptAccountKeeper.Desktop-osx-arm64-Setup.pkg',
+        'GptAccountKeeper.Desktop-osx-arm64-Portable.zip',
+        "GptAccountKeeper.Desktop-$Version-osx-arm64.dmg",
+        'RELEASES-osx-arm64',
+        'releases.osx-arm64.json',
+        "GptAccountKeeper.Desktop-$Version-osx-arm64.spdx.json",
+
+        "GptAccountKeeper.Desktop-$Version-osx-x64-full.nupkg",
+        'GptAccountKeeper.Desktop-osx-x64-Setup.pkg',
+        'GptAccountKeeper.Desktop-osx-x64-Portable.zip',
+        "GptAccountKeeper.Desktop-$Version-osx-x64.dmg",
+        'RELEASES-osx-x64',
+        'releases.osx-x64.json',
+        "GptAccountKeeper.Desktop-$Version-osx-x64.spdx.json",
+
+        "GptAccountKeeper.Desktop-$Version-linux-x64-full.nupkg",
+        'GptAccountKeeper.Desktop-linux-x64.AppImage',
+        'GptAccountKeeper.Desktop-linux-x64.AppImage.minisig',
+        'RELEASES-linux-x64',
+        'releases.linux-x64.json',
+        'releases.linux-x64.json.minisig',
+        "GptAccountKeeper.Desktop-$Version-linux-x64.spdx.json",
+        'SHA256SUMS.linux-x64.txt',
+        'SHA256SUMS.linux-x64.txt.minisig',
+        'minisign.pub',
+
         "chatgpt-account-keeper-$Version-source.zip",
         "mihomo-v$($runtimeVersions.mihomo.version)-source.zip",
         'SHA256SUMS.release.txt'
@@ -354,8 +383,8 @@ function Publish-ReleaseDraft {
     $setup = @($release.assets | Where-Object { $_.name -eq 'GptAccountKeeper.Desktop-win-Setup.exe' })
     if ($setup.Count -eq 1) {
         Write-Host ''
-        Write-Host 'Reminder: releases are published unsigned unless a signing certificate is configured.'
-        Write-Host 'Verify the installer locally with Get-AuthenticodeSignature if you expect a signature.'
+        Write-Host 'All workflow-produced release candidates passed their platform signing gates.'
+        Write-Host 'You can independently verify the Windows installer with Get-AuthenticodeSignature.'
     }
 
     if (-not $PSCmdlet.ShouldProcess("$Repository $tag", 'Publish stable GitHub Release')) {
@@ -387,12 +416,8 @@ try {
         return
     }
 
-    if ($Mode -eq 'UploadDraft') {
-        # The tag is created here rather than beforehand, so the release-readiness
-        # check must not reject an already-existing tag the way dispatch does.
-        Assert-ReleaseSourceReady -GitHubCli $githubCli -AllowExistingTag
-        Send-LocalBuild -GitHubCli $githubCli
-        return
+if ($Mode -eq 'UploadDraft') {
+        throw 'UploadDraft is no longer supported: a Windows-only local build cannot satisfy the four-platform release gate. Use -Mode Release.'
     }
 
     Assert-ReleaseSourceReady -GitHubCli $githubCli
@@ -419,7 +444,7 @@ try {
             -ArgumentList @(
                 'run', 'download', $runId,
                 '--repo', $Repository,
-                '--name', "GptAccountKeeper.Desktop-win-x64-$Version",
+                '--name', "GptAccountKeeper.Desktop-all-$Version",
                 '--dir', $candidateRoot
             ) | Out-Null
         Write-Host "Candidate downloaded to: $candidateRoot"

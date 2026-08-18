@@ -113,9 +113,9 @@ against `docs/PLAN.md` section 一之二.
 
 | Item | Status | Notes |
 | --- | --- | --- |
-| Cross-platform paths, sockets, Chrome/mihomo discovery | PARTIAL | Code paths and unit tests exist. |
-| macOS arm64/x64 signing, notarization, stapling | DEFERRED | Out of v1: requires macOS runners, Developer ID, and real-machine acceptance. |
-| Linux AppImage, Minisign, XDG autostart | DEFERRED | Out of v1. Runtime code exists; release packaging is a separate phase. |
+| Cross-platform paths, sockets, Chrome/mihomo discovery | DONE | Native CI covers Linux x64 and both macOS architectures; Unix stale-socket recovery is tested on Unix. |
+| macOS arm64/x64 signing, notarization, stapling | IMPLEMENTED | VeloPack builds per-architecture channels and signs/notarizes nested binaries, `.app` and `.pkg`; the derived DMG is separately notarized and stapled. Real-machine acceptance and repository Apple credentials remain operational gates. |
+| Linux AppImage, Minisign, XDG autostart | IMPLEMENTED | AppImage contents, desktop metadata and hicolor icons are inspected in CI; autostart records `$APPIMAGE`, and the AppImage/update index/checksum manifest receive verified Minisign signatures when release credentials are configured. |
 
 ## Windows Alpha gate
 
@@ -268,10 +268,11 @@ cannot be reset in-process, those cases run the code in a child process with an
 injected data root. Each new test was verified by temporarily reverting its fix and
 confirming it goes red — which caught two tests that had been passing vacuously.
 
-The generated artifact remains an unsigned internal build. SBOM and license
-generation are automated; signing, the installed N-1 → N update run, macOS
-notarization and Linux AppImage/Minisign remain separate release phases and are
-not implied by the Windows Alpha label.
+Unsigned jobs now remain explicitly marked internal artifacts. The shared release
+workflow implements Authenticode, Apple signing/notarization/stapling and Linux
+AppImage/Minisign, then refuses Draft creation until every native job and the
+installed N-1 → N attestation pass. Repository credentials and real-machine
+acceptance remain operational prerequisites, not claims made by a CI-only run.
 
 The Alpha 6 review follow-up closes lifecycle and release-integrity gaps found by
 the full Git review: safe-point monitoring no longer exits before the delayed

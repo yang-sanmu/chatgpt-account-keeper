@@ -1090,6 +1090,79 @@ public sealed class DesktopUsabilityTests
         }
     }
 
+    [Fact]
+    public void DisablingStartupToleratesAMissingRegistrationDirectory()
+    {
+        var root = NewTemporaryDirectory();
+        try
+        {
+            var registration = Path.Combine(root, "missing", "autostart", "keeper.desktop");
+
+            StartupRegistrationService.DeleteIfPresent(registration);
+
+            Assert.False(File.Exists(registration));
+            Assert.False(Directory.Exists(Path.GetDirectoryName(registration)));
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void DisablingStartupRemovesAnExistingRegistration()
+    {
+        var root = NewTemporaryDirectory();
+        try
+        {
+            var registration = Path.Combine(root, "autostart", "keeper.desktop");
+            Directory.CreateDirectory(Path.GetDirectoryName(registration)!);
+            File.WriteAllText(registration, "registration");
+
+            StartupRegistrationService.DeleteIfPresent(registration);
+
+            Assert.False(File.Exists(registration));
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void LinuxAppImageStartupUsesTheStableImagePath()
+    {
+        var appImage = Path.GetFullPath(
+            Path.Combine(Path.GetTempPath(), "Applications", "ChatGPT Account Keeper.AppImage"));
+        var resolved = StartupRegistrationService.ResolveExecutableForStartup(
+            "/tmp/.mount_keeper/usr/bin/GptAccountKeeper.Desktop",
+            appImage,
+            isLinux: true);
+
+        Assert.Equal(appImage, resolved);
+    }
+
+    [Fact]
+    public void NonAppImageStartupUsesTheProcessPath()
+    {
+        const string processPath = "/opt/gpt-account-keeper/GptAccountKeeper.Desktop";
+        Assert.Equal(
+            processPath,
+            StartupRegistrationService.ResolveExecutableForStartup(
+                processPath,
+                appImagePath: null,
+                isLinux: true));
+    }
+
+    [Fact]
+    public void DesktopExecEscapesQuotedAndFieldCodeCharacters()
+    {
+        Assert.Equal(
+            "/home/user/Cost\\$5/100%%/\\`keeper\\`/\\\"app\\\"",
+            StartupRegistrationService.EscapeDesktopExecArgument(
+                "/home/user/Cost$5/100%/`keeper`/\"app\""));
+    }
+
     /// <summary>
     /// 首次启动没导入不该变成"永远不能导入"：数据目录已建库时导入入口仍然存在，
     /// 只是要先安排一个新的数据目录，重启后继续。

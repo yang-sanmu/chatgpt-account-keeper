@@ -381,8 +381,53 @@ export class KeeperRepository {
   }
 
   isEmptyForLegacyImport() {
-    const tables = ["accounts", "groups", "proxy_nodes", "conversation_sets", "run_history"];
-    return tables.every((table) => this.db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get().count === 0);
+    // command_receipts is deliberately omitted: stopping the first-start Agent
+    // through IPC records a shutdown receipt even though the user has not created
+    // any durable data. Everything else must still match a genuinely pristine DB.
+    const tables = [
+      "accounts",
+      "groups",
+      "proxy_nodes",
+      "conversation_sets",
+      "run_history",
+      "profile_maintenance_state",
+      "profile_fs_operations",
+      "migration_imports",
+      "operations",
+    ];
+    if (tables.some((table) => this.db.prepare(`SELECT 1 FROM ${table} LIMIT 1`).get())) {
+      return false;
+    }
+
+    const settings = this.db.prepare("SELECT * FROM app_settings").all();
+    if (settings.length !== 1) return false;
+    const [app] = settings;
+    if (
+      app.singleton_id !== 1 ||
+      app.interval_minutes !== 180 ||
+      app.jitter_minutes !== 30 ||
+      app.headless !== 1 ||
+      app.status_check_minutes !== 15 ||
+      app.status_check_on_startup !== 1 ||
+      app.open_page_timeout_minutes !== 0 ||
+      app.profile_auto_clean_enabled !== 1 ||
+      app.scheduler_enabled !== 0 ||
+      app.legacy_extra_json !== null
+    ) {
+      return false;
+    }
+
+    const proxySettings = this.db.prepare("SELECT * FROM proxy_settings").all();
+    if (proxySettings.length !== 1) return false;
+    const [proxy] = proxySettings;
+    return (
+      proxy.singleton_id === 1 &&
+      proxy.subscription_url === null &&
+      proxy.subscription_updated_at === null &&
+      proxy.mihomo_path === null &&
+      proxy.clash_verge_dir === null &&
+      proxy.legacy_extra_json === null
+    );
   }
 
   importLegacyPlan(plan, { migrationId, appVersion = this.appVersion } = {}) {

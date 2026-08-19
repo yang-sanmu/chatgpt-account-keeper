@@ -241,8 +241,8 @@ internal sealed partial class MainWindow : Window
     /// <summary>
     /// 预检旧项目并导入。
     ///
-    /// 当前数据目录已经建库时不能就地覆盖导入，改为让用户选一个新的空数据目录，
-    /// 记下任务后重启到那里继续 —— 这样"首次启动没导入就永远没法导入"不再成立。
+    /// 首次启动自动生成的空库允许就地导入；真正已有业务数据的库由迁移层拒绝，
+    /// 用户仍可改选一个新的空数据目录，当前数据不会被覆盖。
     /// </summary>
     private async Task RunLegacyImportAsync(string selectedRoot)
     {
@@ -258,15 +258,12 @@ internal sealed partial class MainWindow : Window
         var confirmed = await new MigrationPreviewDialog(preview).ShowDialog<bool>(this);
         if (!confirmed) return;
 
-        if (!ViewModel.DataDirectoryInitialized)
-        {
-            await ViewModel.ImportLegacyAsync(preview.SourceRoot);
-            return;
-        }
+        var databaseExisted = ViewModel.DataDirectoryInitialized;
+        if (await ViewModel.ImportLegacyAsync(preview.SourceRoot) || !databaseExisted) return;
 
         var proceed = await new ConfirmationDialog(
             "需要一个新的数据目录",
-            $"当前数据目录已经初始化，导入不能覆盖它。\n\n接下来请选择一个空的新数据目录；确认后程序会重启并在新目录中完成导入，当前数据保持原样。\n\n旧项目：{preview.SourceRoot}")
+            $"未能导入当前数据目录；如果其中已有业务数据，迁移不会覆盖它。\n\n是否改选一个空的新数据目录？确认后程序会重启并在那里完成导入，当前数据保持原样。\n\n旧项目：{preview.SourceRoot}")
             .ShowDialog<bool>(this);
         if (!proceed) return;
 

@@ -103,6 +103,126 @@ test("full legacy migration promotes a verified DB/profile set and replays idemp
   assert.equal(replay.profiles.reusedProfiles, 1);
 });
 
+test("legacy migration imports into the empty database created by first startup", async (t) => {
+  const source = fs.mkdtempSync(path.join(os.tmpdir(), "keeper-migration-source-"));
+  const target = fs.mkdtempSync(path.join(os.tmpdir(), "keeper-migration-target-"));
+  t.after(() => {
+    fs.rmSync(source, { recursive: true, force: true });
+    fs.rmSync(target, { recursive: true, force: true });
+  });
+  createSource(source);
+  const plan = buildLegacyMigrationPlan(source);
+  const databaseFile = path.join(target, "keeper.db");
+
+  const firstStartupRepository = await openKeeperRepository({
+    filePath: databaseFile,
+    backupDirectory: path.join(target, "backups"),
+    appVersion: "0.1.5",
+  });
+  firstStartupRepository.recordCommandReceipt("shutdown-receipt", "system.shutdown", { accepted: true });
+  assert.equal(firstStartupRepository.isEmptyForLegacyImport(), true);
+  firstStartupRepository.close();
+
+  const options = {
+    plan,
+    targetDataRoot: target,
+    appVersion: "0.1.6",
+    profileCopyOptions: {
+      getAvailableBytes: () => Number.MAX_SAFE_INTEGER,
+      minimumReserveBytes: 0,
+      reserveRatio: 0,
+    },
+  };
+  const result = await runLegacyMigration(options);
+  assert.equal(result.alreadyMigrated, false);
+  assert.equal(path.basename(result.databaseFile), "keeper.db");
+  assert.equal(fs.existsSync(result.databaseFile), true);
+
+  const migratedRepository = await openKeeperRepository({
+    filePath: databaseFile,
+    backupDirectory: path.join(target, "backups"),
+  });
+  assert.deepEqual(migratedRepository.listAccounts().map((account) => account.id), ["a1"]);
+  assert.equal(migratedRepository.getCompletedMigration(plan.sourceFingerprint).id, result.migrationId);
+  migratedRepository.close();
+
+  const replay = await runLegacyMigration(options);
+  assert.equal(replay.alreadyMigrated, true);
+  assert.equal(replay.profiles.reusedProfiles, 1);
+});
+
+test("legacy migration still refuses an existing database with business data", async (t) => {
+  const source = fs.mkdtempSync(path.join(os.tmpdir(), "keeper-migration-source-"));
+  const target = fs.mkdtempSync(path.join(os.tmpdir(), "keeper-migration-target-"));
+  t.after(() => {
+    fs.rmSync(source, { recursive: true, force: true });
+    fs.rmSync(target, { recursive: true, force: true });
+  });
+  createSource(source);
+  const plan = buildLegacyMigrationPlan(source);
+  const databaseFile = path.join(target, "keeper.db");
+  const repository = await openKeeperRepository({
+    filePath: databaseFile,
+    backupDirectory: path.join(target, "backups"),
+  });
+  repository.createAccount({ id: "existing", profileName: "existing" });
+  repository.close();
+
+  await assert.rejects(
+    runLegacyMigration({
+      plan,
+      targetDataRoot: target,
+      appVersion: "0.1.6",
+      profileCopyOptions: {
+        getAvailableBytes: () => Number.MAX_SAFE_INTEGER,
+        minimumReserveBytes: 0,
+        reserveRatio: 0,
+      },
+    }),
+    (error) => error?.code === "DATABASE_ALREADY_EXISTS"
+  );
+
+  const preservedRepository = await openKeeperRepository({
+    filePath: databaseFile,
+    backupDirectory: path.join(target, "backups"),
+  });
+  assert.deepEqual(preservedRepository.listAccounts().map((account) => account.id), ["existing"]);
+  assert.equal(preservedRepository.getCompletedMigration(plan.sourceFingerprint), null);
+  preservedRepository.close();
+  assert.equal(fs.existsSync(path.join(target, "profiles", "a1")), false);
+});
+
+test("legacy migration does not treat user-customized settings as a pristine database", async (t) => {
+  const source = fs.mkdtempSync(path.join(os.tmpdir(), "keeper-migration-source-"));
+  const target = fs.mkdtempSync(path.join(os.tmpdir(), "keeper-migration-target-"));
+  t.after(() => {
+    fs.rmSync(source, { recursive: true, force: true });
+    fs.rmSync(target, { recursive: true, force: true });
+  });
+  createSource(source);
+  const plan = buildLegacyMigrationPlan(source);
+  const databaseFile = path.join(target, "keeper.db");
+  const repository = await openKeeperRepository({
+    filePath: databaseFile,
+    backupDirectory: path.join(target, "backups"),
+  });
+  repository.updateSettings({ intervalMinutes: 60 });
+  assert.equal(repository.isEmptyForLegacyImport(), false);
+  repository.close();
+
+  await assert.rejects(
+    runLegacyMigration({ plan, targetDataRoot: target, appVersion: "0.1.6" }),
+    (error) => error?.code === "DATABASE_ALREADY_EXISTS"
+  );
+
+  const preservedRepository = await openKeeperRepository({
+    filePath: databaseFile,
+    backupDirectory: path.join(target, "backups"),
+  });
+  assert.equal(preservedRepository.getSettings().intervalMinutes, 60);
+  preservedRepository.close();
+});
+
 test("schema upgrade repairs legacy conversation ids imported by older builds", async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "keeper-conversation-id-upgrade-"));
   let repository;

@@ -44,6 +44,43 @@ function cleanupOwnedStaging(stagingRoot, expected, migrationRoot, fsImpl) {
   fsImpl.rmSync(stagingRoot, { recursive: true, force: false });
 }
 
+function promoteLegacyFiles({
+  plan,
+  targetRoot,
+  migrationId,
+  installRoot,
+  volumeInfo,
+  onProgress,
+  fsImpl,
+  profileCopyOptions,
+}) {
+  const profiles = stageAndPromoteProfiles({
+    plan,
+    targetDataRoot: targetRoot,
+    migrationId,
+    installRoot,
+    volumeInfo,
+    onProgress,
+    fsImpl,
+    ...profileCopyOptions,
+  });
+
+  // 用户自定义过的 selectors.json 必须真正落到数据目录，否则迁移只是“采集”了
+  // 这个覆盖然后丢掉，用户改过的选择器在新版本里静默失效。
+  // 放数据目录而不是安装目录：安装目录会被更新整体替换。
+  if (plan.selectorsOverride) {
+    const configRoot = path.join(targetRoot, "config");
+    fsImpl.mkdirSync(configRoot, { recursive: true, mode: 0o700 });
+    fsImpl.writeFileSync(
+      path.join(configRoot, "selectors.json"),
+      `${JSON.stringify(plan.selectorsOverride, null, 2)}\n`,
+      { encoding: "utf8", mode: 0o600 }
+    );
+  }
+
+  return profiles;
+}
+
 /**
  * Full migration is opt-in and explicit. Source data is verified twice and is
  * never moved/deleted. Profiles are promoted before the staged DB; a retry can
@@ -87,24 +124,51 @@ export async function runLegacyMigration({
       ...databaseOptions,
     });
     try {
-      const imported = repository.getCompletedMigration(plan.sourceFingerprint);
-      if (!imported) {
+      const completed = repository.getCompletedMigration(plan.sourceFingerprint);
+      if (!completed && !repository.isEmptyForLegacyImport()) {
         throw runnerError("DATABASE_ALREADY_EXISTS", "目标 keeper.db 已存在且不属于本次迁移");
       }
+
+      if (!completed) {
+        onProgress?.({ stage: "build-database", message: "正在准备首次启动创建的空数据库", progress: 0 });
+      }
+
+      const profiles = promoteLegacyFiles({
+        plan,
+        targetRoot,
+        migrationId,
+        installRoot,
+        volumeInfo,
+        onProgress,
+        fsImpl,
+        profileCopyOptions,
+      });
+      if (completed) {
+        onProgress?.({ stage: "completed", message: "旧数据迁移已完成", progress: 1 });
+        return Object.freeze({ alreadyMigrated: true, migrationId, profiles });
+      }
+
+      // Desktop/Agent 的正常首次启动会创建一个只有 schema 和默认单例行的库。
+      // 此时不应要求用户另选数据目录。Profile 先按可重入流程提升，源数据再做
+      // 最终校验，最后由单个 SQLite 事务把旧数据写入这个空库；失败时业务表仍为空，
+      // 重试会复用已校验的 Profile，不会覆盖任何已有业务数据。
+      onProgress?.({ stage: "final-verification", message: "正在执行最终源数据与数据库校验", progress: 1 });
+      verifyLegacyMigrationPlan(plan, { fsImpl });
+      const imported = repository.importLegacyPlan(plan, { migrationId, appVersion });
+      const integrity = repository.integrityCheck();
+      if (!integrity.ok) throw runnerError("DATABASE_INTEGRITY_FAILED", "迁移数据库完整性检查失败");
+      repository.checkpoint();
+      onProgress?.({ stage: "completed", message: "旧数据迁移完成", progress: 1 });
+      return Object.freeze({
+        alreadyMigrated: false,
+        migrationId,
+        databaseFile: finalDatabase,
+        imported,
+        profiles,
+      });
     } finally {
       repository.close();
     }
-    const profiles = stageAndPromoteProfiles({
-      plan,
-      targetDataRoot: targetRoot,
-      migrationId,
-      installRoot,
-      volumeInfo,
-      onProgress,
-      fsImpl,
-      ...profileCopyOptions,
-    });
-    return Object.freeze({ alreadyMigrated: true, migrationId, profiles });
   }
 
   const migrationRoot = path.join(targetRoot, "migration");
@@ -137,28 +201,16 @@ export async function runLegacyMigration({
     repository.close();
     repository = null;
 
-    const profiles = stageAndPromoteProfiles({
+    const profiles = promoteLegacyFiles({
       plan,
-      targetDataRoot: targetRoot,
+      targetRoot,
       migrationId,
       installRoot,
       volumeInfo,
       onProgress,
       fsImpl,
-      ...profileCopyOptions,
+      profileCopyOptions,
     });
-    // 用户自定义过的 selectors.json 必须真正落到数据目录，否则迁移只是"采集"了
-    // 这个覆盖然后丢掉，用户改过的选择器在新版本里静默失效。
-    // 放数据目录而不是安装目录：安装目录会被更新整体替换。
-    if (plan.selectorsOverride) {
-      const configRoot = path.join(targetRoot, "config");
-      fsImpl.mkdirSync(configRoot, { recursive: true, mode: 0o700 });
-      fsImpl.writeFileSync(
-        path.join(configRoot, "selectors.json"),
-        `${JSON.stringify(plan.selectorsOverride, null, 2)}\n`,
-        { encoding: "utf8", mode: 0o600 }
-      );
-    }
 
     onProgress?.({ stage: "final-verification", message: "正在执行最终源数据与数据库校验", progress: 1 });
     verifyLegacyMigrationPlan(plan, { fsImpl });

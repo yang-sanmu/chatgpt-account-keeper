@@ -124,7 +124,7 @@ async function main() {
   // 两个 Agent 同时迁移同一目录会互相破坏 staging。
   instanceLock = await acquireInstanceLock(paths.instanceLockFile, { endpoint });
 
-  if (!fs.existsSync(paths.databaseFile) && legacyRoot) {
+  if (legacyRoot) {
     reportMigration({ state: "running", stage: "scan", message: "正在扫描旧配置、历史和 Profile", progress: 0 });
     const plan = buildLegacyMigrationPlan(path.resolve(legacyRoot));
     reportMigration({

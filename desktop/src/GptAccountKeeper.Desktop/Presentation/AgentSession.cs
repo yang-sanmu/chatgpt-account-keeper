@@ -50,13 +50,17 @@ internal sealed class AgentSession : ObservableObject
     /// 执行一次用户动作：自动补连接、统一失败提示、忙碌计数。
     /// 返回 false 表示动作失败（已经提示过），调用方可据此跳过后续步骤。
     /// </summary>
-    public async Task<bool> RunAsync(string action, Func<Task> execute, string? successMessage = null)
+    public async Task<bool> RunAsync(
+        string action,
+        Func<Task> execute,
+        string? successMessage = null,
+        bool ensureConnected = true)
     {
         Interlocked.Increment(ref _busyCount);
         OnPropertyChanged(nameof(IsBusy));
         try
         {
-            if (!_connection.IsConnected)
+            if (ensureConnected && !_connection.IsConnected)
             {
                 var snapshot = await _connection.EnsureConnectedAsync(true, Lifetime);
                 if (!snapshot.IsConnected)

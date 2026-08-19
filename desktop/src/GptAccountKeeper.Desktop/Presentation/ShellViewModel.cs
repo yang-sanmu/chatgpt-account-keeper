@@ -287,6 +287,7 @@ internal sealed class ShellViewModel : ObservableObject
         bool requireDisconnect = false)
     {
         if (!await TryReconnectToAgentAsync()) return;
+        var agentProcessId = ReadAgentProcessId();
         _suppressReconnect = true;
         try
         {
@@ -300,6 +301,10 @@ internal sealed class ShellViewModel : ObservableObject
             try
             {
                 await _connection.WaitForDisconnectAsync(TimeSpan.FromSeconds(15), _lifetime.Token);
+                if (requireDisconnect)
+                {
+                    await WaitForAgentProcessExitAsync(agentProcessId, TimeSpan.FromSeconds(15));
+                }
             }
             catch (TimeoutException) when (!requireDisconnect)
             {
@@ -311,6 +316,46 @@ internal sealed class ShellViewModel : ObservableObject
         {
             _suppressReconnect = false;
             throw;
+        }
+    }
+
+    private int? ReadAgentProcessId()
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(
+                File.ReadAllText(Path.Combine(_paths.DataDirectory, "agent.lock")));
+            return document.RootElement.TryGetProperty("pid", out var pid)
+                && pid.TryGetInt32(out var value)
+                && value > 0
+                    ? value
+                    : null;
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or JsonException)
+        {
+            return null;
+        }
+    }
+
+    private async Task WaitForAgentProcessExitAsync(int? processId, TimeSpan timeout)
+    {
+        if (processId is not int pid)
+        {
+            // The IPC endpoint is already gone. Give shutdown's final repository/lock
+            // cleanup one scheduler turn when an old or damaged diagnostic lock has no PID.
+            await Task.Delay(100, _lifetime.Token);
+            return;
+        }
+
+        var deadline = DateTime.UtcNow + timeout;
+        while (AgentConnectionService.IsProcessAlive(pid) && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(50, _lifetime.Token);
+        }
+        if (AgentConnectionService.IsProcessAlive(pid))
+        {
+            throw new TimeoutException("Agent 未能在限定时间内释放数据目录");
         }
     }
 
@@ -329,7 +374,7 @@ internal sealed class ShellViewModel : ObservableObject
         return snapshot.IsConnected;
     }
 
-    /// <summary>当前数据目录是否已经初始化过；决定导入旧项目要不要先换数据目录。</summary>
+    /// <summary>当前数据目录是否已经初始化过。</summary>
     public bool DataDirectoryInitialized => File.Exists(_paths.DatabaseFile);
 
     /// <summary>
@@ -375,25 +420,47 @@ internal sealed class ShellViewModel : ObservableObject
         }
     }
 
-    public async Task ImportLegacyAsync(string legacyRoot)
+    public async Task<bool> ImportLegacyAsync(string legacyRoot)
     {
-        if (File.Exists(_paths.DatabaseFile))
+        var databaseExisted = File.Exists(_paths.DatabaseFile);
+        if (_connection.IsConnected)
         {
-            Toasts.Error("当前数据目录已经初始化，不能覆盖导入；请先选择一个新的数据目录");
-            return;
+            // 迁移发生在 Agent 建立 IPC 之前。先让当前 Agent 完整释放 SQLite、
+            // 调度和 Profile 句柄，再用 --legacy-root 在同一数据目录重启。
+            await ShutdownAgentAsync("legacy-import", force: false, requireDisconnect: true);
         }
 
-        await _session.RunAsync("旧数据迁移", async () =>
+        _suppressReconnect = true;
+        var migrated = false;
+        try
         {
-            Toasts.Info("正在校验旧配置并复制 Profile，请勿启动旧服务或使用相关 Chrome Profile");
-            var snapshot = await _connection.StartWithLegacyMigrationAsync(legacyRoot, _lifetime.Token);
-            ApplyConnection(snapshot);
-            if (!snapshot.IsConnected) return;
-            Overview.NeedsFirstRun = false;
-            Overview.MigrationProgress = 1;
-            await RefreshCoreAsync();
-            Toasts.Success($"旧数据迁移完成：{Accounts.SummaryText}；旧目录未被修改，调度保持停止");
-        });
+            migrated = await _session.RunAsync("旧数据迁移", async () =>
+            {
+                Toasts.Info("正在校验旧配置并复制 Profile，请勿启动旧服务或使用相关 Chrome Profile");
+                var snapshot = await _connection.StartWithLegacyMigrationAsync(legacyRoot, _lifetime.Token);
+                ApplyConnection(snapshot);
+                if (!snapshot.IsConnected)
+                {
+                    throw new InvalidOperationException(snapshot.Detail);
+                }
+                Overview.NeedsFirstRun = false;
+                Overview.MigrationProgress = 1;
+                await RefreshCoreAsync();
+                Toasts.Success($"旧数据迁移完成：{Accounts.SummaryText}；旧目录未被修改，调度保持停止");
+            }, ensureConnected: false);
+        }
+        finally
+        {
+            _suppressReconnect = false;
+        }
+
+        // 非空库会被迁移层拒绝。恢复原 Agent，避免一次被拒绝的导入让管理端
+        // 留在离线状态；窗口随后仍可让用户改选一个新的空数据目录。
+        if (!migrated && databaseExisted && !_connection.IsConnected)
+        {
+            await ConnectAsync(true);
+        }
+        return migrated;
     }
 
     public async Task<LegacyMigrationProbeResult> InspectLegacyAsync(string selectedRoot)

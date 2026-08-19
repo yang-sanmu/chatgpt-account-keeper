@@ -1718,6 +1718,21 @@ public sealed class DesktopUsabilityTests
             Assert.Equal(1, preview.Counts.Profiles);
             Assert.Equal(2, preview.Counts.Histories);
 
+            // Reproduce the reported sequence exactly: starting the Agent once creates
+            // keeper.db, and shutdown leaves normal bookkeeping behind. Import must still
+            // recognize that the database has no business data and reuse this directory.
+            var initialized = await connection.EnsureConnectedAsync(true, timeout.Token);
+            Assert.True(initialized.IsConnected, initialized.Detail);
+            await connection.CallAsync(
+                "system.shutdown",
+                new ShutdownParams("legacy-import"),
+                AppJsonContext.Default.ShutdownParams,
+                AppJsonContext.Default.AcceptedResult,
+                timeout.Token,
+                Guid.NewGuid().ToString());
+            await connection.WaitForDisconnectAsync(TimeSpan.FromSeconds(10), timeout.Token);
+            Assert.True(File.Exists(paths.DatabaseFile));
+
             var migrationFirstChanceCancellations = 0;
             void OnMigrationFirstChance(object? _, FirstChanceExceptionEventArgs args)
             {

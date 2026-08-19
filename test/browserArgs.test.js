@@ -176,11 +176,15 @@ test("身份规范化同时移除 UA-CH 中的 HeadlessChrome 品牌", () => {
 test("后台任务使用真正的 Headless，不创建屏幕外窗口", () => {
   const background = baseLaunchArgs(true);
   assert.equal(background.headless, true);
+  assert.deepEqual(background.viewport, { width: 1280, height: 900 });
   assert.equal(background.args.includes("--window-position=-32000,-32000"), false);
+  assert.equal(background.args.includes("--start-maximized"), false);
 
   const interactive = baseLaunchArgs(false);
   assert.equal(interactive.headless, false);
+  assert.equal(interactive.viewport, null);
   assert.equal(interactive.args.includes("--window-position=-32000,-32000"), false);
+  assert.equal(interactive.args.includes("--start-maximized"), true);
 });
 
 test("浏览器启动后的初始化失败会关闭 Context 且保留原始错误", async (t) => {

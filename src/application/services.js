@@ -890,7 +890,11 @@ export class ApplicationServices {
     if (!account) fail(ERROR_CODES.NOT_FOUND, "账号不存在");
     return this.operations.create(
       "open-page-start",
-      async () => {
+      async ({ update }) => {
+        update({
+          stage: "browser",
+          message: "正在结束该账号的后台任务并打开可见 Chrome",
+        });
         const result = await this.runtime.openPageForAccount(account, params.url);
         if (!result?.ok) {
           if (result?.alreadyOpen) {
@@ -907,6 +911,7 @@ export class ApplicationServices {
         }
         // 打开与关闭都由 openPage 的观察者发事件（见 _subscribeRuntime），
         // 这里不再自己轮询 getOpenPages 猜测窗口何时被用户关掉。
+        update({ stage: "ready", message: result.message ?? "Chrome 窗口已打开" });
         return { accountId, ...result };
       },
       { resourceId: accountId }

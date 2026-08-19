@@ -42,7 +42,12 @@ const HEADLESS_UA_HIGH_ENTROPY_HINTS = [
   "wow64",
   "formFactors",
 ];
-const activeBrowserContexts = new Set();
+// BrowserContext -> { accountId, headless }
+//
+// 账号锁只能阻止第二个 Profile 实例启动，不能让“打开网页”抢占一个已经在跑的
+// Headless 任务。记录归属后，明确的用户交互可以只关闭同账号的后台 Context，
+// 不影响其它账号，也不会误关登录/手动打开的有头窗口。
+const activeBrowserContexts = new Map();
 let browserShutdownRequested = false;
 
 /**
@@ -55,11 +60,39 @@ function beginBrowserShutdown() {
 
 export async function closeAllBrowserContexts({ timeoutMs = 3_000 } = {}) {
   beginBrowserShutdown();
-  const contexts = [...activeBrowserContexts];
+  const contexts = [...activeBrowserContexts.keys()];
   await Promise.all(contexts.map(async (context) => {
     let timer;
     const closing = Promise.resolve().then(() => context.close()).catch((error) => {
       log.warn(`关闭 Chrome 上下文失败：${String(error?.message || error)}`);
+    });
+    await Promise.race([
+      closing,
+      new Promise((resolve) => {
+        timer = setTimeout(resolve, timeoutMs);
+      }),
+    ]);
+    clearTimeout(timer);
+  }));
+  return contexts.length;
+}
+
+export async function closeHeadlessBrowserContextsForAccount(
+  accountId,
+  { timeoutMs = 3_000 } = {}
+) {
+  const contexts = [...activeBrowserContexts.entries()]
+    .filter(([, metadata]) =>
+      metadata.accountId === accountId && metadata.headless === true
+    )
+    .map(([context]) => context);
+
+  await Promise.all(contexts.map(async (context) => {
+    let timer;
+    const closing = Promise.resolve().then(() => context.close()).catch((error) => {
+      log.warn(
+        `关闭账号 ${accountId} 的后台 Chrome 失败：${String(error?.message || error)}`
+      );
     });
     await Promise.race([
       closing,
@@ -647,12 +680,15 @@ export function baseLaunchArgs(headless) {
     channel: BROWSER_CHANNEL,
     // Headless 的 UA 会在首次外部导航前从同一浏览器运行时读取并规范化。
     // 有头模式不设 userAgent，完全沿用 Chrome 原生值。
-    viewport: { width: 1280, height: 900 },
+    // 有头窗口使用 Chrome 原生窗口尺寸并强制从最大化状态启动，避免 Profile 中
+    // 由 Headless/远程桌面留下的窗口位置让窗口落到屏幕外或保持最小化。
+    viewport: headless ? { width: 1280, height: 900 } : null,
     locale: "zh-CN",
     args: [
       "--disable-blink-features=AutomationControlled",
       "--no-first-run",
       "--no-default-browser-check",
+      ...(!headless ? ["--start-maximized"] : []),
       `--disk-cache-size=${64 * 1024 * 1024}`,
       `--media-cache-size=${16 * 1024 * 1024}`,
     ],
@@ -821,7 +857,10 @@ export async function launchForAccount(account, opts = {}) {
     throw normalizeChromeLaunchError(e);
   }
 
-  activeBrowserContexts.add(context);
+  activeBrowserContexts.set(context, {
+    accountId: liveAccount.id,
+    headless: !!headless,
+  });
   context.once("close", () => {
     activeBrowserContexts.delete(context);
     if (!browserShutdownRequested) scheduleProfileCacheMaintenance(liveAccount.id);

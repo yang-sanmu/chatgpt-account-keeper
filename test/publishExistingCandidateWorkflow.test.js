@@ -27,6 +27,10 @@ test("existing candidate promotion is manual and requires explicit unsafe overri
 
 test("promotion checks aggregate hashes and publishes only after a verified draft upload", () => {
   assert.match(source, /sha256sum --check SHA256SUMS\.release\.txt/);
+  assert.match(source, /\.NotesMarkdown/);
+  assert.match(source, /candidate-release-notes\.md/);
+  assert.match(source, /cmp .*candidate-release-notes\.md/);
+  assert.match(source, /cat .*candidate-release-notes\.md/);
   assert.match(source, /gh release create[\s\S]*--draft/);
   assert.match(source, /remote_count/);
   assert.match(source, /gh release edit[\s\S]*--draft=false --latest/);

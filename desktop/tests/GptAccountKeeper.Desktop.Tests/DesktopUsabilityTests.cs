@@ -1,6 +1,7 @@
 ﻿using System.Text.Json;
 using System.Runtime.ExceptionServices;
 using System.Text;
+using System.Diagnostics;
 using GptAccountKeeper.Desktop.Application;
 using GptAccountKeeper.Desktop.Infrastructure.Agent;
 using GptAccountKeeper.Desktop.Infrastructure.Ipc;
@@ -248,6 +249,76 @@ public sealed class DesktopUsabilityTests
         }
 
         Assert.Equal(0, Volatile.Read(ref firstChanceArgumentExceptions));
+    }
+
+    [Fact]
+    public async Task CancellingLegacyPreviewTerminatesTheProbeProcess()
+    {
+        var root = NewTemporaryDirectory();
+        var probeDirectory = Path.Combine(root, "probe");
+        var source = Path.Combine(root, "legacy");
+        var marker = Path.Combine(probeDirectory, "probe.pid");
+        Directory.CreateDirectory(probeDirectory);
+        Directory.CreateDirectory(source);
+        await File.WriteAllTextAsync(Path.Combine(probeDirectory, "launcher.js"), "// probe command anchor\n");
+        await File.WriteAllTextAsync(
+            Path.Combine(probeDirectory, "migrationProbe.js"),
+            "const fs = require('node:fs'); fs.writeFileSync('probe.pid', String(process.pid)); setInterval(() => {}, 1000);\n");
+
+        var previousExecutable = Environment.GetEnvironmentVariable("GPTACCOUNTKEEPER_AGENT_EXECUTABLE");
+        var previousEntry = Environment.GetEnvironmentVariable("GPTACCOUNTKEEPER_AGENT_ENTRY");
+        var previousNode = Environment.GetEnvironmentVariable("GPTACCOUNTKEEPER_AGENT_NODE");
+        using var cancellation = new CancellationTokenSource();
+        Task<LegacyMigrationProbeResult>? inspection = null;
+        int? processId = null;
+        try
+        {
+            Environment.SetEnvironmentVariable("GPTACCOUNTKEEPER_AGENT_EXECUTABLE", null);
+            Environment.SetEnvironmentVariable("GPTACCOUNTKEEPER_AGENT_ENTRY", Path.Combine(probeDirectory, "launcher.js"));
+            Environment.SetEnvironmentVariable("GPTACCOUNTKEEPER_AGENT_NODE", "node");
+            var launcher = new AgentProcessLauncher(TestPaths(Path.Combine(root, "desktop")), "probe-token");
+
+            inspection = launcher.InspectLegacyAsync(source, cancellation.Token);
+            for (var attempt = 0; attempt < 50 && !File.Exists(marker); attempt++)
+            {
+                await Task.Delay(100);
+            }
+            Assert.True(File.Exists(marker), "The migration probe did not start within five seconds.");
+            processId = int.Parse(await File.ReadAllTextAsync(marker));
+            Assert.True(AgentConnectionService.IsProcessAlive(processId.Value));
+
+            cancellation.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => inspection);
+            for (var attempt = 0; attempt < 50 && AgentConnectionService.IsProcessAlive(processId.Value); attempt++)
+            {
+                await Task.Delay(100);
+            }
+            Assert.False(AgentConnectionService.IsProcessAlive(processId.Value));
+        }
+        finally
+        {
+            cancellation.Cancel();
+            if (inspection is not null)
+            {
+                try { await inspection; }
+                catch (OperationCanceledException) { }
+            }
+            if (processId is int remainingId && AgentConnectionService.IsProcessAlive(remainingId))
+            {
+                using var process = Process.GetProcessById(remainingId);
+                process.Kill(entireProcessTree: true);
+                await process.WaitForExitAsync();
+            }
+            Environment.SetEnvironmentVariable("GPTACCOUNTKEEPER_AGENT_EXECUTABLE", previousExecutable);
+            Environment.SetEnvironmentVariable("GPTACCOUNTKEEPER_AGENT_ENTRY", previousEntry);
+            Environment.SetEnvironmentVariable("GPTACCOUNTKEEPER_AGENT_NODE", previousNode);
+            for (var attempt = 0; attempt < 20 && Directory.Exists(root); attempt++)
+            {
+                try { Directory.Delete(root, recursive: true); }
+                catch (IOException) { await Task.Delay(100); }
+                catch (UnauthorizedAccessException) { await Task.Delay(100); }
+            }
+        }
     }
 
     [Fact]

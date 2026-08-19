@@ -118,7 +118,7 @@
           <StackPanel Spacing="12">
             <TextBlock Text="从旧版本导入 Profile 与账号" FontSize="16" FontWeight="Bold" Foreground="#F8FAFC" />
             <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#94A3B8" LineHeight="16"
-                       Text="迁移只会写入一个尚未建库的数据目录，所以当前目录已初始化时会先让你选一个新的数据目录，随后自动重启并在那里完成导入。旧项目和当前数据目录都只读不改。" />
+                       Text="选定目录后会先只读扫描；Profile 较大时可能需要一些时间，可随时取消。首次启动自动生成的空数据库可以直接导入；当前库已有业务数据时会引导你改选新的空数据目录。旧项目不会被修改。" />
             <StackPanel Orientation="Horizontal" Spacing="8">
               <Button Content="📥 预览并导入旧项目" Classes="primary" Padding="12,6" FontSize="11"
                       Command="{Binding ImportLegacyCommand}" />

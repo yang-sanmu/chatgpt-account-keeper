@@ -463,14 +463,32 @@ internal sealed class ShellViewModel : ObservableObject
         return migrated;
     }
 
-    public async Task<LegacyMigrationProbeResult> InspectLegacyAsync(string selectedRoot)
+    public async Task<LegacyMigrationProbeResult> InspectLegacyAsync(
+        string selectedRoot,
+        CancellationToken cancellationToken = default)
     {
+        using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            _lifetime.Token,
+            cancellationToken);
         Overview.MigrationStage = "正在只读扫描旧项目；Profile 较大时可能需要几十秒";
-        var preview = await _connection.InspectLegacyAsync(selectedRoot, _lifetime.Token);
-        Overview.MigrationStage = preview.Ok
-            ? $"扫描完成：{preview.Counts.Accounts} 个账号，{preview.Counts.Profiles} 个 Profile"
-            : $"扫描失败 [{preview.Error?.Code}]：{preview.Error?.Message}";
-        return preview;
+        try
+        {
+            var preview = await _connection.InspectLegacyAsync(selectedRoot, linkedCancellation.Token);
+            Overview.MigrationStage = preview.Ok
+                ? $"扫描完成：{preview.Counts.Accounts} 个账号，{preview.Counts.Profiles} 个 Profile"
+                : $"扫描失败 [{preview.Error?.Code}]：{preview.Error?.Message}";
+            return preview;
+        }
+        catch (OperationCanceledException)
+        {
+            Overview.MigrationStage = "旧项目扫描已取消";
+            throw;
+        }
+        catch (Exception exception)
+        {
+            Overview.MigrationStage = $"扫描失败：{exception.Message}";
+            throw;
+        }
     }
 
     public async Task UseDataDirectoryAsync(string directory)

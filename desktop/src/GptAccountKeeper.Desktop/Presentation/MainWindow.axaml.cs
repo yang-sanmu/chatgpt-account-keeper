@@ -246,7 +246,15 @@ internal sealed partial class MainWindow : Window
     /// </summary>
     private async Task RunLegacyImportAsync(string selectedRoot)
     {
-        var preview = await ViewModel.InspectLegacyAsync(selectedRoot);
+        var scan = await new MigrationScanDialog(
+                selectedRoot,
+                cancellationToken => ViewModel.InspectLegacyAsync(selectedRoot, cancellationToken))
+            .ShowDialog<MigrationScanDialogResult?>(this);
+        if (scan is null || scan.Cancelled) return;
+        if (scan.Error is not null) throw scan.Error;
+
+        var preview = scan.Preview
+            ?? throw new InvalidOperationException("旧项目扫描没有返回结果");
         if (!preview.Ok)
         {
             await new NoticeDialog(

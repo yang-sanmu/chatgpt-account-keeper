@@ -138,6 +138,9 @@ internal sealed class AgentProcessLauncher
             {
                 return ProbeFailure("MIGRATION_PROBE_START_FAILED", "操作系统未能启动迁移检查程序");
             }
+            using var cancellationRegistration = cancellationToken.Register(
+                static state => TerminateProcessTree((Process)state!),
+                process);
             var stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
             var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
             await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
@@ -165,6 +168,30 @@ internal sealed class AgentProcessLauncher
         catch (Exception exception) when (exception is IOException or InvalidOperationException or System.ComponentModel.Win32Exception or JsonException)
         {
             return ProbeFailure("MIGRATION_PROBE_FAILED", exception.Message);
+        }
+    }
+
+    private static void TerminateProcessTree(Process process)
+    {
+        try
+        {
+            process.Kill(entireProcessTree: true);
+        }
+        catch (PlatformNotSupportedException)
+        {
+            try
+            {
+                process.Kill();
+            }
+            catch (Exception exception) when (
+                exception is InvalidOperationException or System.ComponentModel.Win32Exception)
+            {
+            }
+        }
+        catch (Exception exception) when (
+            exception is InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            // 进程可能刚好自行退出；取消流程仍可继续完成。
         }
     }
 

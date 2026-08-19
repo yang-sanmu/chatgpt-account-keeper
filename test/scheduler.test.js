@@ -209,6 +209,40 @@ test("调度器恢复持久化 nextAt、上次结果并持久化启停开关", a
   assert.deepEqual(enabled.slice(-2), [true, false]);
 });
 
+test("调度器停止时仍向客户端返回持久化的上次运行结果", () => {
+  const service = new SchedulerService({
+    persistence: {
+      load: () => ({
+        enabled: false,
+        accounts: {
+          failed: {
+            nextAt: "2026-08-20T01:00:00.000Z",
+            lastAt: "2026-08-19T01:00:00.000Z",
+            lastResultState: "failed",
+            lastResult: { ok: false, reason: "会话已失效" },
+          },
+        },
+      }),
+    },
+    log: { info: () => {}, warn: () => {}, error: () => {} },
+  });
+
+  assert.deepEqual(service.status(), {
+    running: false,
+    enabled: false,
+    accounts: {
+      failed: {
+        nextAt: "2026-08-20T01:00:00.000Z",
+        lastAt: "2026-08-19T01:00:00.000Z",
+        busy: false,
+      },
+    },
+    lastResults: {
+      failed: { ok: false, reason: "会话已失效" },
+    },
+  });
+});
+
 test("scheduler drain waits for the manager and account work to settle", async () => {
   let releaseAccount;
   const accountWork = new Promise((resolve) => {

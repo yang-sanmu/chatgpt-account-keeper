@@ -12,7 +12,7 @@
     <Border Classes="card" Padding="18">
       <Grid RowDefinitions="Auto,*">
         <StackPanel Spacing="12" Margin="0,0,0,14">
-          <TextBlock Text="{Binding Summary}" FontSize="12" FontWeight="Medium" Foreground="#93C5FD" TextWrapping="Wrap" />
+          <TextBlock Text="{Binding Summary}" FontSize="12" FontWeight="Medium" Foreground="{DynamicResource BrushPrimary}" TextWrapping="Wrap" />
           <StackPanel Orientation="Horizontal" Spacing="8">
             <Button Content="🔍 重新扫描" Classes="primary" Padding="10,5" FontSize="11" Command="{Binding ScanCommand}" />
             <Button Content="🧹 清理全部可重建缓存" Padding="10,5" FontSize="11" Command="{Binding CleanAllCommand}" />
@@ -25,15 +25,17 @@
           <ListBox ItemsSource="{Binding Items}" SelectedItem="{Binding Selected, Mode=TwoWay}">
             <ListBox.ItemTemplate>
               <DataTemplate x:DataType="models:ProfileEntryDto">
-                <Border Margin="0,2" Padding="14,10" CornerRadius="8" Background="#0F172A" BorderBrush="{StaticResource BrushBorderSubtle}" BorderThickness="1">
+                <Border Margin="0,2" Padding="14,10" CornerRadius="8"
+                        Background="{DynamicResource BrushCardInner}"
+                        BorderBrush="{DynamicResource BrushBorderSubtle}" BorderThickness="1">
                   <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12" VerticalAlignment="Center">
                     <StackPanel Spacing="3">
-                      <TextBlock Text="{Binding DisplayName}" FontWeight="Bold" FontSize="13" Foreground="#F8FAFC"
+                      <TextBlock Text="{Binding DisplayName}" FontWeight="Bold" FontSize="13" Foreground="{DynamicResource BrushTextPrimary}"
                                  TextTrimming="CharacterEllipsis" />
-                      <TextBlock Text="{Binding SizeText}" FontSize="10" Foreground="#94A3B8" />
+                      <TextBlock Text="{Binding SizeText}" FontSize="10" Foreground="{DynamicResource BrushTextSecondary}" />
                     </StackPanel>
-                    <Border Grid.Column="1" Padding="8,3" CornerRadius="6" Background="#1E293B" VerticalAlignment="Center">
-                      <TextBlock Text="{Binding StateText}" FontSize="11" FontWeight="SemiBold" Foreground="#60A5FA" />
+                    <Border Grid.Column="1" Padding="8,3" CornerRadius="6" Background="{DynamicResource BrushBadgeBg}" VerticalAlignment="Center">
+                      <TextBlock Text="{Binding StateText}" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource BrushPrimary}" />
                     </Border>
                   </Grid>
                 </Border>
@@ -44,11 +46,12 @@
           <!-- 空列表提示 -->
           <StackPanel IsVisible="{Binding IsEmpty}" VerticalAlignment="Center" HorizontalAlignment="Center"
                       Spacing="12" MaxWidth="330">
-            <Border Width="64" Height="64" CornerRadius="32" Background="#1E293B" HorizontalAlignment="Center">
-              <Path Data="{StaticResource IconFolder}" Width="26" Height="26" Classes="vector-icon" Stroke="#60A5FA" />
+            <Border Width="64" Height="64" CornerRadius="32" Background="{DynamicResource BrushBadgeBg}" HorizontalAlignment="Center">
+              <Path Data="{StaticResource IconFolder}" Width="26" Height="26" Classes="vector-icon"
+                    Stroke="{DynamicResource BrushPrimary}" />
             </Border>
-            <TextBlock Text="暂无 Profile 数据" FontSize="15" FontWeight="SemiBold" Foreground="#F8FAFC" HorizontalAlignment="Center" />
-            <TextBlock TextWrapping="Wrap" TextAlignment="Center" FontSize="11" Foreground="#94A3B8" LineHeight="17"
+            <TextBlock Text="暂无 Profile 数据" FontSize="15" FontWeight="SemiBold" Foreground="{DynamicResource BrushTextPrimary}" HorizontalAlignment="Center" />
+            <TextBlock TextWrapping="Wrap" TextAlignment="Center" FontSize="11" Foreground="{DynamicResource BrushTextSecondary}" LineHeight="17"
                        Text="{Binding EmptyText}" />
           </StackPanel>
         </Panel>
@@ -59,27 +62,27 @@
     <Border Grid.Column="1" Classes="card" Padding="22">
       <ScrollViewer>
         <StackPanel Spacing="16" IsVisible="{Binding HasSelected}">
-          <TextBlock Text="所选 Profile 详情" FontSize="16" FontWeight="Bold" Foreground="#F8FAFC" />
+          <TextBlock Text="所选 Profile 详情" FontSize="16" FontWeight="Bold" Foreground="{DynamicResource BrushTextPrimary}" />
 
-          <Border Padding="16" CornerRadius="10" Background="#0F172A" BorderBrush="{StaticResource BrushBorder}" BorderThickness="1">
+          <Border Padding="16" CornerRadius="10" Background="{DynamicResource BrushCardInner}" BorderBrush="{DynamicResource BrushBorder}" BorderThickness="1">
             <StackPanel Spacing="8">
-              <TextBlock Text="{Binding Selected.DisplayName}" FontSize="16" FontWeight="Bold" Foreground="#93C5FD" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding Selected.DisplayName}" FontSize="16" FontWeight="Bold" Foreground="{DynamicResource BrushPrimary}" TextWrapping="Wrap" />
               <Grid ColumnDefinitions="*,*" Margin="0,4,0,0">
                 <StackPanel Spacing="3">
-                  <TextBlock Text="状态" FontSize="10" Foreground="#64748B" />
-                  <TextBlock Text="{Binding Selected.StateText}" FontSize="12" FontWeight="SemiBold" Foreground="#F8FAFC" />
+                  <TextBlock Text="状态" FontSize="10" Foreground="{DynamicResource BrushTextMuted}" />
+                  <TextBlock Text="{Binding Selected.StateText}" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource BrushTextPrimary}" />
                 </StackPanel>
                 <StackPanel Grid.Column="1" Spacing="3">
-                  <TextBlock Text="磁盘占用" FontSize="10" Foreground="#64748B" />
-                  <TextBlock Text="{Binding Selected.SizeText}" FontSize="12" FontWeight="SemiBold" Foreground="#F8FAFC" />
+                  <TextBlock Text="磁盘占用" FontSize="10" Foreground="{DynamicResource BrushTextMuted}" />
+                  <TextBlock Text="{Binding Selected.SizeText}" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource BrushTextPrimary}" />
                 </StackPanel>
               </Grid>
             </StackPanel>
           </Border>
 
           <!-- 孤儿状态提示 -->
-          <Border Padding="12" CornerRadius="8" Background="#1E293B" BorderBrush="{StaticResource BrushBorderHover}" BorderThickness="1">
-            <TextBlock Text="{Binding OrphanHint}" FontSize="11" Foreground="#FCD34D" TextWrapping="Wrap" LineHeight="16" />
+          <Border Padding="12" CornerRadius="8" Background="{DynamicResource BrushBadgeBg}" BorderBrush="{DynamicResource BrushBorderHover}" BorderThickness="1">
+            <TextBlock Text="{Binding OrphanHint}" FontSize="11" Foreground="{DynamicResource BrushWarning}" TextWrapping="Wrap" LineHeight="16" />
           </Border>
 
           <StackPanel Spacing="10">
@@ -92,10 +95,10 @@
           </StackPanel>
 
           <!-- 安全指引说明 -->
-          <Border Padding="14,12" Background="#0A101D" BorderBrush="{StaticResource BrushBorderSubtle}" BorderThickness="1" CornerRadius="8">
+          <Border Padding="14,12" Background="{DynamicResource BrushSubtleBg}" BorderBrush="{DynamicResource BrushBorderSubtle}" BorderThickness="1" CornerRadius="8">
             <StackPanel Spacing="4">
-              <TextBlock Text="🛡️ 缓存与存储安全保障" FontSize="11" FontWeight="SemiBold" Foreground="#93C5FD" />
-              <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#94A3B8" LineHeight="17"
+              <TextBlock Text="🛡️ 缓存与存储安全保障" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource BrushPrimary}" />
+              <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource BrushTextSecondary}" LineHeight="17"
                          Text="缓存清理仅删除可安全重建的网页媒体与代码缓存，完全保留 Cookie、Local Storage 与 IndexedDB，账号登录态不会丢失。关联账号或正在运行中的 Profile 受写保护不可删除。" />
             </StackPanel>
           </Border>

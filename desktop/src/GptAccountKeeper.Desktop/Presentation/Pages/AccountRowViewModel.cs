@@ -61,6 +61,7 @@ internal sealed class AccountRowViewModel : ObservableObject
     public string Id => _account.Id;
 
     public IReadOnlyList<RouteChoiceViewModel> GroupChoices { get; private set; }
+    public IReadOnlyList<SwitchRuleOption> SwitchRules => SwitchRuleOption.All;
 
     public ICommand CommitNoteCommand { get; }
     public ICommand ToggleEnabledCommand { get; }
@@ -194,6 +195,10 @@ internal sealed class AccountRowViewModel : ObservableObject
     public string LastRunText => _account.LastRunText;
 
     public string LastRunTooltip => _account.LastRunTooltip;
+
+    public bool IsLastRunFailed => _account.IsLastRunFailed;
+
+    public IBrush LastRunColor => _account.LastRunColor;
 
     public string OpenPageText => PageOpen ? "已打开" : "打开网页";
 
@@ -364,6 +369,8 @@ internal sealed class AccountRowViewModel : ObservableObject
         OnPropertyChanged(nameof(ScheduleText));
         OnPropertyChanged(nameof(LastRunText));
         OnPropertyChanged(nameof(LastRunTooltip));
+        OnPropertyChanged(nameof(LastRunColor));
+        OnPropertyChanged(nameof(IsLastRunFailed));
         OnPropertyChanged(nameof(OpenPageText));
         OnPropertyChanged(nameof(HasPendingEdits));
         OnPropertyChanged(nameof(ValidationError));

@@ -11,17 +11,18 @@
       <!-- 首次启动引导 Hero Card (仅在需要时显示) -->
       <Border IsVisible="{Binding NeedsFirstRun}"
               Classes="card"
-              Background="#0F243E"
-              BorderBrush="#2563EB"
+              Background="{DynamicResource BrushSubtleBg}"
+              BorderBrush="{DynamicResource BrushPrimary}"
               Padding="22">
         <StackPanel Spacing="14">
           <Grid ColumnDefinitions="*,Auto">
             <StackPanel Spacing="4">
               <StackPanel Orientation="Horizontal" Spacing="8">
-                <Path Data="{StaticResource IconSparkles}" Width="20" Height="20" Classes="vector-icon" Stroke="#60A5FA" />
-                <TextBlock Text="首次启动：创建新数据或导入旧版项目" FontSize="18" FontWeight="Bold" Foreground="#93C5FD" VerticalAlignment="Center" />
+                <Path Data="{StaticResource IconSparkles}" Width="20" Height="20" Classes="vector-icon"
+                      Stroke="{DynamicResource BrushPrimary}" />
+                <TextBlock Text="首次启动：创建新数据或导入旧版项目" FontSize="18" FontWeight="Bold" Foreground="{DynamicResource BrushPrimary}" VerticalAlignment="Center" />
               </StackPanel>
-              <TextBlock TextWrapping="Wrap" Foreground="#CBD5E1" FontSize="12" LineHeight="18" Margin="28,0,0,0"
+              <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource BrushTextSecondary}" FontSize="12" LineHeight="18" Margin="28,0,0,0"
                          Text="导入时请选择旧项目根目录；如果选择 profiles 文件夹，程序会自动识别其父目录。预检完成后会展示账号数量、Profile 大小、运行锁检测与所需磁盘空间，确认后安全复制。" />
             </StackPanel>
           </Grid>
@@ -31,7 +32,7 @@
             <Button Content="📂 选择其他数据目录" Command="{Binding ChooseDataDirectoryCommand}" />
           </StackPanel>
           <ProgressBar Minimum="0" Maximum="1" Value="{Binding MigrationProgress}" Height="6" Margin="28,6,0,0" />
-          <TextBlock Text="{Binding MigrationStage}" TextWrapping="Wrap" FontSize="11" Foreground="#94A3B8" Margin="28,0,0,0" />
+          <TextBlock Text="{Binding MigrationStage}" TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource BrushTextSecondary}" Margin="28,0,0,0" />
         </StackPanel>
       </Border>
 
@@ -42,13 +43,14 @@
         <Border Classes="stat-card" Padding="20,18">
           <Grid ColumnDefinitions="48,*" ColumnSpacing="14" VerticalAlignment="Center">
             <!-- 图标容器 -->
-            <Border Width="48" Height="48" CornerRadius="12" Background="#172554">
-              <Path Data="{StaticResource IconUsers}" Width="22" Height="22" Classes="vector-icon" Stroke="#60A5FA" />
+            <Border Width="48" Height="48" CornerRadius="12" Background="{DynamicResource BrushStatCard1Bg}">
+              <Path Data="{StaticResource IconUsers}" Width="22" Height="22" Classes="vector-icon"
+                    Stroke="{DynamicResource BrushPrimary}" />
             </Border>
             <StackPanel Grid.Column="1" Spacing="3" VerticalAlignment="Center">
-              <TextBlock Text="总账号数" FontSize="12" FontWeight="Medium" Foreground="#94A3B8" />
-              <TextBlock Text="{Binding AccountCount}" FontSize="28" FontWeight="Bold" Foreground="#F8FAFC" />
-              <TextBlock FontSize="11" Foreground="#60A5FA">
+              <TextBlock Text="总账号数" FontSize="12" FontWeight="Medium" Foreground="{DynamicResource BrushTextSecondary}" />
+              <TextBlock Text="{Binding AccountCount}" FontSize="28" FontWeight="Bold" Foreground="{DynamicResource BrushTextPrimary}" />
+              <TextBlock FontSize="11" Foreground="{DynamicResource BrushPrimary}">
                 <Run Text="{Binding EnabledCount}" /><Run Text=" 个参与调度" />
               </TextBlock>
             </StackPanel>
@@ -58,16 +60,17 @@
         <!-- 卡片 2: 已登录在线 -->
         <Border Grid.Column="1" Classes="stat-card" Padding="20,18">
           <Grid ColumnDefinitions="48,*" ColumnSpacing="14" VerticalAlignment="Center">
-            <Border Width="48" Height="48" CornerRadius="12" Background="#064E3B">
-              <Path Data="{StaticResource IconCheckCircle}" Width="22" Height="22" Classes="vector-icon" Stroke="#10B981" />
+            <Border Width="48" Height="48" CornerRadius="12" Background="{DynamicResource BrushStatCard2Bg}">
+              <Path Data="{StaticResource IconCheckCircle}" Width="22" Height="22" Classes="vector-icon"
+                    Stroke="{DynamicResource BrushSuccess}" />
             </Border>
             <StackPanel Grid.Column="1" Spacing="3" VerticalAlignment="Center">
-              <TextBlock Text="已登录在线" FontSize="12" FontWeight="Medium" Foreground="#94A3B8" />
-              <TextBlock Text="{Binding LoggedInCount}" FontSize="28" FontWeight="Bold" Foreground="#10B981" />
-              <TextBlock FontSize="11" Foreground="#F59E0B" IsVisible="{Binding HasNeedsReauth}">
+              <TextBlock Text="已登录在线" FontSize="12" FontWeight="Medium" Foreground="{DynamicResource BrushTextSecondary}" />
+              <TextBlock Text="{Binding LoggedInCount}" FontSize="28" FontWeight="Bold" Foreground="{DynamicResource BrushSuccess}" />
+              <TextBlock FontSize="11" Foreground="{DynamicResource BrushWarning}" IsVisible="{Binding HasNeedsReauth}">
                 <Run Text="{Binding NeedsReauthCount}" /><Run Text=" 个需重新登录" />
               </TextBlock>
-              <TextBlock FontSize="11" Foreground="#64748B" IsVisible="{Binding !HasNeedsReauth}" Text="所有会话正常" />
+              <TextBlock FontSize="11" Foreground="{DynamicResource BrushTextMuted}" IsVisible="{Binding !HasNeedsReauth}" Text="所有会话正常" />
             </StackPanel>
           </Grid>
         </Border>
@@ -75,13 +78,14 @@
         <!-- 卡片 3: 打开的 Chrome 窗口 -->
         <Border Grid.Column="2" Classes="stat-card" Padding="20,18">
           <Grid ColumnDefinitions="48,*" ColumnSpacing="14" VerticalAlignment="Center">
-            <Border Width="48" Height="48" CornerRadius="12" Background="#1E1B4B">
-              <Path Data="{StaticResource IconGlobe}" Width="22" Height="22" Classes="vector-icon" Stroke="#818CF8" />
+            <Border Width="48" Height="48" CornerRadius="12" Background="{DynamicResource BrushStatCard3Bg}">
+              <Path Data="{StaticResource IconGlobe}" Width="22" Height="22" Classes="vector-icon"
+                    Stroke="{DynamicResource BrushIndigo}" />
             </Border>
             <StackPanel Grid.Column="1" Spacing="3" VerticalAlignment="Center">
-              <TextBlock Text="打开的 Chrome" FontSize="12" FontWeight="Medium" Foreground="#94A3B8" />
-              <TextBlock Text="{Binding OpenPageCount}" FontSize="28" FontWeight="Bold" Foreground="#818CF8" />
-              <TextBlock Text="运行中的浏览器窗口" FontSize="11" Foreground="#64748B" />
+              <TextBlock Text="打开的 Chrome" FontSize="12" FontWeight="Medium" Foreground="{DynamicResource BrushTextSecondary}" />
+              <TextBlock Text="{Binding OpenPageCount}" FontSize="28" FontWeight="Bold" Foreground="{DynamicResource BrushIndigo}" />
+              <TextBlock Text="运行中的浏览器窗口" FontSize="11" Foreground="{DynamicResource BrushTextMuted}" />
             </StackPanel>
           </Grid>
         </Border>
@@ -89,13 +93,14 @@
         <!-- 卡片 4: 正在进行的任务 -->
         <Border Grid.Column="3" Classes="stat-card" Padding="20,18">
           <Grid ColumnDefinitions="48,*" ColumnSpacing="14" VerticalAlignment="Center">
-            <Border Width="48" Height="48" CornerRadius="12" Background="#2E1065">
-              <Path Data="{StaticResource IconActivity}" Width="22" Height="22" Classes="vector-icon" Stroke="#C084FC" />
+            <Border Width="48" Height="48" CornerRadius="12" Background="{DynamicResource BrushStatCard4Bg}">
+              <Path Data="{StaticResource IconActivity}" Width="22" Height="22" Classes="vector-icon"
+                    Stroke="{DynamicResource BrushPurple}" />
             </Border>
             <StackPanel Grid.Column="1" Spacing="3" VerticalAlignment="Center">
-              <TextBlock Text="进行中的任务" FontSize="12" FontWeight="Medium" Foreground="#94A3B8" />
-              <TextBlock Text="{Binding ActiveOperationCount}" FontSize="28" FontWeight="Bold" Foreground="#C084FC" />
-              <TextBlock Text="多阶段任务正在执行" FontSize="11" Foreground="#64748B" />
+              <TextBlock Text="进行中的任务" FontSize="12" FontWeight="Medium" Foreground="{DynamicResource BrushTextSecondary}" />
+              <TextBlock Text="{Binding ActiveOperationCount}" FontSize="28" FontWeight="Bold" Foreground="{DynamicResource BrushPurple}" />
+              <TextBlock Text="多阶段任务正在执行" FontSize="11" Foreground="{DynamicResource BrushTextMuted}" />
             </StackPanel>
           </Grid>
         </Border>
@@ -111,10 +116,12 @@
             <StackPanel Spacing="16">
               <Grid ColumnDefinitions="*,Auto">
                 <StackPanel Spacing="3">
-                  <TextBlock Text="自动调度控制中心" FontSize="16" FontWeight="SemiBold" Foreground="#F8FAFC" />
-                  <TextBlock Text="后台按设定的时间间隔轮换对话与状态巡检" FontSize="11" Foreground="#94A3B8" />
+                  <TextBlock Text="自动调度控制中心" FontSize="16" FontWeight="SemiBold" Foreground="{DynamicResource BrushTextPrimary}" />
+                  <TextBlock Text="后台按设定的时间间隔轮换对话与状态巡检" FontSize="11" Foreground="{DynamicResource BrushTextSecondary}" />
                 </StackPanel>
-                <Border Grid.Column="1" Padding="12,5" CornerRadius="16" Background="#0F172A" BorderBrush="{StaticResource BrushBorder}" BorderThickness="1">
+                <Border Grid.Column="1" Padding="12,5" CornerRadius="16"
+                        Background="{DynamicResource BrushSubtleBg}"
+                        BorderBrush="{DynamicResource BrushBorder}" BorderThickness="1">
                   <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                     <Ellipse Width="8" Height="8" Fill="{Binding SchedulerStatusColor}" VerticalAlignment="Center" />
                     <TextBlock Text="{Binding SchedulerStatusText}" FontSize="12" FontWeight="SemiBold"
@@ -128,10 +135,12 @@
                 <Button Content="⏹ 停止调度" Command="{Binding StopSchedulerCommand}" />
               </StackPanel>
 
-              <Border Padding="14,12" CornerRadius="8" Background="#0A101D" BorderBrush="{StaticResource BrushBorderSubtle}" BorderThickness="1">
+              <Border Padding="14,12" CornerRadius="8"
+                      Background="{DynamicResource BrushSubtleBg}"
+                      BorderBrush="{DynamicResource BrushBorderSubtle}" BorderThickness="1">
                 <StackPanel Spacing="4">
-                  <TextBlock Text="💡 托盘常驻与风控保护" FontSize="11" FontWeight="SemiBold" Foreground="#93C5FD" />
-                  <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#94A3B8" LineHeight="17"
+                  <TextBlock Text="💡 托盘常驻与风控保护" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource BrushPrimary}" />
+                  <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource BrushTextSecondary}" LineHeight="17"
                              Text="最小化到系统托盘后，自动对话与 Session 巡检依然由本地独立 Agent 持续执行。各账号会叠加随机抖动以防止被识别为机器人行为。" />
                 </StackPanel>
               </Border>
@@ -142,27 +151,28 @@
           <Border Classes="card" Padding="22">
             <StackPanel Spacing="14">
               <Grid ColumnDefinitions="*,Auto">
-                <TextBlock Text="Agent 守护进程状态" FontSize="15" FontWeight="SemiBold" Foreground="#F8FAFC" />
-                <Border Grid.Column="1" Padding="8,3" CornerRadius="12" Background="#0F172A"
-                        BorderBrush="{StaticResource BrushBorder}" BorderThickness="1">
-                  <TextBlock Text="{Binding ConnectionStatus}" FontSize="11" FontWeight="SemiBold" Foreground="#93C5FD" />
+                <TextBlock Text="Agent 守护进程状态" FontSize="15" FontWeight="SemiBold" Foreground="{DynamicResource BrushTextPrimary}" />
+                <Border Grid.Column="1" Padding="8,3" CornerRadius="12"
+                        Background="{DynamicResource BrushSubtleBg}"
+                        BorderBrush="{DynamicResource BrushBorder}" BorderThickness="1">
+                  <TextBlock Text="{Binding ConnectionStatus}" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource BrushPrimary}" />
                 </Border>
               </Grid>
               <Grid ColumnDefinitions="*,*,*" Margin="0,4,0,0">
                 <StackPanel Spacing="3">
-                  <TextBlock Text="Agent 版本" FontSize="10" Foreground="#64748B" />
-                  <TextBlock Text="{Binding AgentVersion}" FontSize="13" FontWeight="SemiBold" Foreground="#F8FAFC" />
+                  <TextBlock Text="Agent 版本" FontSize="10" Foreground="{DynamicResource BrushTextMuted}" />
+                  <TextBlock Text="{Binding AgentVersion}" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource BrushTextPrimary}" />
                 </StackPanel>
                 <StackPanel Grid.Column="1" Spacing="3">
-                  <TextBlock Text="实例标识" FontSize="10" Foreground="#64748B" />
-                  <TextBlock Text="{Binding InstanceId}" FontSize="13" FontWeight="SemiBold" Foreground="#F8FAFC" TextTrimming="CharacterEllipsis" />
+                  <TextBlock Text="实例标识" FontSize="10" Foreground="{DynamicResource BrushTextMuted}" />
+                  <TextBlock Text="{Binding InstanceId}" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource BrushTextPrimary}" TextTrimming="CharacterEllipsis" />
                 </StackPanel>
                 <StackPanel Grid.Column="2" Spacing="3">
-                  <TextBlock Text="最近事件" FontSize="10" Foreground="#64748B" />
-                  <TextBlock Text="{Binding LastEvent}" FontSize="12" Foreground="#94A3B8" />
+                  <TextBlock Text="最近事件" FontSize="10" Foreground="{DynamicResource BrushTextMuted}" />
+                  <TextBlock Text="{Binding LastEvent}" FontSize="12" Foreground="{DynamicResource BrushTextSecondary}" />
                 </StackPanel>
               </Grid>
-              <TextBlock Text="{Binding ConnectionDetail}" FontSize="11" Foreground="#64748B" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding ConnectionDetail}" FontSize="11" Foreground="{DynamicResource BrushTextMuted}" TextWrapping="Wrap" />
             </StackPanel>
           </Border>
         </StackPanel>
@@ -171,30 +181,36 @@
         <Border Grid.Column="1" Classes="card" Padding="22">
           <StackPanel Spacing="16">
             <Grid ColumnDefinitions="*,Auto">
-              <TextBlock Text="数据与系统诊断" FontSize="16" FontWeight="SemiBold" Foreground="#F8FAFC" />
-              <Border Grid.Column="1" Padding="6,2" CornerRadius="4" Background="#1E293B">
-                <TextBlock Text="{Binding RuntimeMode}" FontSize="10" Foreground="#38BDF8" />
+              <TextBlock Text="数据与系统诊断" FontSize="16" FontWeight="SemiBold" Foreground="{DynamicResource BrushTextPrimary}" />
+              <Border Grid.Column="1" Padding="6,2" CornerRadius="4" Background="{DynamicResource BrushBadgeBg}">
+                <TextBlock Text="{Binding RuntimeMode}" FontSize="10" Foreground="{DynamicResource BrushInfo}" />
               </Border>
             </Grid>
 
             <StackPanel Spacing="5">
-              <TextBlock Text="数据存储目录" FontSize="11" FontWeight="Medium" Foreground="#94A3B8" />
-              <Border Padding="10,8" CornerRadius="8" Background="#0A101D" BorderBrush="{StaticResource BrushBorderSubtle}" BorderThickness="1">
-                <SelectableTextBlock Text="{Binding DataDirectory}" TextWrapping="Wrap" FontSize="11" Foreground="#CBD5E1" FontFamily="Consolas, monospace" />
+              <TextBlock Text="数据存储目录" FontSize="11" FontWeight="Medium" Foreground="{DynamicResource BrushTextSecondary}" />
+              <Border Padding="10,8" CornerRadius="8"
+                      Background="{DynamicResource BrushCardInner}"
+                      BorderBrush="{DynamicResource BrushBorderSubtle}" BorderThickness="1">
+                <SelectableTextBlock Text="{Binding DataDirectory}" TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource BrushTextPrimary}" FontFamily="Consolas, monospace" />
               </Border>
             </StackPanel>
 
             <StackPanel Spacing="5">
-              <TextBlock Text="Agent 运行日志" FontSize="11" FontWeight="Medium" Foreground="#94A3B8" />
-              <Border Padding="10,8" CornerRadius="8" Background="#0A101D" BorderBrush="{StaticResource BrushBorderSubtle}" BorderThickness="1">
-                <SelectableTextBlock Text="{Binding AgentLogFile}" TextWrapping="Wrap" FontSize="11" Foreground="#CBD5E1" FontFamily="Consolas, monospace" />
+              <TextBlock Text="Agent 运行日志" FontSize="11" FontWeight="Medium" Foreground="{DynamicResource BrushTextSecondary}" />
+              <Border Padding="10,8" CornerRadius="8"
+                      Background="{DynamicResource BrushCardInner}"
+                      BorderBrush="{DynamicResource BrushBorderSubtle}" BorderThickness="1">
+                <SelectableTextBlock Text="{Binding AgentLogFile}" TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource BrushTextPrimary}" FontFamily="Consolas, monospace" />
               </Border>
             </StackPanel>
 
-            <Border Padding="14,12" CornerRadius="8" Background="#0A101D" BorderBrush="{StaticResource BrushBorderSubtle}" BorderThickness="1">
+            <Border Padding="14,12" CornerRadius="8"
+                    Background="{DynamicResource BrushSubtleBg}"
+                    BorderBrush="{DynamicResource BrushBorderSubtle}" BorderThickness="1">
               <StackPanel Spacing="4">
-                <TextBlock Text="⚙ 快捷管理建议" FontSize="11" FontWeight="SemiBold" Foreground="#93C5FD" />
-                <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#94A3B8" LineHeight="17"
+                <TextBlock Text="⚙ 快捷管理建议" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource BrushPrimary}" />
+                <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource BrushTextSecondary}" LineHeight="17"
                            Text="在「设置」页面中可以直接一键打开数据或日志文件夹，或者复制完整路径用于故障排查与备份。" />
               </StackPanel>
             </Border>

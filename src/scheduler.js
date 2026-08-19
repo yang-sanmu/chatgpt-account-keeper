@@ -244,7 +244,25 @@ export class SchedulerService {
   }
 
   status() {
+    // 即使调度器当前没有运行，也要把已经落库的“上次运行”带给桌面端。
+    // 过去只有 _runAccountLoop 启动后才恢复 lastResults，导致用户停止调度或
+    // 重启应用后，账号页把真实的“上次失败”错误显示成“尚未运行”。
+    const persisted = this._persistentSnapshot();
+    const persistedAccounts = persisted?.accounts && typeof persisted.accounts === "object"
+      ? persisted.accounts
+      : {};
     const accounts = {};
+    const lastResults = {};
+    for (const [id, state] of Object.entries(persistedAccounts)) {
+      accounts[id] = {
+        nextAt: state?.nextAt ?? null,
+        lastAt: state?.lastAt ?? null,
+        busy: false,
+      };
+      if (state?.lastResult && typeof state.lastResult === "object") {
+        lastResults[id] = { ...state.lastResult };
+      }
+    }
     for (const [id, st] of this._accountLoops) {
       accounts[id] = {
         nextAt: st.nextAt ? new Date(st.nextAt).toISOString() : null,
@@ -254,9 +272,9 @@ export class SchedulerService {
     }
     return {
       running: this.running,
-      enabled: this._persistentSnapshot().enabled === true,
+      enabled: persisted.enabled === true,
       accounts, // 每账号各自的下次/上次时间
-      lastResults: this.lastResults,
+      lastResults: { ...lastResults, ...this.lastResults },
     };
   }
 

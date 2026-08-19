@@ -61,3 +61,36 @@ test("detached Agent diagnostics are written directly and redact URL credentials
   assert.match(written, /https:\/\/example\.test\/…/);
   assert.doesNotMatch(written, /secret|hunter2/);
 });
+
+test("legacy JSONL history exposes the latest readable result", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "keeper-legacy-history-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const logs = path.join(root, "logs");
+  fs.mkdirSync(logs, { recursive: true });
+  fs.writeFileSync(
+    path.join(logs, "account-1.jsonl"),
+    [
+      JSON.stringify({ time: "2026-08-18T10:00:00.000Z", ok: true }),
+      "{damaged trailing row",
+      "",
+    ].join("\n"),
+    "utf8"
+  );
+  const result = spawnSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      "import { listHistoryAccounts } from './src/logger.js'; console.log(JSON.stringify(listHistoryAccounts()));",
+    ],
+    {
+      cwd: path.resolve("."),
+      env: { ...process.env, GPT_ACCOUNT_KEEPER_STATE_ROOT: root },
+      encoding: "utf8",
+    }
+  );
+  assert.equal(result.status, 0, result.stderr);
+  const account = JSON.parse(result.stdout)[0];
+  assert.equal(account.lastAt, "2026-08-18T10:00:00.000Z");
+  assert.equal(account.lastOk, true);
+});

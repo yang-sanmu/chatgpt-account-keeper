@@ -41,8 +41,8 @@ internal sealed class UpdateProgressDialog : Window
         Width = 620;
         Height = 370;
         CanResize = false;
+        ShowInTaskbar = false;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        Background = Palette.BgDark;
 
         _stateText = new TextBlock
         {
@@ -50,7 +50,6 @@ internal sealed class UpdateProgressDialog : Window
             FontSize = 18,
             LineHeight = 26,
             FontWeight = FontWeight.Bold,
-            Foreground = Palette.TextPrimary,
         };
         _messageText = new TextBlock
         {
@@ -58,7 +57,7 @@ internal sealed class UpdateProgressDialog : Window
                 ? "更新包已经下载完成，正在检查 Agent 是否处于安全安装点。"
                 : "正在连接更新服务，下载过程中可以随时取消。",
             TextWrapping = TextWrapping.Wrap,
-            Foreground = Palette.TextSecondary,
+            Classes = { "muted" },
             FontSize = 12,
             LineHeight = 18,
         };
@@ -103,14 +102,12 @@ internal sealed class UpdateProgressDialog : Window
                     {
                         Padding = new Thickness(12, 8),
                         CornerRadius = new CornerRadius(6),
-                        Background = Brush.Parse("#0F172A"),
-                        BorderBrush = Brush.Parse("#1E2D4A"),
-                        BorderThickness = new Thickness(1),
+                        Classes = { "card" },
                         Child = new TextBlock
                         {
                             Text = "💡 下载与安全检查阶段可以随时取消；一旦开始排空 Agent 将自动完成安装并重启，避免损坏数据。",
                             TextWrapping = TextWrapping.Wrap,
-                            Foreground = Palette.Muted,
+                            Classes = { "muted" },
                             FontSize = 11,
                             LineHeight = 16,
                         },
@@ -195,7 +192,8 @@ internal sealed class UpdateProgressDialog : Window
         _running = false;
         _canCancel = false;
         _stateText.Text = state;
-        _stateText.Foreground = failed ? Palette.Danger : Palette.TextPrimary;
+        _stateText.Classes.Remove("danger-text");
+        if (failed) _stateText.Classes.Add("danger-text");
         _messageText.Text = message;
         _progressBar.IsIndeterminate = false;
         _progressBar.IsVisible = false;

@@ -13,8 +13,8 @@
       <Grid RowDefinitions="Auto,*">
         <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,14">
           <StackPanel Spacing="3">
-            <TextBlock Text="会话主题集" FontSize="15" FontWeight="Bold" Foreground="#F8FAFC" />
-            <TextBlock Text="{Binding Summary}" FontSize="11" Foreground="#94A3B8" />
+            <TextBlock Text="会话主题集" FontSize="15" FontWeight="Bold" Foreground="{DynamicResource BrushTextPrimary}" />
+            <TextBlock Text="{Binding Summary}" FontSize="11" Foreground="{DynamicResource BrushTextSecondary}" />
           </StackPanel>
           <Button Grid.Column="1" Content="➕ 新建主题" Classes="primary" Padding="10,5" FontSize="11"
                   Command="{Binding BeginNewCommand}" />
@@ -25,15 +25,17 @@
           <ListBox ItemsSource="{Binding Items}" SelectedItem="{Binding Selected, Mode=TwoWay}">
             <ListBox.ItemTemplate>
               <DataTemplate x:DataType="models:ConversationSetDto">
-                <Border Margin="0,2" Padding="14,11" CornerRadius="8" Background="#0F172A" BorderBrush="{StaticResource BrushBorderSubtle}" BorderThickness="1">
+                <Border Margin="0,2" Padding="14,11" CornerRadius="8"
+                        Background="{DynamicResource BrushCardInner}"
+                        BorderBrush="{DynamicResource BrushBorderSubtle}" BorderThickness="1">
                   <StackPanel Spacing="5">
                     <Grid ColumnDefinitions="*,Auto">
-                      <TextBlock Text="{Binding Name}" FontWeight="Bold" FontSize="13" Foreground="#F8FAFC" />
-                      <Border Grid.Column="1" Padding="7,2" CornerRadius="4" Background="#1E293B">
-                        <TextBlock Text="{Binding RoundsText}" FontSize="10" FontWeight="SemiBold" Foreground="#93C5FD" />
+                      <TextBlock Text="{Binding Name}" FontWeight="Bold" FontSize="13" Foreground="{DynamicResource BrushTextPrimary}" />
+                      <Border Grid.Column="1" Padding="7,2" CornerRadius="4" Background="{DynamicResource BrushBadgeBg}">
+                        <TextBlock Text="{Binding RoundsText}" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource BrushPrimary}" />
                       </Border>
                     </Grid>
-                    <TextBlock Text="{Binding Topic}" FontSize="11" Foreground="#94A3B8"
+                    <TextBlock Text="{Binding Topic}" FontSize="11" Foreground="{DynamicResource BrushTextSecondary}"
                                TextTrimming="CharacterEllipsis" MaxLines="2" TextWrapping="Wrap" LineHeight="17" />
                   </StackPanel>
                 </Border>
@@ -44,11 +46,12 @@
           <!-- 空列表提示 -->
           <StackPanel IsVisible="{Binding IsEmpty}" VerticalAlignment="Center" HorizontalAlignment="Center"
                       Spacing="12" MaxWidth="320">
-            <Border Width="64" Height="64" CornerRadius="32" Background="#1E293B" HorizontalAlignment="Center">
-              <Path Data="{StaticResource IconMessageSquare}" Width="26" Height="26" Classes="vector-icon" Stroke="#60A5FA" />
+            <Border Width="64" Height="64" CornerRadius="32" Background="{DynamicResource BrushBadgeBg}" HorizontalAlignment="Center">
+              <Path Data="{StaticResource IconMessageSquare}" Width="26" Height="26" Classes="vector-icon"
+                    Stroke="{DynamicResource BrushPrimary}" />
             </Border>
-            <TextBlock Text="还没有会话主题" FontSize="15" FontWeight="SemiBold" Foreground="#F8FAFC" HorizontalAlignment="Center" />
-            <TextBlock TextWrapping="Wrap" TextAlignment="Center" FontSize="11" Foreground="#94A3B8" LineHeight="17"
+            <TextBlock Text="还没有会话主题" FontSize="15" FontWeight="SemiBold" Foreground="{DynamicResource BrushTextPrimary}" HorizontalAlignment="Center" />
+            <TextBlock TextWrapping="Wrap" TextAlignment="Center" FontSize="11" Foreground="{DynamicResource BrushTextSecondary}" LineHeight="17"
                        Text="Agent 会围绕主题自动与 ChatGPT 开启真实对话并多轮深度追问，至少需要创建一个主题才能启动自动调度。" />
           </StackPanel>
         </Panel>
@@ -59,16 +62,16 @@
     <Border Grid.Column="1" Classes="card" Padding="22">
       <ScrollViewer>
         <StackPanel Spacing="16">
-          <TextBlock Text="{Binding FormTitle}" FontSize="16" FontWeight="Bold" Foreground="#F8FAFC" />
+          <TextBlock Text="{Binding FormTitle}" FontSize="16" FontWeight="Bold" Foreground="{DynamicResource BrushTextPrimary}" />
 
           <StackPanel Spacing="4">
-            <TextBlock Text="会话集标识" FontSize="11" FontWeight="Medium" Foreground="#94A3B8" />
+            <TextBlock Text="会话集标识" FontSize="11" FontWeight="Medium" Foreground="{DynamicResource BrushTextSecondary}" />
             <TextBox PlaceholderText="如：科技趋势探讨、Rust 与 Go 架构比较…"
                      Text="{Binding Name, Mode=TwoWay}" IsEnabled="{Binding CanEdit}" />
           </StackPanel>
 
           <StackPanel Spacing="4">
-            <TextBlock Text="对话讨论主题与上下文指令 (Prompt)" FontSize="11" FontWeight="Medium" Foreground="#94A3B8" />
+            <TextBlock Text="对话讨论主题与上下文指令 (Prompt)" FontSize="11" FontWeight="Medium" Foreground="{DynamicResource BrushTextSecondary}" />
             <TextBox AcceptsReturn="True" MinHeight="220" TextWrapping="Wrap" LineHeight="18"
                      PlaceholderText="详细描述希望 Agent 展开讨论的话题。Agent 会据此拟人化提问、追问细节并展开多轮自然对话…"
                      Text="{Binding Topic, Mode=TwoWay}" IsEnabled="{Binding CanEdit}" />
@@ -76,21 +79,21 @@
 
           <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
             <StackPanel Spacing="4">
-              <TextBlock Text="最少连续追问轮数" FontSize="11" FontWeight="Medium" Foreground="#94A3B8" />
+              <TextBlock Text="最少连续追问轮数" FontSize="11" FontWeight="Medium" Foreground="{DynamicResource BrushTextSecondary}" />
               <NumericUpDown Minimum="1" Maximum="100" Increment="1" FormatString="0"
                              Value="{Binding MinRounds, Mode=TwoWay}" IsEnabled="{Binding CanEdit}" />
             </StackPanel>
             <StackPanel Grid.Column="1" Spacing="4">
-              <TextBlock Text="最多连续追问轮数" FontSize="11" FontWeight="Medium" Foreground="#94A3B8" />
+              <TextBlock Text="最多连续追问轮数" FontSize="11" FontWeight="Medium" Foreground="{DynamicResource BrushTextSecondary}" />
               <NumericUpDown Minimum="1" Maximum="100" Increment="1" FormatString="0"
                              Value="{Binding MaxRounds, Mode=TwoWay}" IsEnabled="{Binding CanEdit}" />
             </StackPanel>
           </Grid>
 
           <!-- 校验错误 -->
-          <Border IsVisible="{Binding HasValidationError}"
-                  Padding="12" CornerRadius="8" Background="#381014" BorderBrush="#DC2626" BorderThickness="1">
-            <TextBlock Text="{Binding ValidationError}" FontSize="11" Foreground="#FCA5A5" TextWrapping="Wrap" />
+          <Border IsVisible="{Binding HasValidationError}" Padding="12" Classes="danger-card">
+            <TextBlock Text="{Binding ValidationError}" FontSize="11"
+                       Foreground="{DynamicResource BrushDangerText}" TextWrapping="Wrap" />
           </Border>
 
           <!-- 操作按钮条 -->
@@ -101,10 +104,10 @@
           </StackPanel>
 
           <!-- 提示卡片 -->
-          <Border Padding="14,12" Background="#0A101D" BorderBrush="{StaticResource BrushBorderSubtle}" BorderThickness="1" CornerRadius="8">
+          <Border Padding="14,12" Background="{DynamicResource BrushSubtleBg}" BorderBrush="{DynamicResource BrushBorderSubtle}" BorderThickness="1" CornerRadius="8">
             <StackPanel Spacing="4">
-              <TextBlock Text="💡 对话安全与轮换机制" FontSize="11" FontWeight="SemiBold" Foreground="#93C5FD" />
-              <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#94A3B8" LineHeight="17"
+              <TextBlock Text="💡 对话安全与轮换机制" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource BrushPrimary}" />
+              <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource BrushTextSecondary}" LineHeight="17"
                          Text="每轮对话完成后，Agent 会根据账号设置的窗口数自动切换到下一个主题；重命名主题时底层会先创建新主题再删除旧主题，保证正在进行的对话平稳过渡。" />
             </StackPanel>
           </Border>

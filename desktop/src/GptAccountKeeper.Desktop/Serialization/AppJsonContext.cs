@@ -66,6 +66,7 @@ namespace GptAccountKeeper.Desktop.Serialization;
 [JsonSerializable(typeof(AcceptedResult))]
 [JsonSerializable(typeof(OkResult))]
 [JsonSerializable(typeof(DesktopSettings))]
+[JsonSerializable(typeof(AppTheme))]
 [JsonSerializable(typeof(LegacyMigrationProbeResult))]
 [JsonSerializable(typeof(MigrationProgressDto))]
 [JsonSerializable(typeof(BootstrapPointer))]

@@ -41,11 +41,12 @@ internal sealed class UpdateAvailableDialog : Window
         string summary)
     {
         Title = "发现新版本";
-        Width = 680;
-        Height = 620;
+        Width = 580;
+        SizeToContent = SizeToContent.Height;
+        MaxHeight = 520;
         CanResize = false;
+        ShowInTaskbar = false;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        Background = Palette.BgDark;
 
         var ignore = new Button { Content = "忽略本次更新", Padding = new Thickness(14, 8) };
         ignore.Click += (_, _) => Close(UpdateChoice.IgnoreThisVersion);
@@ -62,30 +63,29 @@ internal sealed class UpdateAvailableDialog : Window
         Content = new Border
         {
             Classes = { "card" },
-            Margin = new Thickness(16),
-            Padding = new Thickness(24),
+            Margin = new Thickness(14),
+            Padding = new Thickness(20),
             Child = new StackPanel
             {
-                Spacing = 16,
+                Spacing = 12,
                 Children =
                 {
                     new StackPanel
                     {
-                        Spacing = 4,
+                        Spacing = 3,
                         Children =
                         {
                             new TextBlock
                             {
                                 Text = $"发现新版本 {version}",
-                                FontSize = 20,
+                                FontSize = 18,
                                 FontWeight = FontWeight.Bold,
-                                Foreground = Palette.TextPrimary,
                             },
                             new TextBlock
                             {
                                 Text = $"当前版本 {currentVersion}",
-                                Foreground = Palette.TextSecondary,
-                                FontSize = 12,
+                                Classes = { "muted" },
+                                FontSize = 11,
                             },
                         },
                     },
@@ -93,54 +93,47 @@ internal sealed class UpdateAvailableDialog : Window
                     {
                         Text = "本次更新摘要",
                         FontWeight = FontWeight.SemiBold,
-                        Foreground = Palette.TextPrimary,
-                        FontSize = 13,
-                    },
-                    new Border
-                    {
-                        Padding = new Thickness(14, 12),
-                        CornerRadius = new CornerRadius(8),
-                        Background = Brush.Parse("#0A101D"),
-                        BorderBrush = Brush.Parse("#1E2D4A"),
-                        BorderThickness = new Thickness(1),
-                        Child = new ScrollViewer
-                        {
-                            MaxHeight = 180,
-                            Content = new SelectableTextBlock
-                            {
-                                Text = UpdateReleaseNotes.Normalize(summary),
-                                TextWrapping = TextWrapping.Wrap,
-                                Foreground = Palette.TextSecondary,
-                                FontSize = 12,
-                                LineHeight = 18,
-                            },
-                        },
+                        FontSize = 12,
                     },
                     new Border
                     {
                         Padding = new Thickness(12, 10),
                         CornerRadius = new CornerRadius(8),
-                        Background = Brush.Parse("#0F172A"),
-                        BorderBrush = Brush.Parse("#1E2D4A"),
-                        BorderThickness = new Thickness(1),
+                        Classes = { "subtle-card" },
+                        Child = new ScrollViewer
+                        {
+                            MaxHeight = 125,
+                            Content = new SelectableTextBlock
+                            {
+                                Text = UpdateReleaseNotes.Normalize(summary),
+                                TextWrapping = TextWrapping.Wrap,
+                                FontSize = 11,
+                                LineHeight = 17,
+                            },
+                        },
+                    },
+                    new Border
+                    {
+                        Padding = new Thickness(12, 9),
+                        CornerRadius = new CornerRadius(8),
+                        Classes = { "subtle-card" },
                         Child = new TextBlock
                         {
                             Text = alreadyDownloaded
                                 ? "🔒 更新包已下载完成。安装前 Agent 会先安全排空：仍有 Chrome 窗口或运行中的任务时会拒绝安装，不会强杀任务。"
                                 : "🔒 选择“立即更新”会下载更新包，并在 Agent 安全排空后安装重启：仍有 Chrome 窗口或运行中的任务时会拒绝安装，不会强杀任务。",
                             TextWrapping = TextWrapping.Wrap,
-                            Foreground = Palette.TextSecondary,
-                            LineHeight = 17,
-                            FontSize = 12,
+                            LineHeight = 16,
+                            FontSize = 11,
                         },
                     },
                     new TextBlock
                     {
                         Text = "“忽略本次更新”只跳过这个版本，更高版本仍会提示；随时可在设置里手动检查更新。",
                         TextWrapping = TextWrapping.Wrap,
-                        Foreground = Palette.Muted,
-                        LineHeight = 16,
-                        FontSize = 11,
+                        LineHeight = 15,
+                        FontSize = 10,
+                        Opacity = 0.75,
                     },
                     new StackPanel
                     {
@@ -164,8 +157,8 @@ internal sealed class CloseChoiceDialog : Window
         Width = 520;
         Height = 270;
         CanResize = false;
+        ShowInTaskbar = false;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        Background = Palette.BgDark;
 
         var remember = new CheckBox { Content = "记住本次选择（以后可在设置中随时修改）", Margin = new Thickness(0, 4) };
         var cancel = new Button { Content = "取消", Padding = new Thickness(16, 8) };
@@ -200,13 +193,12 @@ internal sealed class CloseChoiceDialog : Window
                         Text = "后台任务应如何处理？",
                         FontSize = 18,
                         FontWeight = FontWeight.Bold,
-                        Foreground = Palette.TextPrimary,
                     },
                     new TextBlock
                     {
                         Text = "隐藏到托盘会保留 Agent 守护进程、自动对话和会话巡检；退出全部会请求 Agent 安全关闭本程序管理的 Chrome、结束任务并完成数据库检查点，未能在数秒内收尾的任务会被安全中止。",
                         TextWrapping = TextWrapping.Wrap,
-                        Foreground = Palette.TextSecondary,
+                        Classes = { "muted" },
                         LineHeight = 18,
                         FontSize = 12,
                     },
@@ -232,8 +224,8 @@ internal sealed class NoticeDialog : Window
         Width = 520;
         Height = 260;
         CanResize = false;
+        ShowInTaskbar = false;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        Background = Palette.BgDark;
 
         var close = new Button { Content = "知道了", Classes = { "primary" }, Padding = new Thickness(20, 8) };
         close.Click += (_, _) => Close();
@@ -252,13 +244,12 @@ internal sealed class NoticeDialog : Window
                         Text = title,
                         FontSize = 18,
                         FontWeight = FontWeight.Bold,
-                        Foreground = Palette.TextPrimary,
                     },
                     new TextBlock
                     {
                         Text = message,
                         TextWrapping = TextWrapping.Wrap,
-                        Foreground = Palette.TextSecondary,
+                        Classes = { "muted" },
                         LineHeight = 18,
                         FontSize = 12,
                     },
@@ -281,8 +272,8 @@ internal sealed class MigrationPreviewDialog : Window
         Width = 660;
         Height = 560;
         CanResize = false;
+        ShowInTaskbar = false;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        Background = Palette.BgDark;
 
         var cancel = new Button { Content = "取消", Padding = new Thickness(16, 8) };
         cancel.Click += (_, _) => Close(false);
@@ -328,21 +319,17 @@ internal sealed class MigrationPreviewDialog : Window
                     FontSize = 20,
                     LineHeight = 28,
                     FontWeight = FontWeight.Bold,
-                    Foreground = Palette.TextPrimary,
                 },
                 new Border
                 {
                     Margin = new Thickness(0, 4, 0, 0),
                     Padding = new Thickness(10, 6),
                     CornerRadius = new CornerRadius(6),
-                    Background = Brush.Parse("#0A101D"),
-                    BorderBrush = Brush.Parse("#1E2D4A"),
-                    BorderThickness = new Thickness(1),
+                    Classes = { "subtle-card" },
                     Child = new SelectableTextBlock
                     {
                         Text = preview.SourceRoot,
                         TextWrapping = TextWrapping.Wrap,
-                        Foreground = Palette.TextSecondary,
                         FontSize = 11,
                         LineHeight = 16,
                     },
@@ -398,17 +385,15 @@ internal sealed class MigrationPreviewDialog : Window
                 {
                     Padding = new Thickness(14, 10),
                     CornerRadius = new CornerRadius(8),
-                    Background = Brush.Parse("#0F172A"),
-                    BorderBrush = Brush.Parse("#1E2D4A"),
-                    BorderThickness = new Thickness(1),
+                    Classes = { "card" },
                     Child = new StackPanel
                     {
                         Spacing = 6,
                         Children =
                         {
-                            new TextBlock { Text = $"👥 账号 {counts.Accounts} · ▣ Profile {counts.Profiles} · 已归档 {counts.ArchivedProfiles}", Foreground = Palette.TextPrimary, FontSize = 12 },
-                            new TextBlock { Text = $"🏷️ 分组 {counts.Groups} · ✎ 会话集 {counts.ConversationSets} · 🌐 代理节点 {counts.ProxyNodes}", Foreground = Palette.TextPrimary, FontSize = 12 },
-                            new TextBlock { Text = $"📊 状态 {counts.Statuses} · ◷ 历史 {counts.Histories} · 损坏行 {counts.Rejects}", Foreground = Palette.TextPrimary, FontSize = 12 },
+                            new TextBlock { Text = $"👥 账号 {counts.Accounts} · ▣ Profile {counts.Profiles} · 已归档 {counts.ArchivedProfiles}", FontSize = 12 },
+                            new TextBlock { Text = $"🏷️ 分组 {counts.Groups} · ✎ 会话集 {counts.ConversationSets} · 🌐 代理节点 {counts.ProxyNodes}", FontSize = 12 },
+                            new TextBlock { Text = $"📊 状态 {counts.Statuses} · ◷ 历史 {counts.Histories} · 损坏行 {counts.Rejects}", FontSize = 12 },
                             new TextBlock { Text = $"💾 Profile 数据 {FormatBytes(preview.TotalProfileBytes)}", Foreground = Palette.Info, FontWeight = FontWeight.SemiBold, FontSize = 12 },
                             new TextBlock { Text = space, FontWeight = FontWeight.SemiBold, Foreground = Palette.Ok, FontSize = 12 },
                         },
@@ -418,14 +403,12 @@ internal sealed class MigrationPreviewDialog : Window
                 {
                     Padding = new Thickness(14, 10),
                     CornerRadius = new CornerRadius(8),
-                    Background = Brush.Parse("#0F243E"),
-                    BorderBrush = Brush.Parse("#1D4ED8"),
-                    BorderThickness = new Thickness(1),
+                    Classes = { "subtle-card" },
                     Child = new TextBlock
                     {
                         Text = "💡 程序只复制旧数据，不移动、不覆盖、不删除旧项目。迁移完成前请不要启动旧服务或相关 Chrome。首次迁移后调度保持停止状态。",
                         TextWrapping = TextWrapping.Wrap,
-                        Foreground = Brush.Parse("#93C5FD"),
+                        Classes = { "muted" },
                         FontSize = 11,
                         LineHeight = 17,
                     },
@@ -438,14 +421,12 @@ internal sealed class MigrationPreviewDialog : Window
             {
                 Padding = new Thickness(12, 8),
                 CornerRadius = new CornerRadius(6),
-                Background = Brush.Parse("#38220A"),
-                BorderBrush = Brush.Parse("#92400E"),
-                BorderThickness = new Thickness(1),
+                Classes = { "warning-card" },
                 Child = new TextBlock
                 {
                     Text = $"⚠ {warning}",
                     TextWrapping = TextWrapping.Wrap,
-                    Foreground = Palette.Warning,
+                    Classes = { "warning-text" },
                     FontSize = 11,
                 },
             });
@@ -488,8 +469,8 @@ internal sealed class ConfirmationDialog : Window
         Width = 520;
         Height = 260;
         CanResize = false;
+        ShowInTaskbar = false;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        Background = Palette.BgDark;
         var cancel = new Button { Content = "取消", Padding = new Thickness(16, 8) };
         cancel.Click += (_, _) => Close(false);
         var confirm = new Button
@@ -509,8 +490,8 @@ internal sealed class ConfirmationDialog : Window
                 Spacing = 16,
                 Children =
                 {
-                    new TextBlock { Text = title, FontSize = 18, FontWeight = FontWeight.Bold, Foreground = Palette.TextPrimary },
-                    new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap, Foreground = Palette.TextSecondary, FontSize = 12, LineHeight = 18 },
+                    new TextBlock { Text = title, FontSize = 18, FontWeight = FontWeight.Bold },
+                    new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap, Classes = { "muted" }, FontSize = 12, LineHeight = 18 },
                     new StackPanel
                     {
                         Orientation = Orientation.Horizontal,
@@ -532,8 +513,8 @@ internal sealed class AccountRemovalDialog : Window
         Width = 620;
         Height = 330;
         CanResize = false;
+        ShowInTaskbar = false;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        Background = Palette.BgDark;
         var cancel = Button("取消", null, false, false);
         var detach = Button("仅移除账号", "detach", false, false);
         var archive = Button("移除并归档 Profile", "archive", true, false);
@@ -548,19 +529,17 @@ internal sealed class AccountRemovalDialog : Window
                 Spacing = 16,
                 Children =
                 {
-                    new TextBlock { Text = "选择 Profile 的处理方式", FontSize = 18, FontWeight = FontWeight.Bold, Foreground = Palette.TextPrimary },
+                    new TextBlock { Text = "选择 Profile 的处理方式", FontSize = 18, FontWeight = FontWeight.Bold },
                     new Border
                     {
                         Padding = new Thickness(12, 10),
                         CornerRadius = new CornerRadius(8),
-                        Background = Brush.Parse("#0A101D"),
-                        BorderBrush = Brush.Parse("#1E2D4A"),
-                        BorderThickness = new Thickness(1),
+                        Classes = { "subtle-card" },
                         Child = new TextBlock
                         {
                             Text = $"账号：{account.DisplayName}\n\n• 仅移除账号：保留 Profile 为孤儿，可随时重新关联；\n• 归档 Profile：将 Profile 移出活动目录备用；\n• 永久删除：彻底清除该 Profile 及全部登录态，不可恢复；\n• 运行保护：运行中的账号不能删除。",
                             TextWrapping = TextWrapping.Wrap,
-                            Foreground = Palette.TextSecondary,
+                            Classes = { "muted" },
                             FontSize = 12,
                             LineHeight = 18,
                         },

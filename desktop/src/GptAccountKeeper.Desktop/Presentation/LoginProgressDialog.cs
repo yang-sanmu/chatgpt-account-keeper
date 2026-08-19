@@ -36,21 +36,20 @@ internal sealed class LoginProgressDialog : Window
         Width = 580;
         Height = 370;
         CanResize = false;
+        ShowInTaskbar = false;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        Background = Palette.BgDark;
 
         _stateText = new TextBlock
         {
             Text = "正在提交登录任务…",
             FontSize = 18,
             FontWeight = FontWeight.Bold,
-            Foreground = Palette.TextPrimary,
         };
         _messageText = new TextBlock
         {
             Text = "Agent 会用该账号的 Profile 打开真实 Chrome。请在弹出的浏览器窗口里完成登录。",
             TextWrapping = TextWrapping.Wrap,
-            Foreground = Palette.TextSecondary,
+            Classes = { "muted" },
             FontSize = 12,
             LineHeight = 18,
         };
@@ -101,9 +100,7 @@ internal sealed class LoginProgressDialog : Window
                     {
                         Padding = new Thickness(12, 7),
                         CornerRadius = new CornerRadius(6),
-                        Background = Brush.Parse("#0A101D"),
-                        BorderBrush = Brush.Parse("#1E2D4A"),
-                        BorderThickness = new Thickness(1),
+                        Classes = { "subtle-card" },
                         HorizontalAlignment = HorizontalAlignment.Left,
                         Child = new TextBlock
                         {
@@ -117,9 +114,7 @@ internal sealed class LoginProgressDialog : Window
                     {
                         Padding = new Thickness(12, 8),
                         CornerRadius = new CornerRadius(6),
-                        Background = Brush.Parse("#0F172A"),
-                        BorderBrush = Brush.Parse("#1E2D4A"),
-                        BorderThickness = new Thickness(1),
+                        Classes = { "card" },
                         Child = new TextBlock
                         {
                             Text = force
@@ -127,7 +122,7 @@ internal sealed class LoginProgressDialog : Window
                                 : "💡 已有有效会话时不会清除登录态；关闭本窗口不会取消登录，任务会在后台继续。",
                             TextWrapping = TextWrapping.Wrap,
                             FontSize = 11,
-                            Foreground = Palette.Muted,
+                            Classes = { "muted" },
                             LineHeight = 16,
                         },
                     },

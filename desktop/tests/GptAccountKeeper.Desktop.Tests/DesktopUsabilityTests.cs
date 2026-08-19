@@ -518,6 +518,16 @@ public sealed class DesktopUsabilityTests
         Assert.True(row.HasPendingEdits);
     }
 
+    [Fact]
+    public void RouteChoiceStringValueUsesVisibleTitleForAutoCompleteFiltering()
+    {
+        var choice = new RouteChoiceViewModel("europe", "Europe Stable");
+
+        Assert.Equal("Europe Stable", choice.ToString());
+        Assert.Contains("e", choice.ToString(), StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("RouteChoiceViewModel", choice.ToString(), StringComparison.Ordinal);
+    }
+
     /// <summary>
     /// 增量更新必须保留行实例：Clear/Add 会让选中项、滚动位置和勾选状态一起丢失。
     /// </summary>
@@ -713,8 +723,43 @@ public sealed class DesktopUsabilityTests
         Assert.Equal("（无提问内容）", entry.Rounds[1].QuestionText);
 
         var history = fixture.Shell.History;
-        history.ApplyAccounts([new HistoryAccountDto { AccountId = "one", EntryCount = 1 }]);
-        Assert.Single(history.Accounts);
+        history.ApplyAccounts([]);
+        Assert.Equal("暂无运行历史", history.AccountEmptyTitle);
+        Assert.Contains("自动对话", history.AccountEmptyText);
+        history.ApplyAccounts(
+        [
+            new HistoryAccountDto
+            {
+                AccountId = "failed",
+                Email = "failed@example.test",
+                EntryCount = 2,
+                LastAt = DateTimeOffset.Parse("2026-01-02T10:00:00Z"),
+                LastOk = false,
+            },
+            new HistoryAccountDto
+            {
+                AccountId = "succeeded",
+                Email = "ok@example.test",
+                EntryCount = 1,
+                LastAt = DateTimeOffset.Parse("2026-01-01T10:00:00Z"),
+                LastOk = true,
+            },
+        ]);
+        Assert.Equal(2, history.Accounts.Count);
+        Assert.Equal(2, history.FilteredAccounts.Count);
+        Assert.True(history.Accounts[0].IsLastFailed);
+        Assert.NotEqual("时间未知", history.Accounts[0].LastAtText);
+        Assert.Contains(
+            history.Accounts[0].LastAt!.Value.ToLocalTime().ToString("yyyy-MM-dd"),
+            history.Accounts[0].LastAtFullText);
+
+        history.AccountSearch = "FAILED@EXAMPLE";
+        Assert.Equal("failed", Assert.Single(history.FilteredAccounts).AccountId);
+
+        history.AccountSearch = "no-match";
+        Assert.Empty(history.FilteredAccounts);
+        Assert.Equal("暂无匹配账号", history.AccountEmptyTitle);
+        Assert.Contains("搜索条件", history.AccountEmptyText);
     }
 
     [Fact]
@@ -886,10 +931,14 @@ public sealed class DesktopUsabilityTests
     public async Task CloseChoiceAndWindowPlacementArePersisted()
     {
         await using var fixture = CreateShellFixture();
+        await fixture.Shell.Behavior.LoadAsync(fixture.Shell.Lifetime);
+        fixture.Shell.Behavior.SelectedTheme = fixture.Shell.Behavior.ThemeOptions.Single(
+            option => option.Value == AppTheme.Light);
         await fixture.Shell.Behavior.RememberCloseChoiceAsync(CloseChoice.HideToTray);
         await fixture.Shell.Behavior.SaveWindowPlacementAsync(120, 80, 1280, 840, maximized: true);
 
         var settings = await new DesktopSettingsStore(fixture.Paths).LoadAsync();
+        Assert.Equal(AppTheme.Light, settings.Theme);
         Assert.Equal(CloseBehavior.MinimizeToTray, settings.CloseBehavior);
         Assert.Equal(120, settings.WindowX);
         Assert.Equal(80, settings.WindowY);
@@ -1884,7 +1933,9 @@ public sealed class DesktopUsabilityTests
                 AppJsonContext.Default.AgentBootstrapResult,
                 timeout.Token);
             Assert.Equal("legacy-account", Assert.Single(bootstrap.Accounts).Id);
-            Assert.Contains(bootstrap.HistoryAccounts, item => item.AccountId == "deleted-account" && item.Deleted);
+            Assert.Contains(
+                bootstrap.HistoryAccounts,
+                item => item.AccountId == "deleted-account" && item.Deleted && item.LastOk == false);
             Assert.True(File.Exists(Path.Combine(paths.DataDirectory, "profiles", "legacy-account", "Default", "Cookies")));
             Assert.False(File.Exists(Path.Combine(paths.DataDirectory, "profiles", "legacy-account", "DevToolsActivePort")));
             Assert.True(File.Exists(Path.Combine(source, "profiles", "legacy-account", "DevToolsActivePort")));

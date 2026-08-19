@@ -88,7 +88,7 @@
     },
     "historyAccountResult": {
       "type": "object", "required": ["accountId", "entryCount", "deleted"],
-      "properties": { "accountId": { "type": "string", "minLength": 1 }, "entryCount": { "type": "integer", "minimum": 0 }, "deleted": { "type": "boolean" }, "lastAt": { "type": ["string", "null"], "format": "date-time" }, "note": { "type": ["string", "null"] }, "email": { "type": ["string", "null"] }, "gptName": { "type": ["string", "null"] } }
+      "properties": { "accountId": { "type": "string", "minLength": 1 }, "entryCount": { "type": "integer", "minimum": 0 }, "deleted": { "type": "boolean" }, "lastAt": { "type": ["string", "null"], "format": "date-time" }, "lastOk": { "type": ["boolean", "null"] }, "note": { "type": ["string", "null"] }, "email": { "type": ["string", "null"] }, "gptName": { "type": ["string", "null"] } }
     },
     "historyAccountArray": { "type": "array", "items": { "$ref": "#/$defs/historyAccountResult" } },
     "proxyStateResult": {

@@ -1043,7 +1043,8 @@ export class KeeperRepository {
       .prepare(
         `SELECT h.account_id,
                 COUNT(*) AS entry_count,
-                MAX(COALESCE(h.finished_at, '')) AS last_at,
+                (SELECT h2.finished_at FROM run_history h2 WHERE h2.account_id = h.account_id ORDER BY h2.id DESC LIMIT 1) AS last_at,
+                (SELECT h2.ok FROM run_history h2 WHERE h2.account_id = h.account_id ORDER BY h2.id DESC LIMIT 1) AS last_ok,
                 CASE WHEN a.id IS NULL THEN 1 ELSE 0 END AS deleted,
                 a.note,
                 a.email,
@@ -1059,6 +1060,7 @@ export class KeeperRepository {
         accountId: row.account_id,
         entryCount: Number(row.entry_count),
         lastAt: row.last_at || null,
+        lastOk: row.last_ok == null ? null : !!row.last_ok,
         deleted: !!row.deleted,
         note: row.note ?? null,
         email: row.email ?? null,

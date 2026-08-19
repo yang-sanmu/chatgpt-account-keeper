@@ -6,26 +6,45 @@
     xmlns:pages="using:GptAccountKeeper.Desktop.Presentation.Pages"
     x:DataType="pages:HistoryPageViewModel">
 
-  <Grid Margin="24,0,24,20" ColumnDefinitions="230,300,*" ColumnSpacing="16">
+  <Grid Margin="24,0,24,20" ColumnDefinitions="260,320,*" ColumnSpacing="16">
 
-    <!-- 第一栏：历史账号选择列表 -->
+    <!-- 第一栏：历史账号选择列表与搜索 -->
     <Border Classes="card" Padding="16">
-      <Grid RowDefinitions="Auto,*">
-        <StackPanel Margin="0,0,0,12" Spacing="2">
-          <TextBlock Text="历史账号" FontSize="14" FontWeight="Bold" Foreground="#F8FAFC" />
-          <TextBlock Text="含已归档/删除账号的运行记录" FontSize="10" Foreground="#64748B" />
+      <Grid RowDefinitions="Auto,Auto,*">
+        <StackPanel Margin="0,0,0,10" Spacing="2">
+          <TextBlock Text="历史账号" FontSize="14" FontWeight="Bold" Foreground="{DynamicResource BrushTextPrimary}" />
+          <TextBlock Text="含已归档/删除账号的运行记录" FontSize="10" Foreground="{DynamicResource BrushTextMuted}" />
         </StackPanel>
 
-        <Panel Grid.Row="1">
-          <ListBox ItemsSource="{Binding Accounts}"
+        <!-- 历史账号模糊搜索框 -->
+        <TextBox Grid.Row="1" PlaceholderText="🔍 搜索历史账号…" Text="{Binding AccountSearch, Mode=TwoWay}"
+                 Margin="0,0,0,10" />
+
+        <Panel Grid.Row="2">
+          <ListBox ItemsSource="{Binding FilteredAccounts}"
                    SelectedItem="{Binding SelectedAccount, Mode=TwoWay}">
             <ListBox.ItemTemplate>
               <DataTemplate x:DataType="models:HistoryAccountDto">
-                <Border Margin="0,2" Padding="12,10" CornerRadius="8" Background="#0F172A" BorderBrush="{StaticResource BrushBorderSubtle}" BorderThickness="1">
-                  <StackPanel Spacing="3">
-                    <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" FontSize="12" Foreground="#F8FAFC"
-                               TextTrimming="CharacterEllipsis" />
-                    <TextBlock Text="{Binding Summary}" FontSize="10" Foreground="#94A3B8" />
+                <Border Margin="0,2" Padding="12,10" CornerRadius="8"
+                        Background="{DynamicResource BrushCardInner}"
+                        BorderBrush="{DynamicResource BrushBorderSubtle}" BorderThickness="1">
+                  <StackPanel Spacing="4">
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="6">
+                      <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" FontSize="12"
+                                 Foreground="{DynamicResource BrushTextPrimary}"
+                                 TextTrimming="CharacterEllipsis" />
+                      <!-- 上次失败醒目标识 -->
+                      <Border Grid.Column="1" Padding="5,1" CornerRadius="4" Classes="danger-card"
+                              IsVisible="{Binding IsLastFailed}">
+                        <TextBlock Text="上次失败" FontSize="9" FontWeight="Bold"
+                                   Foreground="{DynamicResource BrushDangerText}" />
+                      </Border>
+                    </Grid>
+                    <Grid ColumnDefinitions="*,Auto">
+                      <TextBlock Text="{Binding Summary}" FontSize="10" Foreground="{DynamicResource BrushTextMuted}" />
+                      <TextBlock Grid.Column="1" Text="{Binding LastAtText}" FontSize="10" Foreground="{Binding LastRunColor}"
+                                 ToolTip.Tip="{Binding LastAtFullText}" />
+                    </Grid>
                   </StackPanel>
                 </Border>
               </DataTemplate>
@@ -33,14 +52,17 @@
           </ListBox>
 
           <!-- 空状态 -->
-          <StackPanel IsVisible="{Binding !HasHistoryAccounts}" VerticalAlignment="Center"
-                      HorizontalAlignment="Center" Spacing="10" MaxWidth="200">
-            <Border Width="56" Height="56" CornerRadius="28" Background="#1E293B" HorizontalAlignment="Center">
-              <Path Data="{StaticResource IconHistory}" Width="24" Height="24" Classes="vector-icon" Stroke="#60A5FA" />
+          <StackPanel IsVisible="{Binding !HasFilteredAccounts}" VerticalAlignment="Center"
+                      HorizontalAlignment="Center" Spacing="10" MaxWidth="210">
+            <Border Width="56" Height="56" CornerRadius="28" Background="{DynamicResource BrushBadgeBg}" HorizontalAlignment="Center">
+              <Path Data="{StaticResource IconHistory}" Width="24" Height="24" Classes="vector-icon"
+                    Stroke="{DynamicResource BrushPrimary}" />
             </Border>
-            <TextBlock Text="暂无运行历史" FontSize="14" FontWeight="SemiBold" Foreground="#F8FAFC" HorizontalAlignment="Center" />
-            <TextBlock Text="账号完成一次自动对话后会出现在这里。"
-                       TextWrapping="Wrap" TextAlignment="Center" FontSize="11" Foreground="#94A3B8" LineHeight="16" />
+            <TextBlock Text="{Binding AccountEmptyTitle}" FontSize="14" FontWeight="SemiBold"
+                       Foreground="{DynamicResource BrushTextPrimary}" HorizontalAlignment="Center" />
+            <TextBlock Text="{Binding AccountEmptyText}"
+                       TextWrapping="Wrap" TextAlignment="Center" FontSize="11"
+                       Foreground="{DynamicResource BrushTextSecondary}" LineHeight="16" />
           </StackPanel>
         </Panel>
       </Grid>
@@ -50,7 +72,7 @@
     <Border Grid.Column="1" Classes="card" Padding="16">
       <Grid RowDefinitions="Auto,Auto,*">
         <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,10">
-          <TextBlock Text="{Binding Summary}" FontSize="11" FontWeight="Medium" Foreground="#93C5FD"
+          <TextBlock Text="{Binding Summary}" FontSize="11" FontWeight="Medium" Foreground="{DynamicResource BrushPrimary}"
                      TextWrapping="Wrap" VerticalAlignment="Center" />
           <Button Grid.Column="1" Content="🔄 刷新" Padding="9,4" FontSize="11"
                   Command="{Binding ReloadCommand}" />
@@ -73,16 +95,18 @@
           <ListBox ItemsSource="{Binding Entries}" SelectedItem="{Binding SelectedEntry, Mode=TwoWay}">
             <ListBox.ItemTemplate>
               <DataTemplate x:DataType="models:HistoryEntryDto">
-                <Border Margin="0,2" Padding="12,10" CornerRadius="8" Background="#0F172A" BorderBrush="{StaticResource BrushBorderSubtle}" BorderThickness="1">
+                <Border Margin="0,2" Padding="12,10" CornerRadius="8"
+                        Background="{DynamicResource BrushCardInner}"
+                        BorderBrush="{DynamicResource BrushBorderSubtle}" BorderThickness="1">
                   <StackPanel Spacing="4">
                     <Grid ColumnDefinitions="*,Auto">
-                      <TextBlock Text="{Binding TimeText}" FontSize="11" Foreground="#94A3B8" />
-                      <Border Grid.Column="1" Padding="6,2" CornerRadius="4" Background="#1E293B">
+                      <TextBlock Text="{Binding TimeText}" FontSize="11" Foreground="{DynamicResource BrushTextSecondary}" />
+                      <Border Grid.Column="1" Padding="6,2" CornerRadius="4" Background="{DynamicResource BrushBadgeBg}">
                         <TextBlock Text="{Binding ResultText}" FontSize="10" FontWeight="SemiBold"
                                    Foreground="{Binding ResultColor}" />
                       </Border>
                     </Grid>
-                    <TextBlock Text="{Binding SummaryText}" FontSize="11" Foreground="#CBD5E1"
+                    <TextBlock Text="{Binding SummaryText}" FontSize="11" Foreground="{DynamicResource BrushTextPrimary}"
                                TextTrimming="CharacterEllipsis" />
                   </StackPanel>
                 </Border>
@@ -93,11 +117,12 @@
           <!-- 空记录 -->
           <StackPanel IsVisible="{Binding IsEmpty}" VerticalAlignment="Center" HorizontalAlignment="Center"
                       Spacing="10" MaxWidth="240">
-            <Border Width="56" Height="56" CornerRadius="28" Background="#1E293B" HorizontalAlignment="Center">
-              <Path Data="{StaticResource IconMessageSquare}" Width="24" Height="24" Classes="vector-icon" Stroke="#818CF8" />
+            <Border Width="56" Height="56" CornerRadius="28" Background="{DynamicResource BrushBadgeBg}" HorizontalAlignment="Center">
+              <Path Data="{StaticResource IconMessageSquare}" Width="24" Height="24" Classes="vector-icon"
+                    Stroke="{DynamicResource BrushIndigo}" />
             </Border>
             <TextBlock Text="{Binding EmptyText}" TextWrapping="Wrap" TextAlignment="Center"
-                       FontSize="11" Foreground="#94A3B8" LineHeight="16" />
+                       FontSize="11" Foreground="{DynamicResource BrushTextSecondary}" LineHeight="16" />
           </StackPanel>
         </Panel>
       </Grid>
@@ -110,8 +135,9 @@
         <!-- 对话头部 -->
         <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,16">
           <StackPanel Spacing="3">
-            <TextBlock Text="{Binding SelectedEntry.SummaryText}" FontSize="16" FontWeight="Bold" Foreground="#F8FAFC" />
-            <TextBlock Text="{Binding SelectedEntry.TimeText}" FontSize="11" Foreground="#64748B" />
+            <TextBlock Text="{Binding SelectedEntry.SummaryText}" FontSize="16" FontWeight="Bold"
+                       Foreground="{DynamicResource BrushTextPrimary}" />
+            <TextBlock Text="{Binding SelectedEntry.TimeText}" FontSize="11" Foreground="{DynamicResource BrushTextMuted}" />
           </StackPanel>
           <Button Grid.Column="1" Content="📋 复制全部问答" Classes="primary" Padding="12,6" FontSize="11"
                   Command="{Binding CopyAnswerCommand}" />
@@ -122,15 +148,16 @@
           <StackPanel Spacing="16">
 
             <!-- 失败错误提示面板 -->
-            <Border IsVisible="{Binding SelectedEntry.HasError}" Padding="14" CornerRadius="8"
-                    Background="#381014" BorderBrush="#DC2626" BorderThickness="1">
+            <Border IsVisible="{Binding SelectedEntry.HasError}" Padding="14" Classes="danger-card">
               <StackPanel Spacing="6">
                 <StackPanel Orientation="Horizontal" Spacing="6">
-                  <Path Data="{StaticResource IconAlertTriangle}" Width="16" Height="16" Classes="vector-icon" Stroke="#F87171" />
-                  <TextBlock Text="本次运行未成功完成" FontSize="12" FontWeight="Bold" Foreground="#FCA5A5" />
+                  <Path Data="{StaticResource IconAlertTriangle}" Width="16" Height="16" Classes="vector-icon"
+                        Stroke="{DynamicResource BrushDanger}" />
+                  <TextBlock Text="本次运行未成功完成" FontSize="12" FontWeight="Bold"
+                             Foreground="{DynamicResource BrushDangerText}" />
                 </StackPanel>
                 <SelectableTextBlock Text="{Binding SelectedEntry.Error}" FontSize="11" TextWrapping="Wrap"
-                                     Foreground="#FECACA" LineHeight="17" />
+                                     Foreground="{DynamicResource BrushDangerTextMuted}" LineHeight="17" />
               </StackPanel>
             </Border>
 
@@ -140,30 +167,35 @@
                 <DataTemplate x:DataType="models:HistoryRoundDto">
                   <StackPanel Margin="0,0,0,18" Spacing="10">
 
-                    <!-- 用户提问气泡 (蓝色微光卡片) -->
-                    <Border Padding="14,12" CornerRadius="10" Background="#172554"
-                            BorderBrush="#1D4ED8" BorderThickness="1"
+                    <!-- 用户提问气泡 -->
+                    <Border Padding="14,12" CornerRadius="10"
+                            Background="{DynamicResource BrushSubtleBg}"
+                            BorderBrush="{DynamicResource BrushPrimary}" BorderThickness="1"
                             HorizontalAlignment="Left" MaxWidth="700">
                       <StackPanel Spacing="6">
                         <StackPanel Orientation="Horizontal" Spacing="6">
-                          <Path Data="{StaticResource IconUser}" Width="14" Height="14" Classes="vector-icon" Stroke="#93C5FD" />
-                          <TextBlock Text="提问 (User)" FontSize="10" FontWeight="Bold" Foreground="#93C5FD" />
+                          <Path Data="{StaticResource IconUser}" Width="14" Height="14" Classes="vector-icon"
+                                Stroke="{DynamicResource BrushPrimary}" />
+                          <TextBlock Text="提问 (User)" FontSize="10" FontWeight="Bold" Foreground="{DynamicResource BrushPrimary}" />
                         </StackPanel>
                         <SelectableTextBlock Text="{Binding QuestionText}" FontSize="12" TextWrapping="Wrap"
-                                             Foreground="#F8FAFC" LineHeight="18" />
+                                             Foreground="{DynamicResource BrushTextPrimary}" LineHeight="18" />
                       </StackPanel>
                     </Border>
 
-                    <!-- ChatGPT 回答气泡 (深蓝灰卡片) -->
-                    <Border Padding="16,14" CornerRadius="10" Background="#0F172A"
-                            BorderBrush="{StaticResource BrushBorder}" BorderThickness="1" MaxWidth="780">
+                    <!-- ChatGPT 回答气泡 -->
+                    <Border Padding="16,14" CornerRadius="10"
+                            Background="{DynamicResource BrushCardInner}"
+                            BorderBrush="{DynamicResource BrushBorder}" BorderThickness="1" MaxWidth="780">
                       <StackPanel Spacing="6">
                         <StackPanel Orientation="Horizontal" Spacing="6">
-                          <Path Data="{StaticResource IconBot}" Width="14" Height="14" Classes="vector-icon" Stroke="#10B981" />
-                          <TextBlock Text="ChatGPT 回复" FontSize="10" FontWeight="Bold" Foreground="#10B981" />
+                          <Path Data="{StaticResource IconBot}" Width="14" Height="14" Classes="vector-icon"
+                                Stroke="{DynamicResource BrushSuccess}" />
+                          <TextBlock Text="ChatGPT 回复" FontSize="10" FontWeight="Bold"
+                                     Foreground="{DynamicResource BrushSuccess}" />
                         </StackPanel>
                         <SelectableTextBlock Text="{Binding AnswerText}" FontSize="12" TextWrapping="Wrap"
-                                             Foreground="#CBD5E1" LineHeight="18" />
+                                             Foreground="{DynamicResource BrushTextPrimary}" LineHeight="18" />
                       </StackPanel>
                     </Border>
                   </StackPanel>
@@ -171,7 +203,7 @@
               </ItemsControl.ItemTemplate>
             </ItemsControl>
 
-            <TextBlock IsVisible="{Binding !SelectedEntry.HasRounds}" FontSize="11" Foreground="#64748B"
+            <TextBlock IsVisible="{Binding !SelectedEntry.HasRounds}" FontSize="11" Foreground="{DynamicResource BrushTextMuted}"
                        TextWrapping="Wrap"
                        Text="本条记录未保存问答内容（通常发生在打开浏览器阶段被取消或在开始提问前失败）。" />
           </StackPanel>

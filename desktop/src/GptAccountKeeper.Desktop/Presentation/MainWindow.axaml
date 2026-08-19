@@ -11,13 +11,13 @@
     Height="900"
     MinWidth="1180"
     MinHeight="750"
-    Background="#0B0F19"
+    Background="{DynamicResource BrushBgDark}"
     WindowStartupLocation="CenterScreen">
 
   <Grid ColumnDefinitions="260,*">
-    <!-- 侧边导航栏 (Modern Slate Dark Gradient) -->
-    <Border Grid.Column="0" Background="{StaticResource BrushSidebarGradient}"
-            BorderBrush="{StaticResource BrushBorder}" BorderThickness="0,0,1,0">
+    <!-- 侧边导航栏 -->
+    <Border Grid.Column="0" Background="{DynamicResource BrushSidebarGradient}"
+            BorderBrush="{DynamicResource BrushBorder}" BorderThickness="0,0,1,0">
       <Grid RowDefinitions="Auto,*,Auto" Margin="16,20,16,16">
 
         <!-- 品牌标识 Header -->
@@ -32,16 +32,16 @@
             </Border>
             <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
               <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
-                <TextBlock Text="ChatGPT" FontSize="16" FontWeight="Bold" Foreground="#F8FAFC" />
-                <TextBlock Text="Keeper" FontSize="16" FontWeight="Light" Foreground="#60A5FA" />
+                <TextBlock Text="ChatGPT" FontSize="16" FontWeight="Bold" Foreground="{DynamicResource BrushTextPrimary}" />
+                <TextBlock Text="Keeper" FontSize="16" FontWeight="Light" Foreground="{DynamicResource BrushPrimary}" />
               </StackPanel>
               <Border HorizontalAlignment="Left" Padding="6,2" CornerRadius="6"
-                      Background="#172554" BorderBrush="#1D4ED8" BorderThickness="1">
-                <TextBlock Text="{Binding DesktopVersion}" FontSize="9" FontWeight="SemiBold" Foreground="#93C5FD" />
+                      Background="{DynamicResource BrushBadgeBg}" BorderBrush="{DynamicResource BrushBorderSubtle}" BorderThickness="1">
+                <TextBlock Text="{Binding DesktopVersion}" FontSize="9" FontWeight="SemiBold" Foreground="{DynamicResource BrushPrimary}" />
               </Border>
             </StackPanel>
           </Grid>
-          <Rectangle Height="1" Fill="{StaticResource BrushBorderSubtle}" Margin="0,4,0,0" />
+          <Rectangle Height="1" Fill="{DynamicResource BrushBorderSubtle}" Margin="0,4,0,0" />
         </StackPanel>
 
         <!-- 页面导航列表 (ListBox) -->
@@ -55,15 +55,15 @@
             <DataTemplate x:DataType="vm:PageViewModel">
               <Grid ColumnDefinitions="32,*" Margin="4,4">
                 <!-- 图标外框 -->
-                <Border Width="26" Height="26" CornerRadius="6" Background="#131C2E"
+                <Border Width="26" Height="26" CornerRadius="6" Background="{DynamicResource BrushBadgeBg}"
                         HorizontalAlignment="Left" VerticalAlignment="Center">
-                  <TextBlock Text="{Binding Glyph}" FontSize="13" Foreground="#60A5FA"
+                  <TextBlock Text="{Binding Glyph}" FontSize="13" Foreground="{DynamicResource BrushPrimary}"
                              HorizontalAlignment="Center" VerticalAlignment="Center" />
                 </Border>
                 <!-- 标题与简介 -->
                 <StackPanel Grid.Column="1" Spacing="1" VerticalAlignment="Center" Margin="6,0,0,0">
-                  <TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="13" Foreground="#F8FAFC" />
-                  <TextBlock Text="{Binding Description}" FontSize="10" TextWrapping="Wrap" Foreground="#94A3B8" />
+                  <TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="13" Foreground="{DynamicResource BrushTextPrimary}" />
+                  <TextBlock Text="{Binding Description}" FontSize="10" TextWrapping="Wrap" Foreground="{DynamicResource BrushTextSecondary}" />
                 </StackPanel>
               </Grid>
             </DataTemplate>
@@ -72,20 +72,20 @@
 
         <!-- 底部 IPC 守护进程卡片 -->
         <Border Grid.Row="2" Padding="14,12" CornerRadius="10"
-                Background="#0F172A" BorderBrush="{StaticResource BrushBorder}" BorderThickness="1"
-                BoxShadow="0 4 12 0 #30000000">
+                Background="{DynamicResource BrushCardInner}" BorderBrush="{DynamicResource BrushBorder}" BorderThickness="1"
+                BoxShadow="0 4 12 0 #20000000">
           <StackPanel Spacing="6">
             <Grid ColumnDefinitions="*,Auto" VerticalAlignment="Center">
               <StackPanel Orientation="Horizontal" Spacing="7" VerticalAlignment="Center">
                 <Ellipse Width="8" Height="8" Fill="{Binding AgentConnectionStatusColor}" VerticalAlignment="Center" />
-                <TextBlock Text="{Binding Overview.ConnectionStatus}" FontSize="11" FontWeight="SemiBold" Foreground="#F8FAFC" />
+                <TextBlock Text="{Binding Overview.ConnectionStatus}" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource BrushTextPrimary}" />
               </StackPanel>
-              <Border Grid.Column="1" Padding="5,2" CornerRadius="4" Background="#1E293B">
-                <TextBlock Text="{Binding RuntimeMode}" FontSize="9" FontWeight="Medium" Foreground="#38BDF8" />
+              <Border Grid.Column="1" Padding="5,2" CornerRadius="4" Background="{DynamicResource BrushBadgeBg}">
+                <TextBlock Text="{Binding RuntimeMode}" FontSize="9" FontWeight="Medium" Foreground="{DynamicResource BrushInfo}" />
               </Border>
             </Grid>
-            <Border Padding="6,4" CornerRadius="6" Background="#0A101D" BorderBrush="{StaticResource BrushBorderSubtle}" BorderThickness="1">
-              <TextBlock Text="{Binding Endpoint}" FontSize="9" TextWrapping="Wrap" Foreground="#64748B" FontFamily="Consolas, monospace" />
+            <Border Padding="6,4" CornerRadius="6" Background="{DynamicResource BrushSubtleBg}" BorderBrush="{DynamicResource BrushBorderSubtle}" BorderThickness="1">
+              <TextBlock Text="{Binding Endpoint}" FontSize="9" TextWrapping="Wrap" Foreground="{DynamicResource BrushTextMuted}" FontFamily="Consolas, monospace" />
             </Border>
           </StackPanel>
         </Border>
@@ -95,26 +95,28 @@
     <!-- 主工作区 -->
     <Grid Grid.Column="1" RowDefinitions="Auto,*">
 
-      <!-- 全局顶栏 Header (集成调度器状态胶囊与启停按钮) -->
-      <Border Margin="24,18,24,14" Padding="0,0,0,14" BorderBrush="{StaticResource BrushBorder}" BorderThickness="0,0,0,1">
+      <!-- 全局顶栏 Header -->
+      <Border Margin="24,18,24,14" Padding="0,0,0,14" BorderBrush="{DynamicResource BrushBorder}" BorderThickness="0,0,0,1">
         <Grid ColumnDefinitions="*,Auto">
           <!-- 页面标题与描述 -->
           <StackPanel Spacing="3" VerticalAlignment="Center">
             <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-              <TextBlock Text="{Binding SelectedPage.Glyph}" FontSize="20" VerticalAlignment="Center" Foreground="#60A5FA" />
-              <TextBlock Text="{Binding SelectedPage.Title}" FontSize="22" FontWeight="Bold" Foreground="#F8FAFC" VerticalAlignment="Center" />
+              <TextBlock Text="{Binding SelectedPage.Glyph}" FontSize="20" VerticalAlignment="Center" Foreground="{DynamicResource BrushPrimary}" />
+              <TextBlock Text="{Binding SelectedPage.Title}" FontSize="22" FontWeight="Bold" Foreground="{DynamicResource BrushTextPrimary}" VerticalAlignment="Center" />
             </StackPanel>
-            <TextBlock Text="{Binding SelectedPage.Description}" FontSize="12" Foreground="#94A3B8" Margin="28,0,0,0" />
+            <TextBlock Text="{Binding SelectedPage.Description}" FontSize="12" Foreground="{DynamicResource BrushTextSecondary}" Margin="28,0,0,0" />
           </StackPanel>
 
           <!-- 顶部全局动作工具栏 -->
           <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
 
             <!-- 全局调度器微光胶囊 -->
-            <Border Padding="12,6" CornerRadius="20" Background="#111A2C" BorderBrush="{StaticResource BrushBorder}" BorderThickness="1">
+            <Border Padding="12,6" CornerRadius="20"
+                    Background="{DynamicResource BrushSubtleBg}"
+                    BorderBrush="{DynamicResource BrushBorder}" BorderThickness="1">
               <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                 <Ellipse Width="8" Height="8" Fill="{Binding SchedulerStatusColor}" VerticalAlignment="Center" />
-                <TextBlock Text="调度器:" FontSize="12" Foreground="#94A3B8" VerticalAlignment="Center" />
+                <TextBlock Text="调度器:" FontSize="12" Foreground="{DynamicResource BrushTextSecondary}" VerticalAlignment="Center" />
                 <TextBlock Text="{Binding SchedulerStatusText}" FontSize="12" FontWeight="SemiBold"
                            Foreground="{Binding SchedulerStatusColor}" VerticalAlignment="Center" />
               </StackPanel>
@@ -126,7 +128,7 @@
                     Command="{Binding ToggleSchedulerCommand}"
                     ToolTip.Tip="全局调度器开关：开启后按设定间隔自动唤醒并轮换对话" />
 
-            <Rectangle Width="1" Height="22" Fill="{StaticResource BrushBorder}" Margin="4,0" />
+            <Rectangle Width="1" Height="22" Fill="{DynamicResource BrushBorder}" Margin="4,0" />
 
             <!-- 数据同步忙状态指示条 -->
             <ProgressBar Width="70" Height="4" IsIndeterminate="True"
@@ -195,7 +197,7 @@
                   <TextBlock Text="{Binding Glyph}" FontWeight="Bold" FontSize="14" Margin="0,0,10,0"
                              Foreground="{Binding Foreground}" VerticalAlignment="Center" />
                   <TextBlock Grid.Column="1" Text="{Binding Message}" TextWrapping="Wrap"
-                             FontSize="12" Foreground="#F8FAFC" VerticalAlignment="Center" />
+                             FontSize="12" Foreground="{Binding Foreground}" VerticalAlignment="Center" />
                 </Grid>
               </Border>
             </DataTemplate>

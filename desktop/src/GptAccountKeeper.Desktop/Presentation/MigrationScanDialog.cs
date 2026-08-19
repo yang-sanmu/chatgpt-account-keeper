@@ -35,21 +35,20 @@ internal sealed class MigrationScanDialog : Window
         Width = 620;
         Height = 360;
         CanResize = false;
+        ShowInTaskbar = false;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        Background = Palette.BgDark;
 
         _stateText = new TextBlock
         {
             Text = "正在只读扫描旧项目…",
             FontSize = 18,
             FontWeight = FontWeight.Bold,
-            Foreground = Palette.TextPrimary,
         };
         _messageText = new TextBlock
         {
             Text = "正在统计账号、历史记录并校验 Profile 内容。Profile 较大时可能需要几分钟，请耐心等待。",
             TextWrapping = TextWrapping.Wrap,
-            Foreground = Palette.TextSecondary,
+            Classes = { "muted" },
             FontSize = 12,
             LineHeight = 18,
         };
@@ -83,9 +82,7 @@ internal sealed class MigrationScanDialog : Window
                     {
                         Padding = new Thickness(12, 8),
                         CornerRadius = new CornerRadius(6),
-                        Background = Brush.Parse("#0A101D"),
-                        BorderBrush = Brush.Parse("#1E2D4A"),
-                        BorderThickness = new Thickness(1),
+                        Classes = { "subtle-card" },
                         Child = new SelectableTextBlock
                         {
                             Text = selectedRoot,
@@ -99,14 +96,12 @@ internal sealed class MigrationScanDialog : Window
                     {
                         Padding = new Thickness(12, 8),
                         CornerRadius = new CornerRadius(6),
-                        Background = Brush.Parse("#0F172A"),
-                        BorderBrush = Brush.Parse("#1E2D4A"),
-                        BorderThickness = new Thickness(1),
+                        Classes = { "card" },
                         Child = new TextBlock
                         {
                             Text = "💡 扫描不会修改旧项目。导入完成前，请不要启动旧服务或使用相关 Chrome Profile。",
                             TextWrapping = TextWrapping.Wrap,
-                            Foreground = Palette.Muted,
+                            Classes = { "muted" },
                             FontSize = 11,
                             LineHeight = 16,
                         },

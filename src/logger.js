@@ -135,15 +135,18 @@ export function listHistoryAccounts() {
       const accountId = entry.name.slice(0, -".jsonl".length);
       const lines = fs.readFileSync(path.join(LOG_DIR, entry.name), "utf8").split("\n").filter(Boolean);
       let lastAt = null;
-      if (lines.length) {
+      let lastOk = null;
+      for (let index = lines.length - 1; index >= 0; index -= 1) {
         try {
-          const last = JSON.parse(lines.at(-1));
+          const last = JSON.parse(lines[index]);
           lastAt = last.finishedAt ?? last.time ?? null;
+          lastOk = last.ok == null ? null : !!last.ok;
+          break;
         } catch {
-          // A damaged final legacy row does not hide the history account.
+          // Skip damaged trailing rows and retain the most recent readable result.
         }
       }
-      return { accountId, entryCount: lines.length, lastAt, deleted: false };
+      return { accountId, entryCount: lines.length, lastAt, lastOk, deleted: false };
     })
     .sort((a, b) => String(b.lastAt ?? "").localeCompare(String(a.lastAt ?? "")));
 }

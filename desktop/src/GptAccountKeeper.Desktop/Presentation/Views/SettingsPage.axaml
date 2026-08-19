@@ -17,22 +17,22 @@
           <StackPanel Spacing="16">
             <Grid ColumnDefinitions="*,Auto">
               <StackPanel Spacing="3">
-                <TextBlock Text="定时调度与风控防封参数" FontSize="16" FontWeight="Bold" Foreground="#F8FAFC" />
-                <TextBlock Text="调控对话轮换频率与随机抖动防风控" FontSize="11" Foreground="#94A3B8" />
+                <TextBlock Text="定时调度与风控防封参数" FontSize="16" FontWeight="Bold" Foreground="{DynamicResource BrushTextPrimary}" />
+                <TextBlock Text="调控对话轮换频率与随机抖动防风控" FontSize="11" Foreground="{DynamicResource BrushTextSecondary}" />
               </StackPanel>
               <TextBlock Grid.Column="1" Text="{Binding PendingEditText}" FontSize="11" FontWeight="SemiBold"
-                         Foreground="#F59E0B" VerticalAlignment="Center" />
+                         Foreground="{DynamicResource BrushWarning}" VerticalAlignment="Center" />
             </Grid>
 
             <!-- 间隔与抖动 -->
             <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
               <StackPanel Spacing="4">
-                <TextBlock Text="每轮轮换基础间隔 (分钟)" FontSize="11" FontWeight="Medium" Foreground="#94A3B8" />
+                <TextBlock Text="每轮轮换基础间隔 (分钟)" FontSize="11" FontWeight="Medium" Foreground="{DynamicResource BrushTextSecondary}" />
                 <NumericUpDown Minimum="1" Maximum="10080" Increment="10" FormatString="0"
                                Value="{Binding IntervalMinutes, Mode=TwoWay}" />
               </StackPanel>
               <StackPanel Grid.Column="1" Spacing="4">
-                <TextBlock Text="随机抖动浮动 (分钟)" FontSize="11" FontWeight="Medium" Foreground="#94A3B8" />
+                <TextBlock Text="随机抖动浮动 (分钟)" FontSize="11" FontWeight="Medium" Foreground="{DynamicResource BrushTextSecondary}" />
                 <NumericUpDown Minimum="0" Maximum="1440" Increment="5" FormatString="0"
                                Value="{Binding JitterMinutes, Mode=TwoWay}" />
               </StackPanel>
@@ -41,18 +41,18 @@
             <!-- 巡检与网页兜底 -->
             <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
               <StackPanel Spacing="4">
-                <TextBlock Text="登录状态巡检间隔 (分钟)" FontSize="11" FontWeight="Medium" Foreground="#94A3B8" />
+                <TextBlock Text="登录状态巡检间隔 (分钟)" FontSize="11" FontWeight="Medium" Foreground="{DynamicResource BrushTextSecondary}" />
                 <NumericUpDown Minimum="1" Maximum="1440" Increment="5" FormatString="0"
                                Value="{Binding StatusCheckMinutes, Mode=TwoWay}" />
               </StackPanel>
               <StackPanel Grid.Column="1" Spacing="4">
-                <TextBlock Text="打开网页窗口超时 (0=不限)" FontSize="11" FontWeight="Medium" Foreground="#94A3B8" />
+                <TextBlock Text="打开网页窗口超时 (0=不限)" FontSize="11" FontWeight="Medium" Foreground="{DynamicResource BrushTextSecondary}" />
                 <NumericUpDown Minimum="0" Maximum="1440" Increment="10" FormatString="0"
                                Value="{Binding OpenPageTimeoutMinutes, Mode=TwoWay}" />
               </StackPanel>
             </Grid>
 
-            <Rectangle Height="1" Fill="{StaticResource BrushBorderSubtle}" Margin="0,2" />
+            <Rectangle Height="1" Fill="{DynamicResource BrushBorderSubtle}" Margin="0,2" />
 
             <!-- 开关选项 -->
             <CheckBox Content="后台自动化执行使用 Headless 无头模式 (不弹 Chrome 窗)"
@@ -63,9 +63,9 @@
                       IsChecked="{Binding ProfileAutoCleanEnabled, Mode=TwoWay}" />
 
             <!-- 校验提示 -->
-            <Border IsVisible="{Binding HasValidationError}"
-                    Padding="12" CornerRadius="8" Background="#381014" BorderBrush="#DC2626" BorderThickness="1">
-              <TextBlock Text="{Binding ValidationError}" FontSize="11" Foreground="#FCA5A5" TextWrapping="Wrap" />
+            <Border IsVisible="{Binding HasValidationError}" Padding="12" Classes="danger-card">
+              <TextBlock Text="{Binding ValidationError}" FontSize="11"
+                         Foreground="{DynamicResource BrushDangerText}" TextWrapping="Wrap" />
             </Border>
 
             <!-- 保存与放弃按钮 -->
@@ -74,8 +74,9 @@
               <Button Content="放弃修改" Command="{Binding RevertAgentSettingsCommand}" />
             </StackPanel>
 
-            <Border Padding="14,12" Background="#0A101D" BorderBrush="{StaticResource BrushBorderSubtle}" BorderThickness="1" CornerRadius="8">
-              <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#94A3B8" LineHeight="17"
+            <Border Padding="14,12" Background="{DynamicResource BrushSubtleBg}"
+                    BorderBrush="{DynamicResource BrushBorderSubtle}" BorderThickness="1" CornerRadius="8">
+              <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource BrushTextSecondary}" LineHeight="17"
                          Text="💡 建议：基础间隔保持 180 分钟以上，抖动浮动保持 30 分钟以上，以模拟人类真实的不规律上网行为，最大程度避免触发账号风控。" />
             </Border>
           </StackPanel>
@@ -84,15 +85,17 @@
         <!-- 数据目录与日志卡片 -->
         <Border Classes="card" Padding="22">
           <StackPanel Spacing="14">
-            <TextBlock Text="数据存储与日志诊断" FontSize="16" FontWeight="Bold" Foreground="#F8FAFC" />
-            <Border Padding="6,2" CornerRadius="4" Background="#1E293B" HorizontalAlignment="Left">
-              <TextBlock Text="{Binding RuntimeMode}" FontSize="10" Foreground="#38BDF8" />
+            <TextBlock Text="数据存储与日志诊断" FontSize="16" FontWeight="Bold" Foreground="{DynamicResource BrushTextPrimary}" />
+            <Border Padding="6,2" CornerRadius="4" Background="{DynamicResource BrushBadgeBg}" HorizontalAlignment="Left">
+              <TextBlock Text="{Binding RuntimeMode}" FontSize="10" Foreground="{DynamicResource BrushInfo}" />
             </Border>
 
             <StackPanel Spacing="4">
-              <TextBlock Text="数据目录" FontSize="11" Foreground="#64748B" />
-              <Border Padding="10,8" CornerRadius="8" Background="#0A101D" BorderBrush="{StaticResource BrushBorderSubtle}" BorderThickness="1">
-                <SelectableTextBlock Text="{Binding DataDirectory}" FontSize="11" TextWrapping="Wrap" Foreground="#CBD5E1" FontFamily="Consolas, monospace" />
+              <TextBlock Text="数据目录" FontSize="11" Foreground="{DynamicResource BrushTextMuted}" />
+              <Border Padding="10,8" CornerRadius="8" Background="{DynamicResource BrushCardInner}"
+                      BorderBrush="{DynamicResource BrushBorderSubtle}" BorderThickness="1">
+                <SelectableTextBlock Text="{Binding DataDirectory}" FontSize="11" TextWrapping="Wrap"
+                                     Foreground="{DynamicResource BrushTextPrimary}" FontFamily="Consolas, monospace" />
               </Border>
               <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4,0,0">
                 <Button Content="📂 打开数据目录" Padding="10,5" FontSize="11" Command="{Binding OpenDataDirectoryCommand}" />
@@ -101,9 +104,11 @@
             </StackPanel>
 
             <StackPanel Spacing="4" Margin="0,4,0,0">
-              <TextBlock Text="Agent 独立日志" FontSize="11" Foreground="#64748B" />
-              <Border Padding="10,8" CornerRadius="8" Background="#0A101D" BorderBrush="{StaticResource BrushBorderSubtle}" BorderThickness="1">
-                <SelectableTextBlock Text="{Binding AgentLogFile}" FontSize="11" TextWrapping="Wrap" Foreground="#CBD5E1" FontFamily="Consolas, monospace" />
+              <TextBlock Text="Agent 独立日志" FontSize="11" Foreground="{DynamicResource BrushTextMuted}" />
+              <Border Padding="10,8" CornerRadius="8" Background="{DynamicResource BrushCardInner}"
+                      BorderBrush="{DynamicResource BrushBorderSubtle}" BorderThickness="1">
+                <SelectableTextBlock Text="{Binding AgentLogFile}" FontSize="11" TextWrapping="Wrap"
+                                     Foreground="{DynamicResource BrushTextPrimary}" FontFamily="Consolas, monospace" />
               </Border>
               <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4,0,0">
                 <Button Content="📂 打开日志位置" Padding="10,5" FontSize="11" Command="{Binding OpenLogFileCommand}" />
@@ -116,8 +121,8 @@
         <!-- 旧项目导入卡片：首次启动之后仍可导入 -->
         <Border Classes="card" Padding="22">
           <StackPanel Spacing="14">
-            <TextBlock Text="从旧版本导入 Profile 与账号" FontSize="16" FontWeight="Bold" Foreground="#F8FAFC" />
-            <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#94A3B8" LineHeight="17"
+            <TextBlock Text="从旧版本导入 Profile 与账号" FontSize="16" FontWeight="Bold" Foreground="{DynamicResource BrushTextPrimary}" />
+            <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource BrushTextSecondary}" LineHeight="17"
                        Text="选定目录后会先只读预检扫描；Profile 较大时可能需要一些时间，可随时取消。首次启动自动生成的空数据库可以直接导入；当前库已有业务数据时会引导你改选新的空数据目录。旧项目不会被修改。" />
             <StackPanel Orientation="Horizontal" Spacing="8">
               <Button Content="📥 预览并导入旧项目" Classes="primary" Padding="12,6" FontSize="11"
@@ -133,18 +138,35 @@
         <!-- 桌面与托盘行为卡片 -->
         <Border Classes="card" Padding="22">
           <StackPanel Spacing="14">
-            <TextBlock Text="桌面与系统行为" FontSize="16" FontWeight="Bold" Foreground="#F8FAFC" />
+            <TextBlock Text="桌面与系统行为" FontSize="16" FontWeight="Bold" Foreground="{DynamicResource BrushTextPrimary}" />
+
+            <!-- 外观主题切换 -->
+            <StackPanel Spacing="4">
+              <TextBlock Text="外观主题 (Theme)" FontSize="11" FontWeight="Medium" Foreground="{DynamicResource BrushTextSecondary}" />
+              <ComboBox HorizontalAlignment="Stretch"
+                        ItemsSource="{Binding Behavior.ThemeOptions}"
+                        SelectedItem="{Binding Behavior.SelectedTheme, Mode=TwoWay}">
+                <ComboBox.ItemTemplate>
+                  <DataTemplate x:DataType="vm:ThemeOptionViewModel">
+                    <StackPanel Margin="2" Spacing="2">
+                      <TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="12" Foreground="{DynamicResource BrushTextPrimary}" />
+                      <TextBlock Text="{Binding Description}" FontSize="10" Foreground="{DynamicResource BrushTextMuted}" />
+                    </StackPanel>
+                  </DataTemplate>
+                </ComboBox.ItemTemplate>
+              </ComboBox>
+            </StackPanel>
 
             <StackPanel Spacing="4">
-              <TextBlock Text="关闭主窗口时的行为" FontSize="11" FontWeight="Medium" Foreground="#94A3B8" />
+              <TextBlock Text="关闭主窗口时的行为" FontSize="11" FontWeight="Medium" Foreground="{DynamicResource BrushTextSecondary}" />
               <ComboBox HorizontalAlignment="Stretch"
                         ItemsSource="{Binding Behavior.CloseBehaviorOptions}"
                         SelectedItem="{Binding Behavior.SelectedCloseBehavior, Mode=TwoWay}">
                 <ComboBox.ItemTemplate>
                   <DataTemplate x:DataType="vm:CloseBehaviorOptionViewModel">
                     <StackPanel Margin="2" Spacing="2">
-                      <TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="12" Foreground="#F8FAFC" />
-                      <TextBlock Text="{Binding Description}" FontSize="10" Foreground="#94A3B8" />
+                      <TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="12" Foreground="{DynamicResource BrushTextPrimary}" />
+                      <TextBlock Text="{Binding Description}" FontSize="10" Foreground="{DynamicResource BrushTextMuted}" />
                     </StackPanel>
                   </DataTemplate>
                 </ComboBox.ItemTemplate>
@@ -154,8 +176,9 @@
             <CheckBox Content="开机登录系统后自动启动并隐藏到托盘恢复调度"
                       IsChecked="{Binding Behavior.StartAtLogin, Mode=TwoWay}" />
 
-            <Border Padding="14,12" Background="#0A101D" BorderBrush="{StaticResource BrushBorderSubtle}" BorderThickness="1" CornerRadius="8">
-              <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#94A3B8" LineHeight="17"
+            <Border Padding="14,12" Background="{DynamicResource BrushSubtleBg}"
+                    BorderBrush="{DynamicResource BrushBorderSubtle}" BorderThickness="1" CornerRadius="8">
+              <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource BrushTextSecondary}" LineHeight="17"
                          Text="桌面端设置写入独立的 desktop.json，不与 Agent 业务数据混写，独立管理。" />
             </Border>
           </StackPanel>
@@ -164,18 +187,18 @@
         <!-- 应用升级与排空卡片 -->
         <Border Classes="card" Padding="22">
           <StackPanel Spacing="14">
-            <TextBlock Text="应用与内核更新" FontSize="16" FontWeight="Bold" Foreground="#F8FAFC" />
+            <TextBlock Text="应用与内核更新" FontSize="16" FontWeight="Bold" Foreground="{DynamicResource BrushTextPrimary}" />
 
             <StackPanel Spacing="4">
-              <TextBlock Text="自动检查更新策略" FontSize="11" FontWeight="Medium" Foreground="#94A3B8" />
+              <TextBlock Text="自动检查更新策略" FontSize="11" FontWeight="Medium" Foreground="{DynamicResource BrushTextSecondary}" />
               <ComboBox HorizontalAlignment="Stretch"
                         ItemsSource="{Binding Behavior.UpdatePolicyOptions}"
                         SelectedItem="{Binding Behavior.SelectedUpdatePolicy, Mode=TwoWay}">
                 <ComboBox.ItemTemplate>
                   <DataTemplate x:DataType="vm:UpdatePolicyOptionViewModel">
                     <StackPanel Margin="2" Spacing="2">
-                      <TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="12" Foreground="#F8FAFC" />
-                      <TextBlock Text="{Binding Description}" FontSize="10" Foreground="#94A3B8" />
+                      <TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="12" Foreground="{DynamicResource BrushTextPrimary}" />
+                      <TextBlock Text="{Binding Description}" FontSize="10" Foreground="{DynamicResource BrushTextMuted}" />
                     </StackPanel>
                   </DataTemplate>
                 </ComboBox.ItemTemplate>
@@ -183,9 +206,10 @@
             </StackPanel>
 
             <!-- 更新状态 -->
-            <Border Padding="12,10" CornerRadius="8" Background="#0A101D" BorderBrush="{StaticResource BrushBorderSubtle}" BorderThickness="1">
+            <Border Padding="12,10" CornerRadius="8" Background="{DynamicResource BrushSubtleBg}"
+                    BorderBrush="{DynamicResource BrushBorderSubtle}" BorderThickness="1">
               <TextBlock Text="{Binding Behavior.UpdateStatus}" TextWrapping="Wrap" FontSize="11"
-                         Foreground="#93C5FD" LineHeight="17" />
+                         Foreground="{DynamicResource BrushPrimary}" LineHeight="17" />
             </Border>
 
             <StackPanel Orientation="Horizontal" Spacing="8">
@@ -194,8 +218,9 @@
               <Button Content="🚀 安全安装" Padding="12,6" FontSize="11" Command="{Binding Behavior.InstallUpdateCommand}" />
             </StackPanel>
 
-            <Border Padding="14,12" Background="#0A101D" BorderBrush="{StaticResource BrushBorderSubtle}" BorderThickness="1" CornerRadius="8">
-              <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#94A3B8" LineHeight="17"
+            <Border Padding="14,12" Background="{DynamicResource BrushSubtleBg}"
+                    BorderBrush="{DynamicResource BrushBorderSubtle}" BorderThickness="1" CornerRadius="8">
+              <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource BrushTextSecondary}" LineHeight="17"
                          Text="🔒 启动时会立即检查一次更新，之后每 6 小时后台检查一次；发现新版本会弹窗供选择立即更新、下次启动提醒或忽略本次更新。安装更新前 Agent 必须先安全排空，不会强杀任务。" />
             </Border>
           </StackPanel>
@@ -204,12 +229,12 @@
         <!-- 关于、许可与隐私 -->
         <Border Classes="card" Padding="22">
           <StackPanel Spacing="12">
-            <TextBlock Text="关于与许可" FontSize="16" FontWeight="Bold" Foreground="#F8FAFC" />
-            <TextBlock Text="ChatGPT Account Keeper" FontSize="13" FontWeight="SemiBold" Foreground="#93C5FD" />
+            <TextBlock Text="关于与许可" FontSize="16" FontWeight="Bold" Foreground="{DynamicResource BrushTextPrimary}" />
+            <TextBlock Text="ChatGPT Account Keeper" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource BrushPrimary}" />
             <TextBlock Text="GNU AGPL-3.0-only · 非官方个人开源项目，与 OpenAI、Google 无隶属或背书关系。"
-                       TextWrapping="Wrap" FontSize="11" Foreground="#CBD5E1" LineHeight="17" />
+                       TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource BrushTextSecondary}" LineHeight="17" />
             <TextBlock Text="安装包附带项目许可证、第三方组件声明、隐私说明与对应源码说明。安装包未经数字签名，Windows 首次运行可能显示 SmartScreen 提示。"
-                       TextWrapping="Wrap" FontSize="11" Foreground="#94A3B8" LineHeight="17" />
+                       TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource BrushTextMuted}" LineHeight="17" />
             <Button Content="📂 打开许可与政策目录" HorizontalAlignment="Left" Padding="10,5" FontSize="11"
                     Command="{Binding OpenLegalDocumentsCommand}" />
           </StackPanel>

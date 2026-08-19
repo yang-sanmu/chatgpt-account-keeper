@@ -18,8 +18,18 @@ internal enum UpdatePolicy
     InstallAtSafePoint,
 }
 
+[JsonConverter(typeof(JsonStringEnumConverter<AppTheme>))]
+internal enum AppTheme
+{
+    Dark,
+    Light,
+    System,
+}
+
 internal sealed class DesktopSettings
 {
+    public AppTheme Theme { get; init; } = AppTheme.Dark;
+
     public CloseBehavior CloseBehavior { get; init; } = CloseBehavior.Ask;
 
     public bool StartAtLogin { get; init; }

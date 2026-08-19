@@ -54,6 +54,14 @@ test(
     assert.equal(repository.getSettings().intervalMinutes, 60);
     assert.equal(repository.getStatus("a1").stale, false);
     assert.equal(repository.queryHistory({ accountId: "a1" })[0].prompt, "p");
+    assert.equal(repository.listHistoryAccounts()[0].lastOk, true);
+    repository.appendHistory("a1", {
+      finishedAt: "2026-08-12T00:00:00.000Z",
+      ok: false,
+      error: "failed",
+    });
+    assert.equal(repository.listHistoryAccounts()[0].lastOk, false);
+    assert.equal(repository.listHistoryAccounts()[0].lastAt, "2026-08-12T00:00:00.000Z");
     assert.equal(repository.getSchedulerState().enabled, true);
 
     const safeProxy = repository.getProxyState();

@@ -7,7 +7,12 @@
     x:DataType="pages:AccountsPageViewModel">
 
   <!-- 三行布局：顶部筛选与创建 / 账号列表 / 底部批量操作栏 -->
-  <Grid Margin="24,0,24,20" RowDefinitions="Auto,*,Auto" RowSpacing="14">
+  <Grid x:Name="PageRoot" Margin="24,0,24,20" RowDefinitions="Auto,*,Auto" RowSpacing="14">
+
+    <!-- 回车保存后的无视觉焦点目标；零尺寸且不参与鼠标/Tab 导航。 -->
+    <Button x:Name="FocusSink" Width="0" Height="0" Opacity="0"
+            HorizontalAlignment="Left" VerticalAlignment="Top"
+            Focusable="True" IsTabStop="False" IsHitTestVisible="False" />
 
     <!-- 顶部工具栏与快速添加卡片 -->
     <Border Classes="card" Padding="18,16">
@@ -19,7 +24,8 @@
 
           <ComboBox Grid.Column="1" HorizontalAlignment="Stretch"
                     ItemsSource="{Binding StatusFilters}"
-                    SelectedItem="{Binding StatusFilter, Mode=TwoWay}">
+                    SelectedItem="{Binding StatusFilter, Mode=TwoWay}"
+                    DropDownClosed="OnDropdownClosed">
             <ComboBox.ItemTemplate>
               <DataTemplate x:DataType="pages:AccountStatusFilterOption">
                 <TextBlock Text="{Binding Title}" />
@@ -29,7 +35,8 @@
 
           <ComboBox Grid.Column="2" HorizontalAlignment="Stretch"
                     ItemsSource="{Binding GroupFilterChoices}"
-                    SelectedItem="{Binding GroupFilter, Mode=TwoWay}">
+                    SelectedItem="{Binding GroupFilter, Mode=TwoWay}"
+                    DropDownClosed="OnDropdownClosed">
             <ComboBox.ItemTemplate>
               <DataTemplate x:DataType="vm:RouteChoiceViewModel">
                 <TextBlock Text="{Binding Title}" />
@@ -38,31 +45,43 @@
           </ComboBox>
 
           <!-- 统计胶囊 -->
-          <Border Grid.Column="3" Padding="14,6" CornerRadius="8" Background="#0F172A" BorderBrush="{StaticResource BrushBorder}" BorderThickness="1">
-            <TextBlock Text="{Binding SummaryText}" FontSize="12" FontWeight="SemiBold" Foreground="#93C5FD" VerticalAlignment="Center" />
+          <Border Grid.Column="3" Padding="14,6" CornerRadius="8"
+                  Background="{DynamicResource BrushSubtleBg}"
+                  BorderBrush="{DynamicResource BrushBorder}" BorderThickness="1">
+            <TextBlock Text="{Binding SummaryText}" FontSize="12" FontWeight="SemiBold"
+                       Foreground="{DynamicResource BrushPrimary}" VerticalAlignment="Center" />
           </Border>
         </Grid>
 
         <!-- 快速添加账号内联卡片 -->
-        <Border Padding="14,10" CornerRadius="8" Background="#0A101D" BorderBrush="{StaticResource BrushBorderSubtle}" BorderThickness="1">
-          <Grid ColumnDefinitions="Auto,*,190,Auto" ColumnSpacing="12">
+        <Border Padding="14,10" CornerRadius="8"
+                Background="{DynamicResource BrushSubtleBg}"
+                BorderBrush="{DynamicResource BrushBorderSubtle}" BorderThickness="1">
+          <Grid ColumnDefinitions="Auto,*,210,Auto" ColumnSpacing="12">
             <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
-              <Path Data="{StaticResource IconPlus}" Width="14" Height="14" Classes="vector-icon" Stroke="#60A5FA" />
-              <TextBlock Text="快速添加账号:" FontSize="12" FontWeight="SemiBold" Foreground="#94A3B8" VerticalAlignment="Center" />
+              <Path Data="{StaticResource IconPlus}" Width="14" Height="14" Classes="vector-icon"
+                    Stroke="{DynamicResource BrushPrimary}" />
+              <TextBlock Text="快速添加账号:" FontSize="12" FontWeight="SemiBold"
+                         Foreground="{DynamicResource BrushTextSecondary}" VerticalAlignment="Center" />
             </StackPanel>
 
             <TextBox Grid.Column="1" PlaceholderText="新账号备注（可选，如：US 主号、备用号）" Text="{Binding NewAccountNote, Mode=TwoWay}" />
 
-            <ComboBox Grid.Column="2" HorizontalAlignment="Stretch"
-                      ItemsSource="{Binding GroupChoices}"
-                      SelectedItem="{Binding NewAccountGroup, Mode=TwoWay}"
-                      ToolTip.Tip="分组决定登录出口网络，创建时选好可避免切换 IP 登录">
-              <ComboBox.ItemTemplate>
+            <AutoCompleteBox Grid.Column="2" HorizontalAlignment="Stretch"
+                             ItemsSource="{Binding GroupChoices}"
+                             SelectedItem="{Binding NewAccountGroup, Mode=TwoWay}"
+                             ValueMemberBinding="{Binding Title}"
+                             FilterMode="Contains"
+                             MinimumPrefixLength="0"
+                             PlaceholderText="🔍 搜索/选择出口分组…"
+                             DropDownClosed="OnDropdownClosed"
+                             ToolTip.Tip="分组决定登录出口网络，支持输入关键词模糊搜索">
+              <AutoCompleteBox.ItemTemplate>
                 <DataTemplate x:DataType="vm:RouteChoiceViewModel">
                   <TextBlock Text="{Binding Title}" />
                 </DataTemplate>
-              </ComboBox.ItemTemplate>
-            </ComboBox>
+              </AutoCompleteBox.ItemTemplate>
+            </AutoCompleteBox>
 
             <Button Grid.Column="3" Content="➕ 创建并登录" Classes="primary" Command="{Binding CreateAccountCommand}" />
           </Grid>
@@ -78,7 +97,8 @@
             <ItemsControl.ItemTemplate>
               <DataTemplate x:DataType="pages:AccountRowViewModel">
                 <Border Margin="0,0,0,12" Padding="18,16" CornerRadius="12"
-                        Background="#0F172A" BorderBrush="{StaticResource BrushBorder}" BorderThickness="1"
+                        Background="{DynamicResource BrushCardInner}"
+                        BorderBrush="{DynamicResource BrushBorder}" BorderThickness="1"
                         BoxShadow="0 2 10 0 #20000000">
                   <Grid RowDefinitions="Auto,Auto,Auto,Auto" RowSpacing="12">
 
@@ -90,9 +110,11 @@
                       <!-- 邮箱与账号 ID -->
                       <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
                         <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                          <TextBlock Text="{Binding DisplayName}" FontWeight="Bold" FontSize="14" Foreground="#F8FAFC" />
-                          <Border Padding="6,2" CornerRadius="4" Background="#1E293B">
-                            <TextBlock Text="{Binding Id}" FontSize="9" Foreground="#64748B" FontFamily="Consolas, monospace" />
+                          <TextBlock Text="{Binding DisplayName}" FontWeight="Bold" FontSize="14"
+                                     Foreground="{DynamicResource BrushTextPrimary}" />
+                          <Border Padding="6,2" CornerRadius="4" Background="{DynamicResource BrushBadgeBg}">
+                            <TextBlock Text="{Binding Id}" FontSize="9" Foreground="{DynamicResource BrushTextMuted}"
+                                       FontFamily="Consolas, monospace" />
                           </Border>
                         </StackPanel>
                         <!-- 备注编辑框 (内联) -->
@@ -103,20 +125,22 @@
                       </StackPanel>
 
                       <!-- 登录状态胶囊 -->
-                      <Border Grid.Column="2" Padding="12,6" CornerRadius="8" Background="#080C14"
-                              BorderBrush="{StaticResource BrushBorderSubtle}" BorderThickness="1" VerticalAlignment="Center">
+                      <Border Grid.Column="2" Padding="12,6" CornerRadius="8"
+                              Background="{DynamicResource BrushSubtleBg}"
+                              BorderBrush="{DynamicResource BrushBorderSubtle}" BorderThickness="1" VerticalAlignment="Center">
                         <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                           <Ellipse Width="8" Height="8" Fill="{Binding StatusColor}" VerticalAlignment="Center" />
                           <TextBlock Text="{Binding StatusText}" FontSize="12" FontWeight="SemiBold"
                                      Foreground="{Binding StatusColor}" VerticalAlignment="Center" />
-                          <TextBlock Text="{Binding CheckedAtText}" FontSize="10" Foreground="#64748B"
+                          <TextBlock Text="{Binding CheckedAtText}" FontSize="10" Foreground="{DynamicResource BrushTextMuted}"
                                      VerticalAlignment="Center" ToolTip.Tip="{Binding CheckedAtTooltip}" />
                         </StackPanel>
                       </Border>
 
                       <!-- 自动调度开关 -->
                       <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" Margin="10,0,0,0">
-                        <TextBlock Text="{Binding EnabledText}" FontSize="11" Foreground="#94A3B8" VerticalAlignment="Center" />
+                        <TextBlock Text="{Binding EnabledText}" FontSize="11"
+                                   Foreground="{DynamicResource BrushTextSecondary}" VerticalAlignment="Center" />
                         <ToggleSwitch IsChecked="{Binding Enabled, Mode=OneWay}"
                                       Command="{Binding ToggleEnabledCommand}"
                                       OnContent="" OffContent=""
@@ -124,7 +148,7 @@
                       </StackPanel>
                     </Grid>
 
-                    <Rectangle Grid.Row="1" Height="1" Fill="{StaticResource BrushBorderSubtle}" Margin="0,1" />
+                    <Rectangle Grid.Row="1" Height="1" Fill="{DynamicResource BrushBorderSubtle}" Margin="0,1" />
 
                     <!-- 第二行：网络出口分组 + 调度状态 + 轮换规则与进度 -->
                     <Grid Grid.Row="2" RowDefinitions="Auto,Auto" RowSpacing="10">
@@ -132,27 +156,48 @@
                       <!-- 分组与下次调度 -->
                       <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
                         <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                          <TextBlock Text="出口分组:" FontSize="11" Foreground="#64748B" VerticalAlignment="Center" />
-                          <ComboBox Width="170" ItemsSource="{Binding GroupChoices}"
-                                    SelectedItem="{Binding SelectedGroup, Mode=TwoWay}"
-                                    ToolTip.Tip="修改分组即时切换账号的网络出口">
-                            <ComboBox.ItemTemplate>
+                          <TextBlock Text="出口分组:" FontSize="11" Foreground="{DynamicResource BrushTextMuted}" VerticalAlignment="Center" />
+                          <AutoCompleteBox Width="180" ItemsSource="{Binding GroupChoices}"
+                                           SelectedItem="{Binding SelectedGroup, Mode=TwoWay}"
+                                           ValueMemberBinding="{Binding Title}"
+                                           FilterMode="Contains"
+                                           MinimumPrefixLength="0"
+                                           PlaceholderText="🔍 搜索分组…"
+                                           DropDownClosed="OnDropdownClosed"
+                                           ToolTip.Tip="修改分组即时切换账号的网络出口，支持模糊搜索">
+                            <AutoCompleteBox.ItemTemplate>
                               <DataTemplate x:DataType="vm:RouteChoiceViewModel">
                                 <TextBlock Text="{Binding Title}" />
                               </DataTemplate>
-                            </ComboBox.ItemTemplate>
-                          </ComboBox>
-                          <Border Padding="7,3" CornerRadius="4" Background="#1E293B" VerticalAlignment="Center">
+                            </AutoCompleteBox.ItemTemplate>
+                          </AutoCompleteBox>
+                          <Border Padding="7,3" CornerRadius="4" Background="{DynamicResource BrushBadgeBg}" VerticalAlignment="Center">
                             <TextBlock Text="{Binding RouteText}" FontSize="10" FontWeight="Medium" Foreground="{Binding RouteColor}" />
                           </Border>
                         </StackPanel>
 
-                        <!-- 当前与下次调度状态 -->
+                        <!-- 当前与下次调度状态 + 运行结果 -->
                         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
-                          <Border Padding="8,3" CornerRadius="6" Background="#0A101D" BorderBrush="{StaticResource BrushBorderSubtle}" BorderThickness="1">
-                            <TextBlock Text="{Binding ScheduleText}" FontSize="11" FontWeight="SemiBold" Foreground="#93C5FD" />
+                          <Border Padding="8,3" CornerRadius="6"
+                                  Background="{DynamicResource BrushSubtleBg}"
+                                  BorderBrush="{DynamicResource BrushBorderSubtle}" BorderThickness="1">
+                            <TextBlock Text="{Binding ScheduleText}" FontSize="11" FontWeight="SemiBold"
+                                       Foreground="{DynamicResource BrushPrimary}" />
                           </Border>
-                          <TextBlock Text="{Binding LastRunText}" FontSize="10" Foreground="#64748B"
+
+                          <!-- 上次失败醒目高亮胶囊 -->
+                          <Border Padding="7,3" CornerRadius="5" Classes="danger-card"
+                                  IsVisible="{Binding IsLastRunFailed}" ToolTip.Tip="{Binding LastRunTooltip}" VerticalAlignment="Center">
+                            <StackPanel Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+                              <TextBlock Text="⚠️" FontSize="10" VerticalAlignment="Center" />
+                              <TextBlock Text="{Binding LastRunText}" FontSize="10" FontWeight="Bold"
+                                         Foreground="{DynamicResource BrushDangerText}" VerticalAlignment="Center" />
+                            </StackPanel>
+                          </Border>
+
+                          <!-- 正常状态展示 -->
+                          <TextBlock Text="{Binding LastRunText}" FontSize="10" Foreground="{Binding LastRunColor}"
+                                     IsVisible="{Binding !IsLastRunFailed}"
                                      ToolTip.Tip="{Binding LastRunTooltip}" VerticalAlignment="Center" />
                         </StackPanel>
                       </Grid>
@@ -160,27 +205,38 @@
                       <!-- 轮换规则与窗口设置 -->
                       <Grid Grid.Row="1" ColumnDefinitions="*,Auto" ColumnSpacing="16">
                         <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
-                          <TextBlock Text="轮换:" FontSize="11" Foreground="#64748B" VerticalAlignment="Center" />
-                          <ComboBox Width="120"
-                                    ItemsSource="{Binding $parent[ItemsControl].((pages:AccountsPageViewModel)DataContext).SwitchRules}"
-                                    SelectedItem="{Binding SelectedSwitchRule, Mode=TwoWay}">
+                          <TextBlock Text="轮换:" FontSize="11" Foreground="{DynamicResource BrushTextMuted}" VerticalAlignment="Center" />
+                          <ComboBox Width="130"
+                                     ItemsSource="{Binding SwitchRules}"
+                                     SelectedItem="{Binding SelectedSwitchRule, Mode=TwoWay}"
+                                     DropDownClosed="OnDropdownClosed">
                             <ComboBox.ItemTemplate>
                               <DataTemplate x:DataType="pages:SwitchRuleOption">
                                 <TextBlock Text="{Binding Title}" />
                               </DataTemplate>
                             </ComboBox.ItemTemplate>
                           </ComboBox>
-                          <TextBlock Text="连续窗口:" FontSize="11" Foreground="#64748B" VerticalAlignment="Center" />
-                          <NumericUpDown Width="85" Minimum="1" Maximum="100" Increment="1" FormatString="0"
-                                         Value="{Binding MinWindows, Mode=TwoWay}" ToolTip.Tip="连续执行的最少窗口数" />
-                          <TextBlock Text="-" FontSize="11" Foreground="#64748B" VerticalAlignment="Center" />
-                          <NumericUpDown Width="85" Minimum="1" Maximum="100" Increment="1" FormatString="0"
-                                         Value="{Binding MaxWindows, Mode=TwoWay}" ToolTip.Tip="连续执行的最多窗口数" />
+
+                          <TextBlock Text="连续窗口:" FontSize="11" Foreground="{DynamicResource BrushTextMuted}" VerticalAlignment="Center" />
+                          <NumericUpDown Width="68" Minimum="1" Maximum="100" Increment="1" FormatString="0"
+                                         HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
+                                         ShowButtonSpinner="False" Padding="4,2"
+                                         Value="{Binding MinWindows, Mode=TwoWay}"
+                                         KeyDown="OnWindowKeyDown"
+                                         ToolTip.Tip="连续执行的最少窗口数（按 Enter 提交保存）" />
+                          <TextBlock Text="-" FontSize="11" Foreground="{DynamicResource BrushTextMuted}" VerticalAlignment="Center" />
+                          <NumericUpDown Width="68" Minimum="1" Maximum="100" Increment="1" FormatString="0"
+                                         HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
+                                         ShowButtonSpinner="False" Padding="4,2"
+                                         Value="{Binding MaxWindows, Mode=TwoWay}"
+                                         KeyDown="OnWindowKeyDown"
+                                         ToolTip.Tip="连续执行的最多窗口数（按 Enter 提交保存）" />
                         </StackPanel>
 
                         <!-- 当前轮换进度 -->
                         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                          <TextBlock Text="{Binding RotationText}" FontSize="11" Foreground="#94A3B8" />
+                          <TextBlock Text="{Binding RotationText}" FontSize="11"
+                                     Foreground="{DynamicResource BrushTextSecondary}" />
                           <ProgressBar Width="100" Height="5" Minimum="0" Maximum="1"
                                        Value="{Binding RotationProgress}" VerticalAlignment="Center" />
                         </StackPanel>
@@ -191,7 +247,7 @@
                     <Grid Grid.Row="3" ColumnDefinitions="*,Auto" ColumnSpacing="12">
                       <!-- 校验提示与保存备注 -->
                       <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                        <TextBlock Text="{Binding ValidationError}" FontSize="11" Foreground="#EF4444"
+                        <TextBlock Text="{Binding ValidationError}" FontSize="11" Foreground="{DynamicResource BrushDanger}"
                                    IsVisible="{Binding HasValidationError}" VerticalAlignment="Center" />
                         <Button Content="💾 保存修改" Classes="primary" Padding="10,5" FontSize="11"
                                 IsVisible="{Binding HasPendingEdits}" Command="{Binding CommitNoteCommand}" />
@@ -220,12 +276,14 @@
         <!-- 空数据提示 -->
         <StackPanel IsVisible="{Binding IsEmpty}" VerticalAlignment="Center" HorizontalAlignment="Center"
                     Spacing="14" MaxWidth="420">
-          <Border Width="68" Height="68" CornerRadius="34" Background="#1E293B" HorizontalAlignment="Center">
-            <Path Data="{StaticResource IconUsers}" Width="30" Height="30" Classes="vector-icon" Stroke="#60A5FA" />
+          <Border Width="68" Height="68" CornerRadius="34" Background="{DynamicResource BrushBadgeBg}" HorizontalAlignment="Center">
+            <Path Data="{StaticResource IconUsers}" Width="30" Height="30" Classes="vector-icon"
+                  Stroke="{DynamicResource BrushPrimary}" />
           </Border>
-          <TextBlock Text="暂无匹配账号" FontSize="16" FontWeight="SemiBold" Foreground="#F8FAFC" HorizontalAlignment="Center" />
+          <TextBlock Text="暂无匹配账号" FontSize="16" FontWeight="SemiBold"
+                     Foreground="{DynamicResource BrushTextPrimary}" HorizontalAlignment="Center" />
           <TextBlock Text="{Binding EmptyText}" TextWrapping="Wrap" TextAlignment="Center"
-                     FontSize="12" Foreground="#94A3B8" LineHeight="18" />
+                     FontSize="12" Foreground="{DynamicResource BrushTextSecondary}" LineHeight="18" />
         </StackPanel>
       </Panel>
     </Border>
@@ -241,12 +299,15 @@
 
         <!-- 选中计数与待保存提示 -->
         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
-          <Border Padding="10,4" CornerRadius="6" Background="#0F172A" BorderBrush="{StaticResource BrushBorderSubtle}" BorderThickness="1">
-            <TextBlock FontSize="11" Foreground="#93C5FD">
+          <Border Padding="10,4" CornerRadius="6"
+                  Background="{DynamicResource BrushSubtleBg}"
+                  BorderBrush="{DynamicResource BrushBorderSubtle}" BorderThickness="1">
+            <TextBlock FontSize="11" Foreground="{DynamicResource BrushPrimary}">
               <Run Text="已勾选 " /><Run Text="{Binding SelectedCount}" FontWeight="Bold" /><Run Text=" 个账号" />
             </TextBlock>
           </Border>
-          <TextBlock Text="{Binding PendingEditText}" FontSize="11" FontWeight="SemiBold" Foreground="#F59E0B"
+          <TextBlock Text="{Binding PendingEditText}" FontSize="11" FontWeight="SemiBold"
+                     Foreground="{DynamicResource BrushWarning}"
                      IsVisible="{Binding HasPendingEdits}" VerticalAlignment="Center" />
         </StackPanel>
 

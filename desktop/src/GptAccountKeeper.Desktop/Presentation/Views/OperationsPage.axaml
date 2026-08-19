@@ -13,7 +13,7 @@
       <Grid RowDefinitions="Auto,*">
         <!-- 头部筛选与刷新 -->
         <Grid ColumnDefinitions="*,140,Auto" ColumnSpacing="12" Margin="0,0,0,14">
-          <TextBlock Text="{Binding Summary}" FontSize="11" Foreground="#94A3B8" VerticalAlignment="Center" />
+          <TextBlock Text="{Binding Summary}" FontSize="11" Foreground="{DynamicResource BrushTextSecondary}" VerticalAlignment="Center" />
           <ComboBox Grid.Column="1" HorizontalAlignment="Stretch"
                     ItemsSource="{Binding Filters}" SelectedItem="{Binding Filter, Mode=TwoWay}">
             <ComboBox.ItemTemplate>
@@ -31,22 +31,25 @@
           <ListBox ItemsSource="{Binding Items}" SelectedItem="{Binding Selected, Mode=TwoWay}">
             <ListBox.ItemTemplate>
               <DataTemplate x:DataType="models:AgentOperationDto">
-                <Border Margin="0,2" Padding="14,11" CornerRadius="10" Background="#0F172A" BorderBrush="{StaticResource BrushBorderSubtle}" BorderThickness="1">
+                <Border Margin="0,2" Padding="14,11" CornerRadius="10"
+                        Background="{DynamicResource BrushCardInner}"
+                        BorderBrush="{DynamicResource BrushBorderSubtle}" BorderThickness="1">
                   <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12" VerticalAlignment="Center">
                     <StackPanel Spacing="4">
                       <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                        <TextBlock Text="{Binding KindText}" FontWeight="Bold" FontSize="13" Foreground="#F8FAFC" />
-                        <TextBlock Text="{Binding TimeText}" FontSize="10" Foreground="#64748B" VerticalAlignment="Center" />
+                        <TextBlock Text="{Binding KindText}" FontWeight="Bold" FontSize="13" Foreground="{DynamicResource BrushTextPrimary}" />
+                        <TextBlock Text="{Binding TimeText}" FontSize="10" Foreground="{DynamicResource BrushTextMuted}" VerticalAlignment="Center" />
                       </StackPanel>
-                      <TextBlock Text="{Binding DetailText}" FontSize="11" Foreground="#94A3B8"
+                      <TextBlock Text="{Binding DetailText}" FontSize="11" Foreground="{DynamicResource BrushTextSecondary}"
                                  TextTrimming="CharacterEllipsis" />
                       <ProgressBar Height="4" Minimum="0" Maximum="1" Value="{Binding Progress}"
                                    IsVisible="{Binding HasProgress}" Margin="0,2,0,0" />
                     </StackPanel>
 
                     <!-- 状态胶囊 -->
-                    <Border Grid.Column="1" Padding="10,4" CornerRadius="6" Background="#080C14"
-                            BorderBrush="{StaticResource BrushBorderSubtle}" BorderThickness="1" VerticalAlignment="Center">
+                    <Border Grid.Column="1" Padding="10,4" CornerRadius="6"
+                            Background="{DynamicResource BrushSubtleBg}"
+                            BorderBrush="{DynamicResource BrushBorderSubtle}" BorderThickness="1" VerticalAlignment="Center">
                       <TextBlock Text="{Binding StateText}" FontSize="11" FontWeight="SemiBold"
                                  Foreground="{Binding StateColor}" />
                     </Border>
@@ -59,12 +62,13 @@
           <!-- 空列表提示 -->
           <StackPanel IsVisible="{Binding IsEmpty}" VerticalAlignment="Center" HorizontalAlignment="Center"
                       Spacing="12" MaxWidth="340">
-            <Border Width="64" Height="64" CornerRadius="32" Background="#1E293B" HorizontalAlignment="Center">
-              <Path Data="{StaticResource IconActivity}" Width="26" Height="26" Classes="vector-icon" Stroke="#818CF8" />
+            <Border Width="64" Height="64" CornerRadius="32" Background="{DynamicResource BrushBadgeBg}" HorizontalAlignment="Center">
+              <Path Data="{StaticResource IconActivity}" Width="26" Height="26" Classes="vector-icon"
+                    Stroke="{DynamicResource BrushIndigo}" />
             </Border>
-            <TextBlock Text="暂无后台任务" FontSize="15" FontWeight="SemiBold" Foreground="#F8FAFC" HorizontalAlignment="Center" />
+            <TextBlock Text="暂无后台任务" FontSize="15" FontWeight="SemiBold" Foreground="{DynamicResource BrushTextPrimary}" HorizontalAlignment="Center" />
             <TextBlock Text="{Binding EmptyText}" TextWrapping="Wrap" TextAlignment="Center"
-                       FontSize="11" Foreground="#94A3B8" LineHeight="17" />
+                       FontSize="11" Foreground="{DynamicResource BrushTextSecondary}" LineHeight="17" />
           </StackPanel>
         </Panel>
       </Grid>
@@ -74,13 +78,13 @@
     <Border Grid.Column="1" Classes="card" Padding="22">
       <ScrollViewer>
         <StackPanel Spacing="14" IsVisible="{Binding HasSelected}">
-          <TextBlock Text="任务详情" FontSize="16" FontWeight="Bold" Foreground="#F8FAFC" />
+          <TextBlock Text="任务详情" FontSize="16" FontWeight="Bold" Foreground="{DynamicResource BrushTextPrimary}" />
 
-          <Border Padding="16" CornerRadius="10" Background="#0F172A" BorderBrush="{StaticResource BrushBorder}" BorderThickness="1">
+          <Border Padding="16" CornerRadius="10" Background="{DynamicResource BrushCardInner}" BorderBrush="{DynamicResource BrushBorder}" BorderThickness="1">
             <StackPanel Spacing="10">
               <Grid ColumnDefinitions="*,Auto">
-                <TextBlock Text="{Binding Selected.KindText}" FontSize="16" FontWeight="Bold" Foreground="#93C5FD" />
-                <Border Grid.Column="1" Padding="10,4" CornerRadius="6" Background="#080C14" BorderBrush="{StaticResource BrushBorderSubtle}" BorderThickness="1">
+                <TextBlock Text="{Binding Selected.KindText}" FontSize="16" FontWeight="Bold" Foreground="{DynamicResource BrushPrimary}" />
+                <Border Grid.Column="1" Padding="10,4" CornerRadius="6" Background="{DynamicResource BrushSubtleBg}" BorderBrush="{DynamicResource BrushBorderSubtle}" BorderThickness="1">
                   <TextBlock Text="{Binding Selected.StateText}" FontSize="12" FontWeight="SemiBold"
                              Foreground="{Binding Selected.StateColor}" />
                 </Border>
@@ -90,52 +94,53 @@
           </Border>
 
           <StackPanel Spacing="4">
-            <TextBlock Text="当前执行阶段" FontSize="10" Foreground="#64748B" />
-            <Border Padding="10,6" CornerRadius="6" Background="#0A101D" BorderBrush="{StaticResource BrushBorderSubtle}" BorderThickness="1">
-              <TextBlock Text="{Binding Selected.Stage}" FontSize="12" FontWeight="SemiBold" Foreground="#F8FAFC" />
+            <TextBlock Text="当前执行阶段" FontSize="10" Foreground="{DynamicResource BrushTextMuted}" />
+            <Border Padding="10,6" CornerRadius="6" Background="{DynamicResource BrushCardInner}" BorderBrush="{DynamicResource BrushBorderSubtle}" BorderThickness="1">
+              <TextBlock Text="{Binding Selected.Stage}" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource BrushTextPrimary}" />
             </Border>
           </StackPanel>
 
           <StackPanel Spacing="4">
-            <TextBlock Text="状态消息" FontSize="10" Foreground="#64748B" />
-            <Border Padding="10,8" CornerRadius="6" Background="#0A101D" BorderBrush="{StaticResource BrushBorderSubtle}" BorderThickness="1">
-              <SelectableTextBlock Text="{Binding Selected.Message}" FontSize="12" TextWrapping="Wrap" Foreground="#CBD5E1" LineHeight="17" />
+            <TextBlock Text="状态消息" FontSize="10" Foreground="{DynamicResource BrushTextMuted}" />
+            <Border Padding="10,8" CornerRadius="6" Background="{DynamicResource BrushCardInner}" BorderBrush="{DynamicResource BrushBorderSubtle}" BorderThickness="1">
+              <SelectableTextBlock Text="{Binding Selected.Message}" FontSize="12" TextWrapping="Wrap" Foreground="{DynamicResource BrushTextPrimary}" LineHeight="17" />
             </Border>
           </StackPanel>
 
           <StackPanel Spacing="4">
-            <TextBlock Text="关联资源" FontSize="10" Foreground="#64748B" />
-            <Border Padding="10,6" CornerRadius="6" Background="#0A101D" BorderBrush="{StaticResource BrushBorderSubtle}" BorderThickness="1">
-              <SelectableTextBlock Text="{Binding Selected.ResourceId}" FontSize="12" TextWrapping="Wrap" Foreground="#93C5FD" />
+            <TextBlock Text="关联资源" FontSize="10" Foreground="{DynamicResource BrushTextMuted}" />
+            <Border Padding="10,6" CornerRadius="6" Background="{DynamicResource BrushCardInner}" BorderBrush="{DynamicResource BrushBorderSubtle}" BorderThickness="1">
+              <SelectableTextBlock Text="{Binding Selected.ResourceId}" FontSize="12" TextWrapping="Wrap" Foreground="{DynamicResource BrushPrimary}" />
             </Border>
           </StackPanel>
 
           <StackPanel Spacing="4">
-            <TextBlock Text="任务唯一 ID" FontSize="10" Foreground="#64748B" />
-            <Border Padding="10,6" CornerRadius="6" Background="#0A101D" BorderBrush="{StaticResource BrushBorderSubtle}" BorderThickness="1">
-              <SelectableTextBlock Text="{Binding Selected.Id}" FontSize="10" TextWrapping="Wrap" Foreground="#64748B" FontFamily="Consolas, monospace" />
+            <TextBlock Text="任务唯一 ID" FontSize="10" Foreground="{DynamicResource BrushTextMuted}" />
+            <Border Padding="10,6" CornerRadius="6" Background="{DynamicResource BrushCardInner}" BorderBrush="{DynamicResource BrushBorderSubtle}" BorderThickness="1">
+              <SelectableTextBlock Text="{Binding Selected.Id}" FontSize="10" TextWrapping="Wrap" Foreground="{DynamicResource BrushTextMuted}" FontFamily="Consolas, monospace" />
             </Border>
           </StackPanel>
 
           <!-- 失败错误详情面板 -->
-          <Border IsVisible="{Binding Selected.HasError}" Padding="16" CornerRadius="10"
-                  Background="#381014" BorderBrush="#DC2626" BorderThickness="1">
+          <Border IsVisible="{Binding Selected.HasError}" Padding="16" CornerRadius="10" Classes="danger-card">
             <StackPanel Spacing="8">
               <StackPanel Orientation="Horizontal" Spacing="6">
-                <Path Data="{StaticResource IconAlertTriangle}" Width="16" Height="16" Classes="vector-icon" Stroke="#F87171" />
-                <TextBlock Text="失败错误详情" FontSize="12" FontWeight="Bold" Foreground="#FCA5A5" />
+                <Path Data="{StaticResource IconAlertTriangle}" Width="16" Height="16" Classes="vector-icon"
+                      Stroke="{DynamicResource BrushDanger}" />
+                <TextBlock Text="失败错误详情" FontSize="12" FontWeight="Bold"
+                           Foreground="{DynamicResource BrushDangerText}" />
               </StackPanel>
               <SelectableTextBlock Text="{Binding Selected.Error.Code}" FontSize="11" FontWeight="SemiBold"
-                                   Foreground="#F87171" FontFamily="Consolas, monospace" />
+                                   Foreground="{DynamicResource BrushDanger}" FontFamily="Consolas, monospace" />
               <SelectableTextBlock Text="{Binding Selected.Error.Message}" FontSize="11" TextWrapping="Wrap"
-                                   Foreground="#FECACA" LineHeight="17" />
+                                   Foreground="{DynamicResource BrushDangerTextMuted}" LineHeight="17" />
               <Button Content="📋 复制错误详情" Classes="danger" Padding="10,5" FontSize="11" HorizontalAlignment="Left"
                       Command="{Binding CopyErrorCommand}" Margin="0,4,0,0" />
             </StackPanel>
           </Border>
 
-          <Border Padding="14,12" CornerRadius="8" Background="#0A101D" BorderBrush="{StaticResource BrushBorderSubtle}" BorderThickness="1">
-            <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#94A3B8" LineHeight="17"
+          <Border Padding="14,12" CornerRadius="8" Background="{DynamicResource BrushSubtleBg}" BorderBrush="{DynamicResource BrushBorderSubtle}" BorderThickness="1">
+            <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource BrushTextSecondary}" LineHeight="17"
                        Text="💡 任务状态持久化存储于 SQLite：网络断开重连或 Agent 重启后错误码与日志依然可完整回溯。异常终止的任务会被自动收尾标记为已取消。" />
           </Border>
         </StackPanel>

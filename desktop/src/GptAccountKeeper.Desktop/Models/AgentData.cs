@@ -244,6 +244,17 @@ internal sealed record AccountDto
                 : $"上次 {RelativeTime.Describe(LastRunAt)}";
 
     [JsonIgnore]
+    public bool IsLastRunFailed => LastRunOk == false;
+
+    [JsonIgnore]
+    public IBrush LastRunColor => LastRunOk switch
+    {
+        true => Palette.Ok,
+        false => Palette.Danger,
+        _ => Palette.Muted,
+    };
+
+    [JsonIgnore]
     public string LastRunTooltip => string.IsNullOrWhiteSpace(LastRunReason)
         ? LastRunText
         : $"{LastRunText}\n{LastRunReason}";
@@ -640,6 +651,9 @@ internal sealed class HistoryAccountDto
     [JsonPropertyName("lastAt")]
     public DateTimeOffset? LastAt { get; init; }
 
+    [JsonPropertyName("lastOk")]
+    public bool? LastOk { get; init; }
+
     [JsonPropertyName("deleted")]
     public bool Deleted { get; init; }
 
@@ -651,6 +665,27 @@ internal sealed class HistoryAccountDto
 
     [JsonPropertyName("gptName")]
     public string? GptName { get; init; }
+
+    [JsonIgnore]
+    public bool IsLastFailed => LastOk == false;
+
+    [JsonIgnore]
+    public string LastAtText => LastAt is null
+        ? "时间未知"
+        : RelativeTime.Describe(LastAt);
+
+    [JsonIgnore]
+    public string LastAtFullText => LastAt is null
+        ? "历史记录未包含可用时间"
+        : $"最后运行时间：{LastAt.Value.ToLocalTime():yyyy-MM-dd HH:mm:ss}";
+
+    [JsonIgnore]
+    public IBrush LastRunColor => LastOk switch
+    {
+        true => Palette.Ok,
+        false => Palette.Danger,
+        _ => Palette.Muted,
+    };
 
     [JsonIgnore]
     public string DisplayName => Email ?? GptName ?? (!string.IsNullOrWhiteSpace(Note) ? Note : AccountId);

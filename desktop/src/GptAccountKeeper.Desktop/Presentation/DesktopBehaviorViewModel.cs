@@ -18,6 +18,7 @@ internal sealed class DesktopBehaviorViewModel : ObservableObject
     private readonly StartupRegistrationService _startup;
     private readonly UpdateService _updates;
     private readonly ToastHost _toasts;
+    private ThemeOptionViewModel _theme;
     private CloseBehaviorOptionViewModel _closeBehavior;
     private UpdatePolicyOptionViewModel _updatePolicy;
     private bool _startAtLogin;
@@ -45,6 +46,14 @@ internal sealed class DesktopBehaviorViewModel : ObservableObject
         _updates = updates;
         _toasts = toasts;
 
+        ThemeOptions =
+        [
+            new(AppTheme.Dark, "暗黑主题 (Dark)", "深邃黑夜 Slate 玻璃质感，专注不刺眼"),
+            new(AppTheme.Light, "亮色主题 (Light)", "清爽明亮 Slate 风格，高对比度清晰易读"),
+            new(AppTheme.System, "跟随系统 (System)", "自动根据操作系统外观设置切换明暗主题"),
+        ];
+        _theme = ThemeOptions[0];
+
         CloseBehaviorOptions =
         [
             new(CloseBehavior.Ask, "每次询问", "关闭窗口时选择隐藏到托盘或退出全部"),
@@ -67,6 +76,8 @@ internal sealed class DesktopBehaviorViewModel : ObservableObject
         _updates.UpdatePromptRequested += OnUpdatePromptRequested;
     }
 
+    public ObservableCollection<ThemeOptionViewModel> ThemeOptions { get; }
+
     public ObservableCollection<CloseBehaviorOptionViewModel> CloseBehaviorOptions { get; }
 
     public ObservableCollection<UpdatePolicyOptionViewModel> UpdatePolicyOptions { get; }
@@ -88,6 +99,20 @@ internal sealed class DesktopBehaviorViewModel : ObservableObject
     public string? PendingLegacyImportRoot => _pendingLegacyImportRoot;
 
     public CancellationToken Lifetime { get; set; } = CancellationToken.None;
+
+    public ThemeOptionViewModel SelectedTheme
+    {
+        get => _theme;
+        set
+        {
+            if (value is null || !SetProperty(ref _theme, value)) return;
+            OnPropertyChanged(nameof(Theme));
+            ApplyTheme(value.Value);
+            if (_loaded) _ = PersistAsync();
+        }
+    }
+
+    public AppTheme Theme => SelectedTheme.Value;
 
     public CloseBehaviorOptionViewModel SelectedCloseBehavior
     {
@@ -164,9 +189,24 @@ internal sealed class DesktopBehaviorViewModel : ObservableObject
 
     public bool WindowMaximized => _windowMaximized;
 
+    public static void ApplyTheme(AppTheme theme)
+    {
+        if (Avalonia.Application.Current is null) return;
+        Avalonia.Application.Current.RequestedThemeVariant = theme switch
+        {
+            AppTheme.Light => Avalonia.Styling.ThemeVariant.Light,
+            AppTheme.System => Avalonia.Styling.ThemeVariant.Default,
+            _ => Avalonia.Styling.ThemeVariant.Dark,
+        };
+    }
+
     public async Task LoadAsync(CancellationToken cancellationToken)
     {
         var settings = await _store.LoadAsync(cancellationToken);
+        _theme = ThemeOptions.FirstOrDefault(option => option.Value == settings.Theme) ?? ThemeOptions[0];
+        OnPropertyChanged(nameof(SelectedTheme));
+        OnPropertyChanged(nameof(Theme));
+        ApplyTheme(_theme.Value);
         _startAtLogin = settings.StartAtLogin;
         _startup.SetEnabled(settings.StartAtLogin);
         OnPropertyChanged(nameof(StartAtLogin));
@@ -232,6 +272,7 @@ internal sealed class DesktopBehaviorViewModel : ObservableObject
             await _store.SaveAsync(
                 new DesktopSettings
                 {
+                    Theme = SelectedTheme.Value,
                     StartAtLogin = StartAtLogin,
                     CloseBehavior = SelectedCloseBehavior.Value,
                     UpdatePolicy = SelectedUpdatePolicy.Value,
@@ -400,3 +441,5 @@ internal sealed class DesktopBehaviorViewModel : ObservableObject
         });
     }
 }
+
+internal sealed record ThemeOptionViewModel(AppTheme Value, string Title, string Description);

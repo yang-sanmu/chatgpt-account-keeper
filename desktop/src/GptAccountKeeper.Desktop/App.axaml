@@ -10,71 +10,211 @@
         <ResourceInclude Source="avares://GptAccountKeeper.Desktop/Icons.axaml" />
       </ResourceDictionary.MergedDictionaries>
 
-      <!-- ==========================================
-           Modern Slate Neo-Glass Design System Tokens
-           ========================================== -->
-      <Color x:Key="ColorBgDark">#0B0F19</Color>
-      <Color x:Key="ColorBgSidebar">#080C14</Color>
-      <Color x:Key="ColorBgCard">#111927</Color>
-      <Color x:Key="ColorBgCardHover">#162235</Color>
-      <Color x:Key="ColorBgElevated">#1E293B</Color>
-      <Color x:Key="ColorBgInput">#0A101D</Color>
-      <Color x:Key="ColorBgInputFocus">#0D1527</Color>
+      <ResourceDictionary.ThemeDictionaries>
+        <!-- ==========================================
+             Modern Slate Dark Theme
+             ========================================== -->
+        <ResourceDictionary x:Key="Dark">
+          <Color x:Key="ColorBgDark">#0B0F19</Color>
+          <Color x:Key="ColorBgSidebar">#080C14</Color>
+          <Color x:Key="ColorBgCard">#111927</Color>
+          <Color x:Key="ColorBgCardHover">#162235</Color>
+          <Color x:Key="ColorBgElevated">#1E293B</Color>
+          <Color x:Key="ColorBgInput">#0A101D</Color>
+          <Color x:Key="ColorBgInputFocus">#0D1527</Color>
+          <Color x:Key="ColorCardInner">#0A101D</Color>
+          <Color x:Key="ColorBadgeBg">#1E293B</Color>
+          <Color x:Key="ColorSubtleBg">#0D1424</Color>
+          <Color x:Key="ColorDialogInner">#0A101D</Color>
 
-      <Color x:Key="ColorBorder">#1E2D4A</Color>
-      <Color x:Key="ColorBorderSubtle">#172238</Color>
-      <Color x:Key="ColorBorderHover">#2E436E</Color>
-      <Color x:Key="ColorBorderHighlight">#3B82F6</Color>
+          <Color x:Key="ColorBorder">#1E2D4A</Color>
+          <Color x:Key="ColorBorderSubtle">#172238</Color>
+          <Color x:Key="ColorBorderHover">#2E436E</Color>
+          <Color x:Key="ColorBorderHighlight">#3B82F6</Color>
 
-      <!-- Semantic Accents -->
-      <Color x:Key="ColorPrimary">#3B82F6</Color>
-      <Color x:Key="ColorPrimaryHover">#2563EB</Color>
-      <Color x:Key="ColorPrimaryActive">#1D4ED8</Color>
-      <Color x:Key="ColorSuccess">#10B981</Color>
-      <Color x:Key="ColorSuccessHover">#059669</Color>
-      <Color x:Key="ColorWarning">#F59E0B</Color>
-      <Color x:Key="ColorWarningHover">#D97706</Color>
-      <Color x:Key="ColorDanger">#EF4444</Color>
-      <Color x:Key="ColorDangerHover">#DC2626</Color>
-      <Color x:Key="ColorInfo">#38BDF8</Color>
-      <Color x:Key="ColorPurple">#8B5CF6</Color>
-      <Color x:Key="ColorIndigo">#6366F1</Color>
+          <!-- Semantic Accents -->
+          <Color x:Key="ColorPrimary">#3B82F6</Color>
+          <Color x:Key="ColorPrimaryHover">#2563EB</Color>
+          <Color x:Key="ColorPrimaryActive">#1D4ED8</Color>
+          <Color x:Key="ColorSuccess">#10B981</Color>
+          <Color x:Key="ColorSuccessHover">#059669</Color>
+          <Color x:Key="ColorWarning">#F59E0B</Color>
+          <Color x:Key="ColorWarningHover">#B45309</Color>
+          <Color x:Key="ColorDanger">#EF4444</Color>
+          <Color x:Key="ColorDangerHover">#DC2626</Color>
+          <Color x:Key="ColorDangerSurface">#381014</Color>
+          <Color x:Key="ColorDangerBorder">#7F1D1D</Color>
+          <Color x:Key="ColorDangerText">#FCA5A5</Color>
+          <Color x:Key="ColorDangerTextMuted">#FECACA</Color>
+          <Color x:Key="ColorWarningSurface">#31200D</Color>
+          <Color x:Key="ColorWarningBorder">#78350F</Color>
+          <Color x:Key="ColorWarningText">#FCD34D</Color>
+          <Color x:Key="ColorInfo">#38BDF8</Color>
+          <Color x:Key="ColorPurple">#8B5CF6</Color>
+          <Color x:Key="ColorIndigo">#6366F1</Color>
 
-      <!-- Typography Colors -->
-      <Color x:Key="ColorTextPrimary">#F8FAFC</Color>
-      <Color x:Key="ColorTextSecondary">#94A3B8</Color>
-      <Color x:Key="ColorTextMuted">#64748B</Color>
-      <Color x:Key="ColorTextFaint">#475569</Color>
+          <!-- Typography Colors -->
+          <Color x:Key="ColorTextPrimary">#F8FAFC</Color>
+          <Color x:Key="ColorTextSecondary">#94A3B8</Color>
+          <Color x:Key="ColorTextMuted">#64748B</Color>
+          <Color x:Key="ColorTextFaint">#475569</Color>
 
-      <!-- Solid Brushes -->
-      <SolidColorBrush x:Key="BrushBgDark" Color="{StaticResource ColorBgDark}" />
-      <SolidColorBrush x:Key="BrushBgSidebar" Color="{StaticResource ColorBgSidebar}" />
-      <SolidColorBrush x:Key="BrushBgCard" Color="{StaticResource ColorBgCard}" />
-      <SolidColorBrush x:Key="BrushBgCardHover" Color="{StaticResource ColorBgCardHover}" />
-      <SolidColorBrush x:Key="BrushBgElevated" Color="{StaticResource ColorBgElevated}" />
-      <SolidColorBrush x:Key="BrushBgInput" Color="{StaticResource ColorBgInput}" />
-      <SolidColorBrush x:Key="BrushBgInputFocus" Color="{StaticResource ColorBgInputFocus}" />
+          <!-- Solid Brushes -->
+          <SolidColorBrush x:Key="BrushBgDark" Color="{StaticResource ColorBgDark}" />
+          <SolidColorBrush x:Key="BrushBgSidebar" Color="{StaticResource ColorBgSidebar}" />
+          <SolidColorBrush x:Key="BrushBgCard" Color="{StaticResource ColorBgCard}" />
+          <SolidColorBrush x:Key="BrushBgCardHover" Color="{StaticResource ColorBgCardHover}" />
+          <SolidColorBrush x:Key="BrushBgElevated" Color="{StaticResource ColorBgElevated}" />
+          <SolidColorBrush x:Key="BrushBgInput" Color="{StaticResource ColorBgInput}" />
+          <SolidColorBrush x:Key="BrushBgInputFocus" Color="{StaticResource ColorBgInputFocus}" />
+          <SolidColorBrush x:Key="BrushCardInner" Color="{StaticResource ColorCardInner}" />
+          <SolidColorBrush x:Key="BrushBadgeBg" Color="{StaticResource ColorBadgeBg}" />
+          <SolidColorBrush x:Key="BrushSubtleBg" Color="{StaticResource ColorSubtleBg}" />
+          <SolidColorBrush x:Key="BrushDialogInner" Color="{StaticResource ColorDialogInner}" />
 
-      <SolidColorBrush x:Key="BrushBorder" Color="{StaticResource ColorBorder}" />
-      <SolidColorBrush x:Key="BrushBorderSubtle" Color="{StaticResource ColorBorderSubtle}" />
-      <SolidColorBrush x:Key="BrushBorderHover" Color="{StaticResource ColorBorderHover}" />
-      <SolidColorBrush x:Key="BrushBorderHighlight" Color="{StaticResource ColorBorderHighlight}" />
+          <SolidColorBrush x:Key="BrushBorder" Color="{StaticResource ColorBorder}" />
+          <SolidColorBrush x:Key="BrushBorderSubtle" Color="{StaticResource ColorBorderSubtle}" />
+          <SolidColorBrush x:Key="BrushBorderHover" Color="{StaticResource ColorBorderHover}" />
+          <SolidColorBrush x:Key="BrushBorderHighlight" Color="{StaticResource ColorBorderHighlight}" />
 
-      <SolidColorBrush x:Key="BrushPrimary" Color="{StaticResource ColorPrimary}" />
-      <SolidColorBrush x:Key="BrushPrimaryHover" Color="{StaticResource ColorPrimaryHover}" />
-      <SolidColorBrush x:Key="BrushSuccess" Color="{StaticResource ColorSuccess}" />
-      <SolidColorBrush x:Key="BrushWarning" Color="{StaticResource ColorWarning}" />
-      <SolidColorBrush x:Key="BrushDanger" Color="{StaticResource ColorDanger}" />
-      <SolidColorBrush x:Key="BrushInfo" Color="{StaticResource ColorInfo}" />
-      <SolidColorBrush x:Key="BrushPurple" Color="{StaticResource ColorPurple}" />
-      <SolidColorBrush x:Key="BrushIndigo" Color="{StaticResource ColorIndigo}" />
+          <SolidColorBrush x:Key="BrushPrimary" Color="{StaticResource ColorPrimary}" />
+          <SolidColorBrush x:Key="BrushPrimaryHover" Color="{StaticResource ColorPrimaryHover}" />
+          <SolidColorBrush x:Key="BrushSuccess" Color="{StaticResource ColorSuccess}" />
+          <SolidColorBrush x:Key="BrushWarning" Color="{StaticResource ColorWarning}" />
+          <SolidColorBrush x:Key="BrushWarningHover" Color="{StaticResource ColorWarningHover}" />
+          <SolidColorBrush x:Key="BrushDanger" Color="{StaticResource ColorDanger}" />
+          <SolidColorBrush x:Key="BrushDangerHover" Color="{StaticResource ColorDangerHover}" />
+          <SolidColorBrush x:Key="BrushDangerSurface" Color="{StaticResource ColorDangerSurface}" />
+          <SolidColorBrush x:Key="BrushDangerBorder" Color="{StaticResource ColorDangerBorder}" />
+          <SolidColorBrush x:Key="BrushDangerText" Color="{StaticResource ColorDangerText}" />
+          <SolidColorBrush x:Key="BrushDangerTextMuted" Color="{StaticResource ColorDangerTextMuted}" />
+          <SolidColorBrush x:Key="BrushWarningSurface" Color="{StaticResource ColorWarningSurface}" />
+          <SolidColorBrush x:Key="BrushWarningBorder" Color="{StaticResource ColorWarningBorder}" />
+          <SolidColorBrush x:Key="BrushWarningText" Color="{StaticResource ColorWarningText}" />
+          <SolidColorBrush x:Key="BrushInfo" Color="{StaticResource ColorInfo}" />
+          <SolidColorBrush x:Key="BrushPurple" Color="{StaticResource ColorPurple}" />
+          <SolidColorBrush x:Key="BrushIndigo" Color="{StaticResource ColorIndigo}" />
 
-      <SolidColorBrush x:Key="BrushTextPrimary" Color="{StaticResource ColorTextPrimary}" />
-      <SolidColorBrush x:Key="BrushTextSecondary" Color="{StaticResource ColorTextSecondary}" />
-      <SolidColorBrush x:Key="BrushTextMuted" Color="{StaticResource ColorTextMuted}" />
-      <SolidColorBrush x:Key="BrushTextFaint" Color="{StaticResource ColorTextFaint}" />
+          <SolidColorBrush x:Key="BrushTextPrimary" Color="{StaticResource ColorTextPrimary}" />
+          <SolidColorBrush x:Key="BrushTextSecondary" Color="{StaticResource ColorTextSecondary}" />
+          <SolidColorBrush x:Key="BrushTextMuted" Color="{StaticResource ColorTextMuted}" />
+          <SolidColorBrush x:Key="BrushTextFaint" Color="{StaticResource ColorTextFaint}" />
 
-      <!-- Gradients -->
+          <!-- Gradients -->
+          <LinearGradientBrush x:Key="BrushSidebarGradient" StartPoint="0%,0%" EndPoint="0%,100%">
+            <GradientStop Offset="0" Color="#0B101B" />
+            <GradientStop Offset="1" Color="#070A12" />
+          </LinearGradientBrush>
+
+          <LinearGradientBrush x:Key="BrushHeaderGradient" StartPoint="0%,0%" EndPoint="100%,0%">
+            <GradientStop Offset="0" Color="#101826" />
+            <GradientStop Offset="1" Color="#0B0F19" />
+          </LinearGradientBrush>
+        </ResourceDictionary>
+
+        <!-- ==========================================
+             Modern Slate Light Theme
+             ========================================== -->
+        <ResourceDictionary x:Key="Light">
+          <Color x:Key="ColorBgDark">#F1F5F9</Color>
+          <Color x:Key="ColorBgSidebar">#FFFFFF</Color>
+          <Color x:Key="ColorBgCard">#FFFFFF</Color>
+          <Color x:Key="ColorBgCardHover">#F8FAFC</Color>
+          <Color x:Key="ColorBgElevated">#E2E8F0</Color>
+          <Color x:Key="ColorBgInput">#FFFFFF</Color>
+          <Color x:Key="ColorBgInputFocus">#F8FAFC</Color>
+          <Color x:Key="ColorCardInner">#F8FAFC</Color>
+          <Color x:Key="ColorBadgeBg">#E2E8F0</Color>
+          <Color x:Key="ColorSubtleBg">#F1F5F9</Color>
+          <Color x:Key="ColorDialogInner">#F8FAFC</Color>
+
+          <Color x:Key="ColorBorder">#CBD5E1</Color>
+          <Color x:Key="ColorBorderSubtle">#E2E8F0</Color>
+          <Color x:Key="ColorBorderHover">#94A3B8</Color>
+          <Color x:Key="ColorBorderHighlight">#2563EB</Color>
+
+          <!-- Semantic Accents -->
+          <Color x:Key="ColorPrimary">#2563EB</Color>
+          <Color x:Key="ColorPrimaryHover">#1D4ED8</Color>
+          <Color x:Key="ColorPrimaryActive">#1E40AF</Color>
+          <Color x:Key="ColorSuccess">#059669</Color>
+          <Color x:Key="ColorSuccessHover">#047857</Color>
+          <Color x:Key="ColorWarning">#D97706</Color>
+          <Color x:Key="ColorWarningHover">#B45309</Color>
+          <Color x:Key="ColorDanger">#DC2626</Color>
+          <Color x:Key="ColorDangerHover">#B91C1C</Color>
+          <Color x:Key="ColorDangerSurface">#FEF2F2</Color>
+          <Color x:Key="ColorDangerBorder">#FCA5A5</Color>
+          <Color x:Key="ColorDangerText">#B91C1C</Color>
+          <Color x:Key="ColorDangerTextMuted">#991B1B</Color>
+          <Color x:Key="ColorWarningSurface">#FFFBEB</Color>
+          <Color x:Key="ColorWarningBorder">#F59E0B</Color>
+          <Color x:Key="ColorWarningText">#92400E</Color>
+          <Color x:Key="ColorInfo">#0284C7</Color>
+          <Color x:Key="ColorPurple">#7C3AED</Color>
+          <Color x:Key="ColorIndigo">#4F46E5</Color>
+
+          <!-- Typography Colors -->
+          <Color x:Key="ColorTextPrimary">#0F172A</Color>
+          <Color x:Key="ColorTextSecondary">#475569</Color>
+          <Color x:Key="ColorTextMuted">#64748B</Color>
+          <Color x:Key="ColorTextFaint">#94A3B8</Color>
+
+          <!-- Solid Brushes -->
+          <SolidColorBrush x:Key="BrushBgDark" Color="{StaticResource ColorBgDark}" />
+          <SolidColorBrush x:Key="BrushBgSidebar" Color="{StaticResource ColorBgSidebar}" />
+          <SolidColorBrush x:Key="BrushBgCard" Color="{StaticResource ColorBgCard}" />
+          <SolidColorBrush x:Key="BrushBgCardHover" Color="{StaticResource ColorBgCardHover}" />
+          <SolidColorBrush x:Key="BrushBgElevated" Color="{StaticResource ColorBgElevated}" />
+          <SolidColorBrush x:Key="BrushBgInput" Color="{StaticResource ColorBgInput}" />
+          <SolidColorBrush x:Key="BrushBgInputFocus" Color="{StaticResource ColorBgInputFocus}" />
+          <SolidColorBrush x:Key="BrushCardInner" Color="{StaticResource ColorCardInner}" />
+          <SolidColorBrush x:Key="BrushBadgeBg" Color="{StaticResource ColorBadgeBg}" />
+          <SolidColorBrush x:Key="BrushSubtleBg" Color="{StaticResource ColorSubtleBg}" />
+          <SolidColorBrush x:Key="BrushDialogInner" Color="{StaticResource ColorDialogInner}" />
+
+          <SolidColorBrush x:Key="BrushBorder" Color="{StaticResource ColorBorder}" />
+          <SolidColorBrush x:Key="BrushBorderSubtle" Color="{StaticResource ColorBorderSubtle}" />
+          <SolidColorBrush x:Key="BrushBorderHover" Color="{StaticResource ColorBorderHover}" />
+          <SolidColorBrush x:Key="BrushBorderHighlight" Color="{StaticResource ColorBorderHighlight}" />
+
+          <SolidColorBrush x:Key="BrushPrimary" Color="{StaticResource ColorPrimary}" />
+          <SolidColorBrush x:Key="BrushPrimaryHover" Color="{StaticResource ColorPrimaryHover}" />
+          <SolidColorBrush x:Key="BrushSuccess" Color="{StaticResource ColorSuccess}" />
+          <SolidColorBrush x:Key="BrushWarning" Color="{StaticResource ColorWarning}" />
+          <SolidColorBrush x:Key="BrushWarningHover" Color="{StaticResource ColorWarningHover}" />
+          <SolidColorBrush x:Key="BrushDanger" Color="{StaticResource ColorDanger}" />
+          <SolidColorBrush x:Key="BrushDangerHover" Color="{StaticResource ColorDangerHover}" />
+          <SolidColorBrush x:Key="BrushDangerSurface" Color="{StaticResource ColorDangerSurface}" />
+          <SolidColorBrush x:Key="BrushDangerBorder" Color="{StaticResource ColorDangerBorder}" />
+          <SolidColorBrush x:Key="BrushDangerText" Color="{StaticResource ColorDangerText}" />
+          <SolidColorBrush x:Key="BrushDangerTextMuted" Color="{StaticResource ColorDangerTextMuted}" />
+          <SolidColorBrush x:Key="BrushWarningSurface" Color="{StaticResource ColorWarningSurface}" />
+          <SolidColorBrush x:Key="BrushWarningBorder" Color="{StaticResource ColorWarningBorder}" />
+          <SolidColorBrush x:Key="BrushWarningText" Color="{StaticResource ColorWarningText}" />
+          <SolidColorBrush x:Key="BrushInfo" Color="{StaticResource ColorInfo}" />
+          <SolidColorBrush x:Key="BrushPurple" Color="{StaticResource ColorPurple}" />
+          <SolidColorBrush x:Key="BrushIndigo" Color="{StaticResource ColorIndigo}" />
+
+          <SolidColorBrush x:Key="BrushTextPrimary" Color="{StaticResource ColorTextPrimary}" />
+          <SolidColorBrush x:Key="BrushTextSecondary" Color="{StaticResource ColorTextSecondary}" />
+          <SolidColorBrush x:Key="BrushTextMuted" Color="{StaticResource ColorTextMuted}" />
+          <SolidColorBrush x:Key="BrushTextFaint" Color="{StaticResource ColorTextFaint}" />
+
+          <!-- Gradients -->
+          <LinearGradientBrush x:Key="BrushSidebarGradient" StartPoint="0%,0%" EndPoint="0%,100%">
+            <GradientStop Offset="0" Color="#FFFFFF" />
+            <GradientStop Offset="1" Color="#F8FAFC" />
+          </LinearGradientBrush>
+
+          <LinearGradientBrush x:Key="BrushHeaderGradient" StartPoint="0%,0%" EndPoint="100%,0%">
+            <GradientStop Offset="0" Color="#FFFFFF" />
+            <GradientStop Offset="1" Color="#F1F5F9" />
+          </LinearGradientBrush>
+        </ResourceDictionary>
+      </ResourceDictionary.ThemeDictionaries>
+
+      <!-- Shared Gradients -->
       <LinearGradientBrush x:Key="BrushPrimaryGradient" StartPoint="0%,0%" EndPoint="100%,100%">
         <GradientStop Offset="0" Color="#3B82F6" />
         <GradientStop Offset="1" Color="#6366F1" />
@@ -100,16 +240,6 @@
         <GradientStop Offset="1" Color="#DC2626" />
       </LinearGradientBrush>
 
-      <LinearGradientBrush x:Key="BrushSidebarGradient" StartPoint="0%,0%" EndPoint="0%,100%">
-        <GradientStop Offset="0" Color="#0B101B" />
-        <GradientStop Offset="1" Color="#070A12" />
-      </LinearGradientBrush>
-
-      <LinearGradientBrush x:Key="BrushHeaderGradient" StartPoint="0%,0%" EndPoint="100%,0%">
-        <GradientStop Offset="0" Color="#101826" />
-        <GradientStop Offset="1" Color="#0B0F19" />
-      </LinearGradientBrush>
-
       <LinearGradientBrush x:Key="BrushCardGlowGradient" StartPoint="0%,0%" EndPoint="100%,100%">
         <GradientStop Offset="0" Color="#1E293B" />
         <GradientStop Offset="0.5" Color="#131C2E" />
@@ -124,33 +254,60 @@
     <!-- Window & Global Typography -->
     <Style Selector="Window">
       <Setter Property="FontFamily" Value="avares://Avalonia.Fonts.Inter/Assets#Inter, Microsoft YaHei, Segoe UI, sans-serif" />
-      <Setter Property="Background" Value="{StaticResource BrushBgDark}" />
-      <Setter Property="Foreground" Value="{StaticResource BrushTextPrimary}" />
+      <Setter Property="Background" Value="{DynamicResource BrushBgDark}" />
+      <Setter Property="Foreground" Value="{DynamicResource BrushTextPrimary}" />
       <Setter Property="FontSize" Value="13" />
     </Style>
 
     <!-- Base Card Styles -->
     <Style Selector="Border.card">
-      <Setter Property="Background" Value="{StaticResource BrushBgCard}" />
-      <Setter Property="BorderBrush" Value="{StaticResource BrushBorder}" />
+      <Setter Property="Background" Value="{DynamicResource BrushBgCard}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource BrushBorder}" />
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="CornerRadius" Value="12" />
-      <Setter Property="BoxShadow" Value="0 4 16 0 #28000000" />
+      <Setter Property="BoxShadow" Value="0 2 12 0 #18000000" />
     </Style>
 
     <Style Selector="Border.subtle-card">
-      <Setter Property="Background" Value="#0D1424" />
-      <Setter Property="BorderBrush" Value="{StaticResource BrushBorderSubtle}" />
+      <Setter Property="Background" Value="{DynamicResource BrushSubtleBg}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource BrushBorderSubtle}" />
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="CornerRadius" Value="10" />
     </Style>
 
+    <Style Selector="Border.danger-card">
+      <Setter Property="Background" Value="{DynamicResource BrushDangerSurface}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource BrushDangerBorder}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="8" />
+    </Style>
+
+    <Style Selector="Border.warning-card">
+      <Setter Property="Background" Value="{DynamicResource BrushWarningSurface}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource BrushWarningBorder}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="8" />
+    </Style>
+
+    <Style Selector="TextBlock.muted">
+      <Setter Property="Foreground" Value="{DynamicResource BrushTextSecondary}" />
+    </Style>
+    <Style Selector="TextBlock.danger-text">
+      <Setter Property="Foreground" Value="{DynamicResource BrushDangerText}" />
+    </Style>
+    <Style Selector="SelectableTextBlock.danger-text">
+      <Setter Property="Foreground" Value="{DynamicResource BrushDangerTextMuted}" />
+    </Style>
+    <Style Selector="TextBlock.warning-text">
+      <Setter Property="Foreground" Value="{DynamicResource BrushWarningText}" />
+    </Style>
+
     <Style Selector="Border.stat-card">
-      <Setter Property="Background" Value="{StaticResource BrushBgCard}" />
-      <Setter Property="BorderBrush" Value="{StaticResource BrushBorder}" />
+      <Setter Property="Background" Value="{DynamicResource BrushBgCard}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource BrushBorder}" />
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="CornerRadius" Value="12" />
-      <Setter Property="BoxShadow" Value="0 6 20 0 #33000000" />
+      <Setter Property="BoxShadow" Value="0 4 16 0 #20000000" />
       <Setter Property="Transitions">
         <Transitions>
           <BrushTransition Property="BorderBrush" Duration="0:0:0.18" />
@@ -159,13 +316,13 @@
       </Setter>
     </Style>
     <Style Selector="Border.stat-card:pointerover">
-      <Setter Property="BorderBrush" Value="{StaticResource BrushBorderHover}" />
-      <Setter Property="Background" Value="{StaticResource BrushBgCardHover}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource BrushBorderHover}" />
+      <Setter Property="Background" Value="{DynamicResource BrushBgCardHover}" />
     </Style>
 
     <Style Selector="Border.glass-card">
-      <Setter Property="Background" Value="#0F172ACC" />
-      <Setter Property="BorderBrush" Value="{StaticResource BrushBorder}" />
+      <Setter Property="Background" Value="{DynamicResource BrushBgCard}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource BrushBorder}" />
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="CornerRadius" Value="12" />
     </Style>
@@ -174,16 +331,16 @@
     <Style Selector="Border.pill">
       <Setter Property="CornerRadius" Value="16" />
       <Setter Property="Padding" Value="8,3" />
-      <Setter Property="Background" Value="#172554" />
-      <Setter Property="BorderBrush" Value="#1D4ED8" />
+      <Setter Property="Background" Value="{DynamicResource BrushBgElevated}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource BrushBorder}" />
       <Setter Property="BorderThickness" Value="1" />
     </Style>
 
     <Style Selector="Border.pill-neutral">
       <Setter Property="CornerRadius" Value="16" />
       <Setter Property="Padding" Value="8,3" />
-      <Setter Property="Background" Value="#1E293B" />
-      <Setter Property="BorderBrush" Value="{StaticResource BrushBorderSubtle}" />
+      <Setter Property="Background" Value="{DynamicResource BrushBgElevated}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource BrushBorderSubtle}" />
       <Setter Property="BorderThickness" Value="1" />
     </Style>
 
@@ -193,9 +350,9 @@
       <Setter Property="FontWeight" Value="Medium" />
       <Setter Property="Padding" Value="12,7" />
       <Setter Property="FontSize" Value="12" />
-      <Setter Property="Background" Value="{StaticResource BrushBgElevated}" />
-      <Setter Property="Foreground" Value="{StaticResource BrushTextPrimary}" />
-      <Setter Property="BorderBrush" Value="{StaticResource BrushBorder}" />
+      <Setter Property="Background" Value="{DynamicResource BrushBgElevated}" />
+      <Setter Property="Foreground" Value="{DynamicResource BrushTextPrimary}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource BrushBorder}" />
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="Cursor" Value="Hand" />
       <Setter Property="Transitions">
@@ -207,13 +364,13 @@
       </Setter>
     </Style>
     <Style Selector="Button:pointerover /template/ ContentPresenter#PART_ContentPresenter">
-      <Setter Property="Background" Value="{StaticResource BrushBgCardHover}" />
-      <Setter Property="BorderBrush" Value="{StaticResource BrushBorderHover}" />
-      <Setter Property="Foreground" Value="#FFFFFF" />
+      <Setter Property="Background" Value="{DynamicResource BrushBgCardHover}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource BrushBorderHover}" />
+      <Setter Property="Foreground" Value="{DynamicResource BrushTextPrimary}" />
     </Style>
     <Style Selector="Button:pressed /template/ ContentPresenter#PART_ContentPresenter">
-      <Setter Property="Background" Value="#152033" />
-      <Setter Property="BorderBrush" Value="{StaticResource BrushPrimary}" />
+      <Setter Property="Background" Value="{DynamicResource BrushBgInputFocus}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource BrushPrimary}" />
     </Style>
     <Style Selector="Button:disabled /template/ ContentPresenter#PART_ContentPresenter">
       <Setter Property="Opacity" Value="0.45" />
@@ -239,53 +396,53 @@
 
     <!-- Button Danger Variant -->
     <Style Selector="Button.danger">
-      <Setter Property="Background" Value="#2E1117" />
-      <Setter Property="Foreground" Value="#FCA5A5" />
-      <Setter Property="BorderBrush" Value="#7F1D1D" />
+      <Setter Property="Background" Value="{DynamicResource BrushDangerSurface}" />
+      <Setter Property="Foreground" Value="{DynamicResource BrushDangerText}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource BrushDangerBorder}" />
       <Setter Property="BorderThickness" Value="1" />
     </Style>
     <Style Selector="Button.danger:pointerover /template/ ContentPresenter#PART_ContentPresenter">
-      <Setter Property="Background" Value="#7F1D1D" />
+      <Setter Property="Background" Value="{DynamicResource BrushDangerHover}" />
       <Setter Property="Foreground" Value="#FFFFFF" />
-      <Setter Property="BorderBrush" Value="#991B1B" />
+      <Setter Property="BorderBrush" Value="{DynamicResource BrushDangerHover}" />
     </Style>
 
     <!-- Button Warning Variant -->
     <Style Selector="Button.warn">
-      <Setter Property="Background" Value="#31200D" />
-      <Setter Property="Foreground" Value="#FCD34D" />
-      <Setter Property="BorderBrush" Value="#78350F" />
+      <Setter Property="Background" Value="{DynamicResource BrushWarningSurface}" />
+      <Setter Property="Foreground" Value="{DynamicResource BrushWarningText}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource BrushWarningBorder}" />
       <Setter Property="BorderThickness" Value="1" />
     </Style>
     <Style Selector="Button.warn:pointerover /template/ ContentPresenter#PART_ContentPresenter">
-      <Setter Property="Background" Value="#78350F" />
+      <Setter Property="Background" Value="{DynamicResource BrushWarningHover}" />
       <Setter Property="Foreground" Value="#FFFFFF" />
-      <Setter Property="BorderBrush" Value="#92400E" />
+      <Setter Property="BorderBrush" Value="{DynamicResource BrushWarningHover}" />
     </Style>
 
     <!-- Button Ghost Variant -->
     <Style Selector="Button.ghost">
       <Setter Property="Background" Value="Transparent" />
       <Setter Property="BorderThickness" Value="0" />
-      <Setter Property="Foreground" Value="{StaticResource BrushTextSecondary}" />
+      <Setter Property="Foreground" Value="{DynamicResource BrushTextSecondary}" />
     </Style>
     <Style Selector="Button.ghost:pointerover /template/ ContentPresenter#PART_ContentPresenter">
-      <Setter Property="Background" Value="#1E293B" />
-      <Setter Property="Foreground" Value="#FFFFFF" />
+      <Setter Property="Background" Value="{DynamicResource BrushBgElevated}" />
+      <Setter Property="Foreground" Value="{DynamicResource BrushTextPrimary}" />
     </Style>
 
     <!-- Button Subtle / Compact Action Variant -->
     <Style Selector="Button.subtle">
-      <Setter Property="Background" Value="#0F172A" />
-      <Setter Property="BorderBrush" Value="{StaticResource BrushBorderSubtle}" />
-      <Setter Property="Foreground" Value="{StaticResource BrushTextSecondary}" />
+      <Setter Property="Background" Value="{DynamicResource BrushBgElevated}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource BrushBorderSubtle}" />
+      <Setter Property="Foreground" Value="{DynamicResource BrushTextSecondary}" />
       <Setter Property="Padding" Value="9,5" />
       <Setter Property="FontSize" Value="11" />
     </Style>
     <Style Selector="Button.subtle:pointerover /template/ ContentPresenter#PART_ContentPresenter">
-      <Setter Property="Background" Value="{StaticResource BrushBgElevated}" />
-      <Setter Property="BorderBrush" Value="{StaticResource BrushBorderHover}" />
-      <Setter Property="Foreground" Value="{StaticResource BrushTextPrimary}" />
+      <Setter Property="Background" Value="{DynamicResource BrushBgCardHover}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource BrushBorderHover}" />
+      <Setter Property="Foreground" Value="{DynamicResource BrushTextPrimary}" />
     </Style>
 
     <!-- Button Icon Only Variant -->
@@ -294,71 +451,101 @@
       <Setter Property="CornerRadius" Value="6" />
       <Setter Property="Background" Value="Transparent" />
       <Setter Property="BorderThickness" Value="0" />
-      <Setter Property="Foreground" Value="{StaticResource BrushTextSecondary}" />
+      <Setter Property="Foreground" Value="{DynamicResource BrushTextSecondary}" />
     </Style>
     <Style Selector="Button.icon-btn:pointerover /template/ ContentPresenter#PART_ContentPresenter">
-      <Setter Property="Background" Value="{StaticResource BrushBgElevated}" />
-      <Setter Property="Foreground" Value="#FFFFFF" />
+      <Setter Property="Background" Value="{DynamicResource BrushBgElevated}" />
+      <Setter Property="Foreground" Value="{DynamicResource BrushTextPrimary}" />
     </Style>
 
     <!-- TextBox -->
     <Style Selector="TextBox">
       <Setter Property="CornerRadius" Value="8" />
-      <Setter Property="Background" Value="{StaticResource BrushBgInput}" />
-      <Setter Property="Foreground" Value="{StaticResource BrushTextPrimary}" />
-      <Setter Property="BorderBrush" Value="{StaticResource BrushBorder}" />
+      <Setter Property="Background" Value="{DynamicResource BrushBgInput}" />
+      <Setter Property="Foreground" Value="{DynamicResource BrushTextPrimary}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource BrushBorder}" />
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="Padding" Value="10,7" />
       <Setter Property="FontSize" Value="12" />
-      <Setter Property="SelectionBrush" Value="{StaticResource BrushPrimary}" />
-      <Setter Property="CaretBrush" Value="{StaticResource BrushPrimary}" />
+      <Setter Property="SelectionBrush" Value="{DynamicResource BrushPrimary}" />
+      <Setter Property="CaretBrush" Value="{DynamicResource BrushPrimary}" />
     </Style>
     <Style Selector="TextBox:focus /template/ Border#PART_BorderElement">
-      <Setter Property="BorderBrush" Value="{StaticResource BrushPrimary}" />
-      <Setter Property="Background" Value="{StaticResource BrushBgInputFocus}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource BrushPrimary}" />
+      <Setter Property="Background" Value="{DynamicResource BrushBgInputFocus}" />
     </Style>
     <Style Selector="TextBox:pointerover /template/ Border#PART_BorderElement">
-      <Setter Property="BorderBrush" Value="{StaticResource BrushBorderHover}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource BrushBorderHover}" />
     </Style>
 
     <!-- ComboBox -->
     <Style Selector="ComboBox">
       <Setter Property="CornerRadius" Value="8" />
-      <Setter Property="Background" Value="{StaticResource BrushBgInput}" />
-      <Setter Property="Foreground" Value="{StaticResource BrushTextPrimary}" />
-      <Setter Property="BorderBrush" Value="{StaticResource BrushBorder}" />
+      <Setter Property="Background" Value="{DynamicResource BrushBgInput}" />
+      <Setter Property="Foreground" Value="{DynamicResource BrushTextPrimary}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource BrushBorder}" />
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="Padding" Value="10,7" />
       <Setter Property="FontSize" Value="12" />
     </Style>
     <Style Selector="ComboBox:pointerover /template/ Border#Background">
-      <Setter Property="BorderBrush" Value="{StaticResource BrushBorderHover}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource BrushBorderHover}" />
     </Style>
     <Style Selector="ComboBox:focus /template/ Border#Background">
-      <Setter Property="BorderBrush" Value="{StaticResource BrushPrimary}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource BrushPrimary}" />
     </Style>
     <Style Selector="ComboBoxItem">
       <Setter Property="Padding" Value="10,8" />
       <Setter Property="CornerRadius" Value="6" />
       <Setter Property="Margin" Value="4,2" />
+      <Setter Property="Foreground" Value="{DynamicResource BrushTextPrimary}" />
     </Style>
     <Style Selector="ComboBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
-      <Setter Property="Background" Value="#172554" />
-      <Setter Property="Foreground" Value="#93C5FD" />
+      <Setter Property="Background" Value="{DynamicResource BrushBgElevated}" />
+      <Setter Property="Foreground" Value="{DynamicResource BrushPrimary}" />
+    </Style>
+
+    <!-- AutoCompleteBox -->
+    <Style Selector="AutoCompleteBox">
+      <Setter Property="CornerRadius" Value="8" />
+      <Setter Property="Background" Value="{DynamicResource BrushBgInput}" />
+      <Setter Property="Foreground" Value="{DynamicResource BrushTextPrimary}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource BrushBorder}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="Padding" Value="8,5" />
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="MinimumPrefixLength" Value="0" />
+    </Style>
+    <Style Selector="AutoCompleteBox /template/ TextBox#PART_TextBox">
+      <Setter Property="CornerRadius" Value="8" />
+      <Setter Property="Background" Value="{DynamicResource BrushBgInput}" />
+      <Setter Property="Foreground" Value="{DynamicResource BrushTextPrimary}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource BrushBorder}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="Padding" Value="8,5" />
+      <Setter Property="FontSize" Value="12" />
     </Style>
 
     <!-- NumericUpDown -->
     <Style Selector="NumericUpDown">
       <Setter Property="CornerRadius" Value="8" />
-      <Setter Property="Background" Value="{StaticResource BrushBgInput}" />
-      <Setter Property="Foreground" Value="{StaticResource BrushTextPrimary}" />
-      <Setter Property="BorderBrush" Value="{StaticResource BrushBorder}" />
+      <Setter Property="Background" Value="{DynamicResource BrushBgInput}" />
+      <Setter Property="Foreground" Value="{DynamicResource BrushTextPrimary}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource BrushBorder}" />
       <Setter Property="BorderThickness" Value="1" />
-      <Setter Property="Padding" Value="8,5" />
+      <Setter Property="Padding" Value="4,2" />
       <Setter Property="FontSize" Value="12" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+    <Style Selector="NumericUpDown /template/ TextBox#PART_TextBox">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Padding" Value="4,2" />
+      <Setter Property="Foreground" Value="{DynamicResource BrushTextPrimary}" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
     </Style>
     <Style Selector="NumericUpDown:focus /template/ TextBox#PART_TextBox">
-      <Setter Property="BorderBrush" Value="{StaticResource BrushPrimary}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource BrushPrimary}" />
     </Style>
 
     <!-- ListBox -->
@@ -372,6 +559,7 @@
       <Setter Property="Padding" Value="6" />
       <Setter Property="Margin" Value="0,2" />
       <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="Foreground" Value="{DynamicResource BrushTextPrimary}" />
       <Setter Property="Transitions">
         <Transitions>
           <BrushTransition Property="Background" Duration="0:0:0.15" />
@@ -379,41 +567,41 @@
       </Setter>
     </Style>
     <Style Selector="ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
-      <Setter Property="Background" Value="#172554" />
+      <Setter Property="Background" Value="{DynamicResource BrushBgElevated}" />
     </Style>
     <Style Selector="ListBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
-      <Setter Property="Background" Value="#121D30" />
+      <Setter Property="Background" Value="{DynamicResource BrushBgCardHover}" />
     </Style>
 
     <!-- ProgressBar -->
     <Style Selector="ProgressBar">
       <Setter Property="CornerRadius" Value="4" />
-      <Setter Property="Background" Value="#1E293B" />
+      <Setter Property="Background" Value="{DynamicResource BrushBgElevated}" />
       <Setter Property="Foreground" Value="{StaticResource BrushPrimaryGradient}" />
     </Style>
 
     <!-- CheckBox -->
     <Style Selector="CheckBox">
-      <Setter Property="Foreground" Value="{StaticResource BrushTextPrimary}" />
+      <Setter Property="Foreground" Value="{DynamicResource BrushTextPrimary}" />
       <Setter Property="FontSize" Value="12" />
       <Setter Property="Cursor" Value="Hand" />
     </Style>
 
     <!-- ToggleSwitch -->
     <Style Selector="ToggleSwitch">
-      <Setter Property="Foreground" Value="{StaticResource BrushTextPrimary}" />
+      <Setter Property="Foreground" Value="{DynamicResource BrushTextPrimary}" />
       <Setter Property="Cursor" Value="Hand" />
     </Style>
 
     <!-- ToolTip Styling -->
     <Style Selector="ToolTip">
-      <Setter Property="Background" Value="#0F172A" />
-      <Setter Property="BorderBrush" Value="{StaticResource BrushBorder}" />
+      <Setter Property="Background" Value="{DynamicResource BrushBgCard}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource BrushBorder}" />
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="CornerRadius" Value="8" />
       <Setter Property="Padding" Value="10,6" />
       <Setter Property="FontSize" Value="11" />
-      <Setter Property="Foreground" Value="{StaticResource BrushTextPrimary}" />
+      <Setter Property="Foreground" Value="{DynamicResource BrushTextPrimary}" />
     </Style>
 
     <!-- ScrollBar Slim Modern Design -->
@@ -421,8 +609,7 @@
       <Setter Property="AllowAutoHide" Value="True" />
     </Style>
 
-    <!-- Stroke-based vector icon style. The shared geometries use Lucide-style
-         center lines, so they must be stroked instead of filled by PathIcon. -->
+    <!-- Stroke-based vector icon style -->
     <Style Selector="Path.vector-icon">
       <Setter Property="Fill" Value="Transparent" />
       <Setter Property="StrokeThickness" Value="2" />

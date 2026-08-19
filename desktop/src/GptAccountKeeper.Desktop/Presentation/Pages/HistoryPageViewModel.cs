@@ -29,6 +29,7 @@ internal sealed class HistoryPageViewModel : PageViewModel
     private HistoryAccountDto? _selectedAccount;
     private HistoryEntryDto? _selectedEntry;
     private HistoryResultFilterOption _resultFilter = HistoryResultFilterOption.All[0];
+    private string _accountSearch = string.Empty;
     private string _search = string.Empty;
     private HistoryEntryDto[] _allEntries = [];
     private string _summary = "选择左侧账号查看运行历史";
@@ -44,6 +45,8 @@ internal sealed class HistoryPageViewModel : PageViewModel
     }
 
     public ObservableCollection<HistoryAccountDto> Accounts { get; } = [];
+
+    public ObservableCollection<HistoryAccountDto> FilteredAccounts { get; } = [];
 
     public ObservableCollection<HistoryEntryDto> Entries { get; } = [];
 
@@ -81,6 +84,23 @@ internal sealed class HistoryPageViewModel : PageViewModel
     public bool HasSelectedAccount => SelectedAccount is not null;
 
     public bool HasHistoryAccounts => Accounts.Count > 0;
+
+    public bool HasFilteredAccounts => FilteredAccounts.Count > 0;
+
+    public string AccountEmptyTitle => HasHistoryAccounts ? "暂无匹配账号" : "暂无运行历史";
+
+    public string AccountEmptyText => HasHistoryAccounts
+        ? "没有符合当前搜索条件的运行历史记录。"
+        : "账号完成一次自动对话后会出现在这里。";
+
+    public string AccountSearch
+    {
+        get => _accountSearch;
+        set
+        {
+            if (SetProperty(ref _accountSearch, value)) ApplyAccountFilter();
+        }
+    }
 
     public HistoryEntryDto? SelectedEntry
     {
@@ -129,31 +149,77 @@ internal sealed class HistoryPageViewModel : PageViewModel
 
     public void ApplyAccounts(IReadOnlyList<HistoryAccountDto> accounts)
     {
-        var selectedId = SelectedAccount?.AccountId;
         CollectionSync.Apply(
             Accounts,
             accounts,
             account => account.AccountId,
             static (left, right) => left.EntryCount == right.EntryCount
                 && left.LastAt == right.LastAt
-                && left.Deleted == right.Deleted);
-        var restored = Accounts.FirstOrDefault(account => account.AccountId == selectedId);
-        if (restored is not null && !ReferenceEquals(restored, SelectedAccount))
+                && left.LastOk == right.LastOk
+                && left.Deleted == right.Deleted
+                && left.Note == right.Note
+                && left.Email == right.Email
+                && left.GptName == right.GptName);
+
+        ApplyAccountFilter();
+        OnPropertyChanged(nameof(HasHistoryAccounts));
+        OnPropertyChanged(nameof(AccountEmptyTitle));
+        OnPropertyChanged(nameof(AccountEmptyText));
+    }
+
+    private void ApplyAccountFilter()
+    {
+        var query = AccountSearch.Trim();
+        var filtered = Accounts.Where(account =>
         {
-            _selectedAccount = restored;
-            OnPropertyChanged(nameof(SelectedAccount));
+            if (query.Length == 0) return true;
+            return Contains(account.DisplayName, query)
+                || Contains(account.Email, query)
+                || Contains(account.GptName, query)
+                || Contains(account.Note, query)
+                || Contains(account.AccountId, query);
+        }).ToList();
+
+        var selectedId = SelectedAccount?.AccountId;
+        CollectionSync.Apply(
+            FilteredAccounts,
+            filtered,
+            account => account.AccountId,
+            static (left, right) => left.EntryCount == right.EntryCount
+                && left.LastAt == right.LastAt
+                && left.LastOk == right.LastOk
+                && left.Deleted == right.Deleted
+                && left.Note == right.Note
+                && left.Email == right.Email
+                && left.GptName == right.GptName);
+
+        var restored = FilteredAccounts.FirstOrDefault(account => account.AccountId == selectedId);
+        if (selectedId is not null && restored is null && FilteredAccounts.Count > 0)
+        {
+            SelectedAccount = FilteredAccounts[0];
         }
         else if (selectedId is not null && restored is null)
         {
             SelectedAccount = null;
         }
-        OnPropertyChanged(nameof(HasHistoryAccounts));
+        else if (restored is not null && !ReferenceEquals(restored, SelectedAccount))
+        {
+            _selectedAccount = restored;
+            OnPropertyChanged(nameof(SelectedAccount));
+        }
+        else if (SelectedAccount is null && FilteredAccounts.Count > 0)
+        {
+            SelectedAccount = FilteredAccounts[0];
+        }
+        OnPropertyChanged(nameof(HasFilteredAccounts));
     }
 
     /// <summary>从账号页跳转过来：定位到该账号并载入。</summary>
     public async Task ShowAccountAsync(string accountId)
     {
-        var target = Accounts.FirstOrDefault(account => account.AccountId == accountId);
+        AccountSearch = string.Empty;
+        var target = FilteredAccounts.FirstOrDefault(account => account.AccountId == accountId)
+            ?? Accounts.FirstOrDefault(account => account.AccountId == accountId);
         if (target is null)
         {
             _session.Toasts.Info("该账号还没有运行记录");
@@ -235,10 +301,12 @@ internal sealed class HistoryPageViewModel : PageViewModel
         CollectionSync.Apply(Entries, filtered, KeyOf);
         var restored = Entries.FirstOrDefault(entry => KeyOf(entry) == selectedKey);
         SelectedEntry = restored ?? Entries.FirstOrDefault();
-        Summary = _allEntries.Length == 0
-            ? "该账号还没有运行记录"
-            : $"最近 {_allEntries.Length} 条 · 成功 {_allEntries.Count(entry => entry.Ok == true)} 条 · "
-                + $"失败 {_allEntries.Count(entry => entry.Ok != true)} 条 · 显示 {Entries.Count} 条";
+        Summary = SelectedAccount is null
+            ? "选择左侧账号查看运行历史"
+            : _allEntries.Length == 0
+                ? "该账号还没有运行记录"
+                : $"最近 {_allEntries.Length} 条 · 成功 {_allEntries.Count(entry => entry.Ok == true)} 条 · "
+                    + $"失败 {_allEntries.Count(entry => entry.Ok != true)} 条 · 显示 {Entries.Count} 条";
         OnPropertyChanged(nameof(IsEmpty));
         OnPropertyChanged(nameof(EmptyText));
     }

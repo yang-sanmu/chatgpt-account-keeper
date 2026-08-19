@@ -12,7 +12,7 @@
     <Copyright>Copyright © 2026 yang-sanmu</Copyright>
     <PackageLicenseExpression>AGPL-3.0-only</PackageLicenseExpression>
     <RepositoryUrl>https://github.com/yang-sanmu/chatgpt-account-keeper</RepositoryUrl>
-    <Version>0.1.6</Version>
+    <Version>0.1.7</Version>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     <PublishAot>true</PublishAot>
     <SelfContained>true</SelfContained>

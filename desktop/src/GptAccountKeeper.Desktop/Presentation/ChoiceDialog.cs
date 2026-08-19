@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
+using GptAccountKeeper.Desktop.Infrastructure.Updates;
 using GptAccountKeeper.Desktop.Models;
 
 namespace GptAccountKeeper.Desktop.Presentation;
@@ -33,11 +34,15 @@ internal enum UpdateChoice
 /// </summary>
 internal sealed class UpdateAvailableDialog : Window
 {
-    public UpdateAvailableDialog(string version, string currentVersion, bool alreadyDownloaded)
+    public UpdateAvailableDialog(
+        string version,
+        string currentVersion,
+        bool alreadyDownloaded,
+        string summary)
     {
         Title = "发现新版本";
-        Width = 520;
-        Height = 290;
+        Width = 680;
+        Height = 620;
         CanResize = false;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         Background = Palette.BgDark;
@@ -79,6 +84,33 @@ internal sealed class UpdateAvailableDialog : Window
                     },
                     new TextBlock
                     {
+                        Text = "本次更新摘要",
+                        FontWeight = FontWeight.SemiBold,
+                        Foreground = Palette.TextPrimary,
+                        FontSize = 13,
+                    },
+                    new Border
+                    {
+                        Padding = new Thickness(12, 10),
+                        CornerRadius = new CornerRadius(8),
+                        Background = Brush.Parse("#0A101D"),
+                        BorderBrush = Brush.Parse("#1E2D4A"),
+                        BorderThickness = new Thickness(1),
+                        Child = new ScrollViewer
+                        {
+                            MaxHeight = 180,
+                            Content = new SelectableTextBlock
+                            {
+                                Text = UpdateReleaseNotes.Normalize(summary),
+                                TextWrapping = TextWrapping.Wrap,
+                                Foreground = Palette.TextSecondary,
+                                FontSize = 12,
+                                LineHeight = 18,
+                            },
+                        },
+                    },
+                    new TextBlock
+                    {
                         Text = alreadyDownloaded
                             ? "更新包已下载完成。安装前 Agent 会先安全排空：仍有 Chrome 窗口或运行中的任务时会拒绝安装，不会强杀任务。"
                             : "选择“立即更新”会下载更新包，并在 Agent 安全排空后安装重启：仍有 Chrome 窗口或运行中的任务时会拒绝安装，不会强杀任务。",
@@ -97,6 +129,7 @@ internal sealed class UpdateAvailableDialog : Window
                     },
                     new StackPanel
                     {
+                        Margin = new Thickness(0, 2, 0, 0),
                         Orientation = Orientation.Horizontal,
                         HorizontalAlignment = HorizontalAlignment.Right,
                         Spacing = 8,
@@ -269,6 +302,44 @@ internal sealed class MigrationPreviewDialog : Window
             warnings.Add("旧项目存在未完成的 Profile 删除暂存，本次迁移不会把暂存残留当作活动 Profile。旧目录不会被删除。");
         }
 
+        var header = new StackPanel
+        {
+            Spacing = 6,
+            Children =
+            {
+                new TextBlock
+                {
+                    Text = "旧项目扫描完成",
+                    FontSize = 20,
+                    LineHeight = 28,
+                    FontWeight = FontWeight.Bold,
+                    Foreground = Palette.TextPrimary,
+                },
+                new TextBlock
+                {
+                    Text = preview.SourceRoot,
+                    Margin = new Thickness(0, 8, 0, 0),
+                    TextWrapping = TextWrapping.Wrap,
+                    Foreground = Palette.TextSecondary,
+                    FontSize = 12,
+                    LineHeight = 18,
+                },
+            },
+        };
+        Grid.SetRow(header, 0);
+
+        var details = BuildDetails(counts, preview, space, warnings, import);
+        Grid.SetRow(details, 1);
+
+        var footer = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Spacing = 9,
+            Children = { cancel, import },
+        };
+        Grid.SetRow(footer, 2);
+
         Content = new Border
         {
             Classes = { "card" },
@@ -279,36 +350,9 @@ internal sealed class MigrationPreviewDialog : Window
                 RowDefinitions = new RowDefinitions("Auto,*,Auto"),
                 Children =
                 {
-                    new StackPanel
-                    {
-                        Spacing = 6,
-                        Children =
-                        {
-                            new TextBlock
-                            {
-                                Text = "旧项目扫描完成",
-                                FontSize = 20,
-                                FontWeight = FontWeight.Bold,
-                                Foreground = Palette.TextPrimary,
-                            },
-                            new TextBlock
-                            {
-                                Text = preview.SourceRoot,
-                                TextWrapping = TextWrapping.Wrap,
-                                Foreground = Palette.TextSecondary,
-                                FontSize = 12,
-                            },
-                        },
-                    },
-                    BuildDetails(counts, preview, space, warnings, import),
-                    new StackPanel
-                    {
-                        [Grid.RowProperty] = 2,
-                        Orientation = Orientation.Horizontal,
-                        HorizontalAlignment = HorizontalAlignment.Right,
-                        Spacing = 9,
-                        Children = { cancel, import },
-                    },
+                    header,
+                    details,
+                    footer,
                 },
             },
         };
@@ -323,8 +367,7 @@ internal sealed class MigrationPreviewDialog : Window
     {
         var panel = new StackPanel
         {
-            [Grid.RowProperty] = 1,
-            Margin = new Thickness(0, 16, 0, 16),
+            Margin = new Thickness(0, 20, 0, 16),
             Spacing = 8,
             Children =
             {

@@ -17,7 +17,11 @@ param(
 
     [string] $Ref = 'main',
 
-    [string] $CandidateOutputDirectory
+    [string] $CandidateOutputDirectory,
+
+    # Required when Candidate/Release starts a build. The Markdown is embedded
+    # in every VeloPack feed and shown in the desktop update prompt.
+    [string] $ReleaseNotesFile
 )
 
 Set-StrictMode -Version Latest
@@ -27,6 +31,26 @@ $workflow = 'windows-release.yml'
 $tag = "v$Version"
 $script:ReplaceExistingDraft = $false
 $repositoryRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+$releaseNotes = ''
+
+function Read-ReleaseNotes {
+    if ([string]::IsNullOrWhiteSpace($ReleaseNotesFile)) {
+        throw '-ReleaseNotesFile is required with -Mode Candidate or -Mode Release.'
+    }
+
+    $resolvedPath = [System.IO.Path]::GetFullPath($ReleaseNotesFile)
+    if (-not (Test-Path -LiteralPath $resolvedPath -PathType Leaf)) {
+        throw "Release notes file does not exist: $resolvedPath"
+    }
+
+    $notes = [System.IO.File]::ReadAllText($resolvedPath)
+    $notes = $notes.Replace("`r`n", "`n").Replace("`r", "`n").Trim()
+    if ([string]::IsNullOrWhiteSpace($notes)) {
+        throw "Release notes file is empty: $resolvedPath"
+    }
+
+    return $notes
+}
 
 function Resolve-GitHubCli {
     $command = Get-Command gh.exe -ErrorAction SilentlyContinue
@@ -175,6 +199,7 @@ function Invoke-ReleaseWorkflow {
         '--repo', $Repository,
         '--ref', $Ref,
         '--raw-field', "version=$Version",
+        '--raw-field', "release_notes=$releaseNotes",
         '--raw-field', "publish_draft=$($PublishDraft.ToString().ToLowerInvariant())",
         '--raw-field', "n_minus_one_verified=$($Verified.ToString().ToLowerInvariant())"
     )
@@ -416,10 +441,11 @@ try {
         return
     }
 
-if ($Mode -eq 'UploadDraft') {
+    if ($Mode -eq 'UploadDraft') {
         throw 'UploadDraft is no longer supported: a Windows-only local build cannot satisfy the four-platform release gate. Use -Mode Release.'
     }
 
+    $releaseNotes = Read-ReleaseNotes
     Assert-ReleaseSourceReady -GitHubCli $githubCli
 
     if ($Mode -eq 'Candidate') {

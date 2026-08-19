@@ -10,6 +10,10 @@ on:
         description: SemVer without the v prefix
         required: true
         type: string
+      release_notes:
+        description: Markdown update summary embedded in every VeloPack channel and shown by the desktop update prompt
+        required: true
+        type: string
       publish_draft:
         description: Upload to a GitHub draft Release (leave false to keep the build as a workflow artifact only)
         required: true
@@ -116,6 +120,11 @@ jobs:
       - name: Install pinned VeloPack CLI
         run: dotnet tool install --global vpk --version 1.2.0
 
+      - name: Prepare user-facing release notes
+        env:
+          GAK_RELEASE_NOTES: ${{ inputs.release_notes }}
+        run: node scripts/write-release-notes.mjs artifacts/release-notes.md
+
       - name: Download previous release for delta generation
         continue-on-error: true
         run: >-
@@ -143,6 +152,7 @@ jobs:
             --packVersion ${{ steps.version.outputs.version }} `
             --packTitle 'ChatGPT Account Keeper' `
             --packAuthors 'yang-sanmu' `
+            --releaseNotes artifacts/release-notes.md `
             --packDir artifacts/stage `
             --mainExe GptAccountKeeper.Desktop.exe `
             --icon desktop/src/GptAccountKeeper.Desktop/app-icon.ico `
@@ -158,6 +168,7 @@ jobs:
           --packVersion ${{ steps.version.outputs.version }}
           --packTitle "ChatGPT Account Keeper"
           --packAuthors "yang-sanmu"
+          --releaseNotes artifacts/release-notes.md
           --packDir artifacts/stage
           --mainExe GptAccountKeeper.Desktop.exe
           --icon desktop/src/GptAccountKeeper.Desktop/app-icon.ico
@@ -346,6 +357,11 @@ jobs:
       - name: Install pinned VeloPack CLI
         run: dotnet tool install --global vpk --version 1.2.0
 
+      - name: Prepare user-facing release notes
+        env:
+          GAK_RELEASE_NOTES: ${{ inputs.release_notes }}
+        run: node scripts/write-release-notes.mjs artifacts/release-notes.md
+
       - name: Download previous architecture release for deltas
         continue-on-error: true
         run: >-
@@ -410,6 +426,7 @@ jobs:
             --packVersion '${{ steps.version.outputs.version }}' \
             --packTitle 'ChatGPT Account Keeper' \
             --packAuthors 'yang-sanmu' \
+            --releaseNotes artifacts/release-notes.md \
             --packDir artifacts/stage \
             --mainExe GptAccountKeeper.Desktop \
             --icon desktop/src/GptAccountKeeper.Desktop/app-icon.icns \
@@ -432,6 +449,7 @@ jobs:
             --packVersion '${{ steps.version.outputs.version }}' \
             --packTitle 'ChatGPT Account Keeper' \
             --packAuthors 'yang-sanmu' \
+            --releaseNotes artifacts/release-notes.md \
             --packDir artifacts/stage \
             --mainExe GptAccountKeeper.Desktop \
             --icon desktop/src/GptAccountKeeper.Desktop/app-icon.icns \
@@ -613,6 +631,11 @@ jobs:
       - name: Install pinned VeloPack CLI
         run: dotnet tool install --global vpk --version 1.2.0
 
+      - name: Prepare user-facing release notes
+        env:
+          GAK_RELEASE_NOTES: ${{ inputs.release_notes }}
+        run: node scripts/write-release-notes.mjs artifacts/release-notes.md
+
       - name: Download previous Linux release for deltas
         continue-on-error: true
         run: >-
@@ -629,6 +652,7 @@ jobs:
           --packVersion '${{ steps.version.outputs.version }}'
           --packTitle 'ChatGPT Account Keeper'
           --packAuthors 'yang-sanmu'
+          --releaseNotes artifacts/release-notes.md
           --packDir artifacts/stage
           --mainExe GptAccountKeeper.Desktop
           --icon desktop/src/GptAccountKeeper.Desktop/icons/hicolor/512x512/apps/gpt-account-keeper.png
@@ -834,6 +858,7 @@ jobs:
         if: inputs.publish_draft == true && inputs.n_minus_one_verified == true
         env:
           GH_TOKEN: ${{ github.token }}
+          GAK_RELEASE_NOTES: ${{ inputs.release_notes }}
         shell: bash
         run: |
           set -euo pipefail
@@ -844,12 +869,14 @@ jobs:
           fi
           mapfile -d '' assets < <(find artifacts/release -maxdepth 1 -type f -print0 | sort -z)
           test "${#assets[@]}" -gt 0
+          node scripts/write-release-notes.mjs artifacts/github-release-notes.md
+          printf '\nWindows x64, Linux x64, macOS Apple Silicon and macOS Intel release candidate.\n' >> artifacts/github-release-notes.md
           gh release create "$tag" "${assets[@]}" \
             --repo '${{ github.repository }}' \
             --target '${{ github.sha }}' \
             --draft \
             --title 'ChatGPT Account Keeper ${{ inputs.version }}' \
-            --notes 'Windows x64, Linux x64, macOS Apple Silicon and macOS Intel release candidate.'
+            --notes-file artifacts/github-release-notes.md
 
       - name: Report why draft publication was withheld
         if: inputs.publish_draft != true || inputs.n_minus_one_verified != true

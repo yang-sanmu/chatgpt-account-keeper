@@ -15,7 +15,7 @@ gh auth login
 
 ## 完整流程
 
-以发布 `0.1.5` 为例。四条命令里的版本号必须一致。
+以发布 `0.1.5` 为例。四条命令里的版本号必须一致；候选和正式构建还必须使用同一份 Markdown 更新摘要，该摘要会同时显示在客户端更新弹窗和 GitHub Release 中。
 
 ### 1. 改版本号并推送
 
@@ -37,8 +37,10 @@ git push origin main
 
 ### 2. 构建候选包
 
+先创建 `release-notes-0.1.5.md`，只写面向用户的本次变更，例如修复、改进和必要的升级提醒。文件不能为空。
+
 ```powershell
-.\scripts\publish-windows-release.ps1 -Version 0.1.5 -Mode Candidate
+.\scripts\publish-windows-release.ps1 -Version 0.1.5 -Mode Candidate -ReleaseNotesFile .\release-notes-0.1.5.md
 ```
 
 触发四个平台 job 并实时跟踪日志，跑完才返回。成功后汇总产物平铺下载到 `artifacts\candidate-0.1.5\`，包括安装包、四个 VeloPack 更新通道、签名、SBOM、源码归档和校验和。
@@ -54,7 +56,7 @@ git push origin main
 ### 4. 创建 Draft Release
 
 ```powershell
-.\scripts\publish-windows-release.ps1 -Version 0.1.5 -Mode Release -NMinusOneVerified
+.\scripts\publish-windows-release.ps1 -Version 0.1.5 -Mode Release -NMinusOneVerified -ReleaseNotesFile .\release-notes-0.1.5.md
 ```
 
 `-NMinusOneVerified` 是强制的，不带这个开关脚本会拒绝执行 —— 它的作用就是挡住跳过第 3 步。
@@ -107,6 +109,7 @@ gh workflow run publish-existing-candidate.yml `
 - **先干跑**：任何阶段都可以加 `-WhatIf`，只验证状态并显示将执行的操作，不实际执行。
 - **同一版本号只能发一次**：脚本会检查 tag 和 Release 都不存在。重发必须换版本号。
 - **候选目录不能已存在**：重跑第 2 步前先删 `artifacts\candidate-<版本>\`，或用 `-CandidateOutputDirectory` 指定别处。
+- **更新摘要必须一致**：Candidate 和 Release 都通过 `-ReleaseNotesFile` 传入非空 Markdown；正式构建不要临时换另一份内容。
 - **不需要手动 push tag**：tag 由第 4 步自动创建。工作流只接受手动触发（`workflow_dispatch`），推 tag 不会触发构建。
 - **仓库不是默认的**：加 `-Repository <owner>/<repo>`。
 

@@ -1001,6 +1001,19 @@ public sealed class DesktopUsabilityTests
         await Task.CompletedTask;
     }
 
+    [Fact]
+    public void UpdateReleaseNotesAlwaysProvideAVisibleSummary()
+    {
+        Assert.Equal(UpdateReleaseNotes.MissingSummary, UpdateReleaseNotes.Normalize("  \r\n "));
+        Assert.Equal(
+            "# 1.4.0\n\n- 修复更新体验",
+            UpdateReleaseNotes.Normalize("  # 1.4.0\r\n\r\n- 修复更新体验  "));
+
+        var truncated = UpdateReleaseNotes.Normalize(new string('修', 7000));
+        Assert.Contains("已截断", truncated);
+        Assert.True(truncated.Length < 7000);
+    }
+
     /// <summary>
     /// 下载完成后再检查一次更新，不能把"可安全安装"降级成"需要再下载一次"。
     /// 这正是"点下载更新、下载完还得再点一次才能安装"的根因。
@@ -1355,7 +1368,7 @@ public sealed class DesktopUsabilityTests
     {
         await using var fixture = CreateShellFixture();
         var installs = 0;
-        fixture.Shell.Behavior.InstallRequested = () =>
+        fixture.Shell.Behavior.InstallRequested = (_, _) =>
         {
             Interlocked.Increment(ref installs);
             return Task.CompletedTask;
@@ -1366,6 +1379,44 @@ public sealed class DesktopUsabilityTests
             new UpdatePrompt("1.4.0", Manual: true, AlreadyDownloaded: true));
 
         Assert.Equal(1, Volatile.Read(ref installs));
+    }
+
+    [Fact]
+    public async Task ImmediateUpdateProgressCanCancelBeforeAgentDrainStarts()
+    {
+        await using var fixture = CreateShellFixture();
+        var installStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cancellationObserved = 0;
+        fixture.Shell.Behavior.InstallRequested = async (cancellationToken, _) =>
+        {
+            installStarted.TrySetResult();
+            try
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                Interlocked.Increment(ref cancellationObserved);
+                throw;
+            }
+        };
+        fixture.Shell.Behavior.UpdatePromptRequested = _ => Task.FromResult(UpdateChoice.UpdateNow);
+        fixture.Shell.Behavior.UpdateProgressRequested = async request =>
+        {
+            Assert.Equal("1.4.0", request.Version);
+            using var cancellation = new CancellationTokenSource();
+            var running = request.Execute(
+                new Progress<UpdateExecutionProgress>(_ => { }),
+                cancellation.Token);
+            await installStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            cancellation.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => running);
+        };
+
+        await fixture.Shell.Behavior.HandleUpdatePromptAsync(
+            new UpdatePrompt("1.4.0", Manual: true, AlreadyDownloaded: true, "- 修复更新进度"));
+
+        Assert.Equal(1, Volatile.Read(ref cancellationObserved));
     }
 
     /// <summary>
@@ -1379,7 +1430,7 @@ public sealed class DesktopUsabilityTests
         var opened = 0;
         var firstDialogShown = new TaskCompletionSource();
         var release = new TaskCompletionSource();
-        fixture.Shell.Behavior.InstallRequested = () => Task.CompletedTask;
+        fixture.Shell.Behavior.InstallRequested = (_, _) => Task.CompletedTask;
         fixture.Shell.Behavior.UpdatePromptRequested = async _ =>
         {
             if (Interlocked.Increment(ref opened) == 1) firstDialogShown.TrySetResult();
@@ -1408,7 +1459,7 @@ public sealed class DesktopUsabilityTests
     {
         await using var fixture = CreateShellFixture();
         var installs = 0;
-        fixture.Shell.Behavior.InstallRequested = () =>
+        fixture.Shell.Behavior.InstallRequested = (_, _) =>
         {
             Interlocked.Increment(ref installs);
             return Task.CompletedTask;

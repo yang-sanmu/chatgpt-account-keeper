@@ -284,9 +284,14 @@ internal sealed class ShellViewModel : ObservableObject
     public async Task ShutdownAgentAsync(
         string reason = "user-exit-all",
         bool force = true,
-        bool requireDisconnect = false)
+        bool requireDisconnect = false,
+        CancellationToken cancellationToken = default)
     {
-        if (!await TryReconnectToAgentAsync()) return;
+        using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            _lifetime.Token,
+            cancellationToken);
+        var operationToken = linkedCancellation.Token;
+        if (!await TryReconnectToAgentAsync(operationToken)) return;
         var agentProcessId = ReadAgentProcessId();
         _suppressReconnect = true;
         try
@@ -296,14 +301,17 @@ internal sealed class ShellViewModel : ObservableObject
                 new ShutdownParams(reason, Force: force),
                 AppJsonContext.Default.ShutdownParams,
                 AppJsonContext.Default.AcceptedResult,
-                _lifetime.Token,
+                operationToken,
                 AgentSession.NewCommandId());
             try
             {
-                await _connection.WaitForDisconnectAsync(TimeSpan.FromSeconds(15), _lifetime.Token);
+                await _connection.WaitForDisconnectAsync(TimeSpan.FromSeconds(15), operationToken);
                 if (requireDisconnect)
                 {
-                    await WaitForAgentProcessExitAsync(agentProcessId, TimeSpan.FromSeconds(15));
+                    await WaitForAgentProcessExitAsync(
+                        agentProcessId,
+                        TimeSpan.FromSeconds(15),
+                        operationToken);
                 }
             }
             catch (TimeoutException) when (!requireDisconnect)
@@ -338,20 +346,23 @@ internal sealed class ShellViewModel : ObservableObject
         }
     }
 
-    private async Task WaitForAgentProcessExitAsync(int? processId, TimeSpan timeout)
+    private async Task WaitForAgentProcessExitAsync(
+        int? processId,
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
     {
         if (processId is not int pid)
         {
             // The IPC endpoint is already gone. Give shutdown's final repository/lock
             // cleanup one scheduler turn when an old or damaged diagnostic lock has no PID.
-            await Task.Delay(100, _lifetime.Token);
+            await Task.Delay(100, cancellationToken);
             return;
         }
 
         var deadline = DateTime.UtcNow + timeout;
         while (AgentConnectionService.IsProcessAlive(pid) && DateTime.UtcNow < deadline)
         {
-            await Task.Delay(50, _lifetime.Token);
+            await Task.Delay(50, cancellationToken);
         }
         if (AgentConnectionService.IsProcessAlive(pid))
         {
@@ -363,13 +374,16 @@ internal sealed class ShellViewModel : ObservableObject
     /// “退出全部”和安装更新会先尝试接回已有 Agent，但绝不为了退出而启动新进程。
     /// 数据库存在只说明该目录初始化过，不代表后台 Agent 仍在运行。
     /// </summary>
-    private async Task<bool> TryReconnectToAgentAsync()
+    private async Task<bool> TryReconnectToAgentAsync(CancellationToken cancellationToken = default)
     {
         if (_connection.IsConnected) return true;
 
+        var operationToken = cancellationToken.CanBeCanceled
+            ? cancellationToken
+            : _lifetime.Token;
         var snapshot = await _connection.EnsureConnectedAsync(
             startWhenUnavailable: false,
-            _lifetime.Token);
+            operationToken);
         ApplyConnection(snapshot);
         return snapshot.IsConnected;
     }
@@ -833,29 +847,89 @@ internal sealed class ShellViewModel : ObservableObject
         });
     }
 
-    private async Task InstallUpdateAsync()
-    {
-        await _session.RunAsync("准备安装更新", async () =>
-        {
-            var prepare = await _connection.CallAsync(
-                "system.prepareUpdate",
-                new PrepareUpdateParams(true, "desktop-update"),
-                AppJsonContext.Default.PrepareUpdateParams,
-                AppJsonContext.Default.PrepareUpdateResult,
-                _lifetime.Token,
-                AgentSession.NewCommandId());
-            if (!prepare.Ready)
-            {
-                var blockers = string.Join("、", prepare.Blockers.Select(item => item.ResourceId ?? item.Kind));
-                throw new InvalidOperationException($"仍有阻塞项：{blockers}");
-            }
+    private Task InstallUpdateAsync() => InstallUpdateAsync(_lifetime.Token, null);
 
-            // 安装更新仍必须坚持安全点语义：不绕过阻塞，也必须确认旧 Agent
-            // 已彻底退出后才能替换文件。这里只放宽用户主动“退出全部”。
-            await ShutdownAgentAsync("desktop-update", force: false, requireDisconnect: true);
-            await Behavior.ApplyAndRestartAsync();
-            ApplicationExitRequested?.Invoke(this, EventArgs.Empty);
-        });
+    private async Task InstallUpdateAsync(
+        CancellationToken cancellationToken,
+        IProgress<UpdateExecutionProgress>? progress)
+    {
+        using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            _lifetime.Token,
+            cancellationToken);
+        var operationToken = linkedCancellation.Token;
+
+        progress?.Report(new UpdateExecutionProgress(
+            "正在连接 Agent…",
+            "正在确认本地 Agent 可响应更新安全检查。",
+            Percent: null,
+            CanCancel: true));
+        var connection = await _connection.EnsureConnectedAsync(
+            startWhenUnavailable: true,
+            operationToken);
+        ApplyConnection(connection);
+        if (!connection.IsConnected)
+        {
+            throw new InvalidOperationException(connection.Detail);
+        }
+
+        progress?.Report(new UpdateExecutionProgress(
+            "正在检查安装条件…",
+            "正在检查 Chrome 窗口、运行任务和数据目录状态；此阶段可以取消。",
+            Percent: null,
+            CanCancel: true));
+        var preflight = await _connection.CallAsync(
+            "system.prepareUpdate",
+            new PrepareUpdateParams(false, "desktop-update"),
+            AppJsonContext.Default.PrepareUpdateParams,
+            AppJsonContext.Default.PrepareUpdateResult,
+            operationToken,
+            AgentSession.NewCommandId());
+        if (!preflight.Ready)
+        {
+            var blockers = string.Join("、", preflight.Blockers.Select(item => item.ResourceId ?? item.Kind));
+            throw new InvalidOperationException($"仍有阻塞项：{blockers}");
+        }
+
+        operationToken.ThrowIfCancellationRequested();
+        progress?.Report(new UpdateExecutionProgress(
+            "正在安全排空 Agent…",
+            "安全检查已通过，正在完成任务收尾和数据库检查点；从此阶段起不可取消。",
+            Percent: null,
+            CanCancel: false));
+        var prepare = await _connection.CallAsync(
+            "system.prepareUpdate",
+            new PrepareUpdateParams(true, "desktop-update"),
+            AppJsonContext.Default.PrepareUpdateParams,
+            AppJsonContext.Default.PrepareUpdateResult,
+            _lifetime.Token,
+            AgentSession.NewCommandId());
+        if (!prepare.Ready || !prepare.Committed)
+        {
+            var blockers = string.Join("、", prepare.Blockers.Select(item => item.ResourceId ?? item.Kind));
+            throw new InvalidOperationException(string.IsNullOrWhiteSpace(blockers)
+                ? "Agent 未能进入更新排空状态"
+                : $"仍有阻塞项：{blockers}");
+        }
+
+        // 提交排空后不再接受用户取消：Agent 已进入拒绝写入状态，必须完成退出，
+        // 否则会把本次会话留在无法继续工作的半停机状态。
+        progress?.Report(new UpdateExecutionProgress(
+            "正在关闭 Agent…",
+            "正在等待 Agent 完整释放数据库和 Profile 句柄。",
+            Percent: null,
+            CanCancel: false));
+        await ShutdownAgentAsync(
+            "desktop-update",
+            force: false,
+            requireDisconnect: true,
+            cancellationToken: _lifetime.Token);
+        progress?.Report(new UpdateExecutionProgress(
+            "正在应用更新并重启…",
+            "更新程序已经接管，ChatGPT Account Keeper 即将重新启动。",
+            Percent: null,
+            CanCancel: false));
+        await Behavior.ApplyAndRestartAsync();
+        ApplicationExitRequested?.Invoke(this, EventArgs.Empty);
     }
 
     /// <summary>“安全空闲时安装”：等到没有登录窗口、打开网页和运行任务时才装。</summary>

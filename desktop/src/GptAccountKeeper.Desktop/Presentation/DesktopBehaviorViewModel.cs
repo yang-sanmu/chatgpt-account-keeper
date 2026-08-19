@@ -76,10 +76,13 @@ internal sealed class DesktopBehaviorViewModel : ObservableObject
     public ICommand InstallUpdateCommand { get; }
 
     /// <summary>安装更新前必须先 drain Agent，由 Shell 提供实现。</summary>
-    public Func<Task>? InstallRequested { get; set; }
+    public Func<CancellationToken, IProgress<UpdateExecutionProgress>?, Task>? InstallRequested { get; set; }
 
     /// <summary>弹出“发现新版本”提示窗，由窗口提供实现（ViewModel 不依赖顶层控件）。</summary>
     public Func<UpdatePrompt, Task<UpdateChoice>>? UpdatePromptRequested { get; set; }
+
+    /// <summary>用户选择立即更新后显示可取消的前端进度窗。</summary>
+    public Func<UpdateProgressRequest, Task>? UpdateProgressRequested { get; set; }
 
     /// <summary>下次启动时要执行的旧项目导入源目录；导入完成后由 Shell 清除。</summary>
     public string? PendingLegacyImportRoot => _pendingLegacyImportRoot;
@@ -258,7 +261,7 @@ internal sealed class DesktopBehaviorViewModel : ObservableObject
 
     private Task InstallUpdateAsync() => Guard(
         "安装更新",
-        () => InstallRequested?.Invoke() ?? Task.CompletedTask);
+        () => InstallRequested?.Invoke(Lifetime, null) ?? Task.CompletedTask);
 
     private async Task Guard(string action, Func<Task> execute)
     {
@@ -299,14 +302,20 @@ internal sealed class DesktopBehaviorViewModel : ObservableObject
             switch (choice)
             {
                 case UpdateChoice.UpdateNow:
-                    await Guard("更新", async () =>
+                    if (UpdateProgressRequested is not null)
                     {
-                        if (!prompt.AlreadyDownloaded && !CanInstallUpdate)
-                        {
-                            await _updates.DownloadPendingAsync(Lifetime);
-                        }
-                        await (InstallRequested?.Invoke() ?? Task.CompletedTask);
-                    });
+                        await UpdateProgressRequested(new UpdateProgressRequest(
+                            prompt.Version,
+                            prompt.AlreadyDownloaded,
+                            (progress, cancellationToken) =>
+                                ExecuteImmediateUpdateAsync(prompt, progress, cancellationToken)));
+                    }
+                    else
+                    {
+                        await Guard(
+                            "更新",
+                            () => ExecuteImmediateUpdateAsync(prompt, null, Lifetime));
+                    }
                     break;
                 case UpdateChoice.RemindNextLaunch:
                     _updates.DeferVersion(prompt.Version);
@@ -330,6 +339,54 @@ internal sealed class DesktopBehaviorViewModel : ObservableObject
         finally
         {
             Interlocked.Exchange(ref _promptOpen, 0);
+        }
+    }
+
+    private async Task ExecuteImmediateUpdateAsync(
+        UpdatePrompt prompt,
+        IProgress<UpdateExecutionProgress>? progress,
+        CancellationToken cancellationToken)
+    {
+        EventHandler<UpdateSnapshot>? onChanged = null;
+        if (progress is not null)
+        {
+            onChanged = (_, snapshot) =>
+            {
+                if (snapshot.State == "downloading")
+                {
+                    progress.Report(new UpdateExecutionProgress(
+                        "正在下载更新…",
+                        snapshot.Message,
+                        snapshot.Progress,
+                        CanCancel: true));
+                }
+            };
+            _updates.Changed += onChanged;
+        }
+
+        try
+        {
+            if (!prompt.AlreadyDownloaded && !CanInstallUpdate)
+            {
+                progress?.Report(new UpdateExecutionProgress(
+                    "正在下载更新…",
+                    $"正在下载版本 {prompt.Version}，可随时取消。",
+                    0,
+                    CanCancel: true));
+                await _updates.DownloadPendingAsync(cancellationToken);
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            progress?.Report(new UpdateExecutionProgress(
+                "更新包已就绪",
+                "正在检查 Agent、Chrome 窗口和运行任务。",
+                Percent: null,
+                CanCancel: true));
+            await (InstallRequested?.Invoke(cancellationToken, progress) ?? Task.CompletedTask);
+        }
+        finally
+        {
+            if (onChanged is not null) _updates.Changed -= onChanged;
         }
     }
 

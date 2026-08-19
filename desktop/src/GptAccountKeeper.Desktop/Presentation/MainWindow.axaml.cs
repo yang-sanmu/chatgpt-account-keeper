@@ -28,6 +28,7 @@ internal sealed partial class MainWindow : Window
         ViewModel.DataFolderRequested += OnDataFolderRequested;
         ViewModel.LegacyImportResumeRequested += OnLegacyImportResumeRequested;
         ViewModel.Behavior.UpdatePromptRequested = ShowUpdatePromptAsync;
+        ViewModel.Behavior.UpdateProgressRequested = ShowUpdateProgressAsync;
 
         // 对话框、剪贴板和"打开文件夹"都由窗口提供，页面 ViewModel 不依赖顶层控件。
         ViewModel.Session.ConfirmAsync = (title, message, destructive) =>
@@ -291,8 +292,15 @@ internal sealed partial class MainWindow : Window
         return new UpdateAvailableDialog(
                 prompt.Version,
                 ViewModel.DesktopVersion,
-                prompt.AlreadyDownloaded)
+                prompt.AlreadyDownloaded,
+                prompt.Summary)
             .ShowDialog<UpdateChoice>(this);
+    }
+
+    private Task ShowUpdateProgressAsync(UpdateProgressRequest request)
+    {
+        ShowAndActivate();
+        return new UpdateProgressDialog(request).ShowDialog(this);
     }
 
     private async void OnDataFolderRequested(object? sender, EventArgs e)

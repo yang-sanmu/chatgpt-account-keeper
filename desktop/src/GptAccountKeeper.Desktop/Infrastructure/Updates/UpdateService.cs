@@ -12,8 +12,31 @@ internal sealed record UpdateSnapshot(
     bool CanDownload = false,
     bool CanInstall = false);
 
+internal static class UpdateReleaseNotes
+{
+    public const string MissingSummary = "本次更新未提供摘要。";
+    private const int MaximumLength = 6000;
+
+    public static string Normalize(string? markdown)
+    {
+        if (string.IsNullOrWhiteSpace(markdown)) return MissingSummary;
+
+        var normalized = markdown
+            .Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace('\r', '\n')
+            .Trim();
+        return normalized.Length <= MaximumLength
+            ? normalized
+            : $"{normalized[..MaximumLength].TrimEnd()}\n\n…（摘要过长，已截断）";
+    }
+}
+
 /// <summary>发现新版本时给界面的提示请求。Manual 决定是否越过“忽略本次更新”。</summary>
-internal sealed record UpdatePrompt(string Version, bool Manual, bool AlreadyDownloaded);
+internal sealed record UpdatePrompt(
+    string Version,
+    bool Manual,
+    bool AlreadyDownloaded,
+    string Summary = UpdateReleaseNotes.MissingSummary);
 
 internal sealed class UpdateService : IDisposable
 {
@@ -186,7 +209,11 @@ internal sealed class UpdateService : IDisposable
             if (_state.ShouldPrompt(version, manual))
             {
                 _state.MarkPrompted(version);
-                pendingPrompt = new UpdatePrompt(version, manual, staged);
+                pendingPrompt = new UpdatePrompt(
+                    version,
+                    manual,
+                    staged,
+                    UpdateReleaseNotes.Normalize(update.TargetFullRelease.NotesMarkdown));
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -238,15 +265,27 @@ internal sealed class UpdateService : IDisposable
     {
         var version = update.TargetFullRelease.Version.ToString();
         Publish(new UpdateSnapshot("downloading", $"正在下载 {version}", version, 0));
-        await manager.DownloadUpdatesAsync(
-                update,
-                progress => Publish(new UpdateSnapshot(
-                    "downloading",
-                    $"正在下载 {version} · {progress}%",
-                    version,
-                    progress)))
-            .WaitAsync(cancellationToken)
-            .ConfigureAwait(false);
+        try
+        {
+            await manager.DownloadUpdatesAsync(
+                    update,
+                    progress => Publish(new UpdateSnapshot(
+                        "downloading",
+                        $"正在下载 {version} · {progress}%",
+                        version,
+                        progress)),
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            Publish(new UpdateSnapshot(
+                "available",
+                $"版本 {version} 下载已取消",
+                version,
+                CanDownload: true));
+            throw;
+        }
         // 先记下已下载再发布：Velopack 的进度回调来自独立线程，最后一次可能在
         // DownloadUpdatesAsync 返回之后才投递，Publish 会把它折叠成 downloaded。
         _state.MarkDownloaded(version);

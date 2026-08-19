@@ -6,12 +6,12 @@
     xmlns:pages="using:GptAccountKeeper.Desktop.Presentation.Pages"
     x:DataType="pages:HistoryPageViewModel">
 
-  <Grid Margin="24,0,24,20" ColumnDefinitions="260,330,*" ColumnSpacing="14">
+  <Grid Margin="24,0,24,20" ColumnDefinitions="230,300,*" ColumnSpacing="16">
 
-    <!-- 第一栏：账号选择列表 -->
-    <Border Classes="card" Padding="14">
+    <!-- 第一栏：历史账号选择列表 -->
+    <Border Classes="card" Padding="16">
       <Grid RowDefinitions="Auto,*">
-        <StackPanel Margin="0,0,0,10" Spacing="2">
+        <StackPanel Margin="0,0,0,12" Spacing="2">
           <TextBlock Text="历史账号" FontSize="14" FontWeight="Bold" Foreground="#F8FAFC" />
           <TextBlock Text="含已归档/删除账号的运行记录" FontSize="10" Foreground="#64748B" />
         </StackPanel>
@@ -21,8 +21,8 @@
                    SelectedItem="{Binding SelectedAccount, Mode=TwoWay}">
             <ListBox.ItemTemplate>
               <DataTemplate x:DataType="models:HistoryAccountDto">
-                <Border Margin="0,2" Padding="10,8" CornerRadius="8" Background="#0F172A" BorderBrush="#1E2D4A" BorderThickness="1">
-                  <StackPanel Spacing="2">
+                <Border Margin="0,2" Padding="12,10" CornerRadius="8" Background="#0F172A" BorderBrush="{StaticResource BrushBorderSubtle}" BorderThickness="1">
+                  <StackPanel Spacing="3">
                     <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" FontSize="12" Foreground="#F8FAFC"
                                TextTrimming="CharacterEllipsis" />
                     <TextBlock Text="{Binding Summary}" FontSize="10" Foreground="#94A3B8" />
@@ -34,9 +34,11 @@
 
           <!-- 空状态 -->
           <StackPanel IsVisible="{Binding !HasHistoryAccounts}" VerticalAlignment="Center"
-                      HorizontalAlignment="Center" Spacing="8" MaxWidth="200">
-            <TextBlock Text="📜" FontSize="28" HorizontalAlignment="Center" />
-            <TextBlock Text="暂无运行历史" FontSize="13" FontWeight="SemiBold" Foreground="#F8FAFC" HorizontalAlignment="Center" />
+                      HorizontalAlignment="Center" Spacing="10" MaxWidth="200">
+            <Border Width="56" Height="56" CornerRadius="28" Background="#1E293B" HorizontalAlignment="Center">
+              <Path Data="{StaticResource IconHistory}" Width="24" Height="24" Classes="vector-icon" Stroke="#60A5FA" />
+            </Border>
+            <TextBlock Text="暂无运行历史" FontSize="14" FontWeight="SemiBold" Foreground="#F8FAFC" HorizontalAlignment="Center" />
             <TextBlock Text="账号完成一次自动对话后会出现在这里。"
                        TextWrapping="Wrap" TextAlignment="Center" FontSize="11" Foreground="#94A3B8" LineHeight="16" />
           </StackPanel>
@@ -45,16 +47,16 @@
     </Border>
 
     <!-- 第二栏：运行记录列表 -->
-    <Border Grid.Column="1" Classes="card" Padding="14">
+    <Border Grid.Column="1" Classes="card" Padding="16">
       <Grid RowDefinitions="Auto,Auto,*">
-        <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,8">
-          <TextBlock Text="{Binding Summary}" FontSize="11" Foreground="#93C5FD"
+        <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,10">
+          <TextBlock Text="{Binding Summary}" FontSize="11" FontWeight="Medium" Foreground="#93C5FD"
                      TextWrapping="Wrap" VerticalAlignment="Center" />
-          <Button Grid.Column="1" Content="🔄 刷新" Padding="8,4" FontSize="10"
+          <Button Grid.Column="1" Content="🔄 刷新" Padding="9,4" FontSize="11"
                   Command="{Binding ReloadCommand}" />
         </Grid>
 
-        <Grid Grid.Row="1" ColumnDefinitions="*,110" ColumnSpacing="8" Margin="0,0,0,10">
+        <Grid Grid.Row="1" ColumnDefinitions="*,115" ColumnSpacing="10" Margin="0,0,0,12">
           <TextBox PlaceholderText="🔍 搜索内容或错误…" Text="{Binding Search, Mode=TwoWay}" />
           <ComboBox Grid.Column="1" HorizontalAlignment="Stretch"
                     ItemsSource="{Binding ResultFilters}"
@@ -71,11 +73,11 @@
           <ListBox ItemsSource="{Binding Entries}" SelectedItem="{Binding SelectedEntry, Mode=TwoWay}">
             <ListBox.ItemTemplate>
               <DataTemplate x:DataType="models:HistoryEntryDto">
-                <Border Margin="0,2" Padding="10,8" CornerRadius="8" Background="#0F172A" BorderBrush="#1E2D4A" BorderThickness="1">
-                  <StackPanel Spacing="3">
+                <Border Margin="0,2" Padding="12,10" CornerRadius="8" Background="#0F172A" BorderBrush="{StaticResource BrushBorderSubtle}" BorderThickness="1">
+                  <StackPanel Spacing="4">
                     <Grid ColumnDefinitions="*,Auto">
                       <TextBlock Text="{Binding TimeText}" FontSize="11" Foreground="#94A3B8" />
-                      <Border Grid.Column="1" Padding="5,1" CornerRadius="4" Background="#1E293B">
+                      <Border Grid.Column="1" Padding="6,2" CornerRadius="4" Background="#1E293B">
                         <TextBlock Text="{Binding ResultText}" FontSize="10" FontWeight="SemiBold"
                                    Foreground="{Binding ResultColor}" />
                       </Border>
@@ -90,8 +92,10 @@
 
           <!-- 空记录 -->
           <StackPanel IsVisible="{Binding IsEmpty}" VerticalAlignment="Center" HorizontalAlignment="Center"
-                      Spacing="8" MaxWidth="240">
-            <TextBlock Text="💬" FontSize="26" HorizontalAlignment="Center" />
+                      Spacing="10" MaxWidth="240">
+            <Border Width="56" Height="56" CornerRadius="28" Background="#1E293B" HorizontalAlignment="Center">
+              <Path Data="{StaticResource IconMessageSquare}" Width="24" Height="24" Classes="vector-icon" Stroke="#818CF8" />
+            </Border>
             <TextBlock Text="{Binding EmptyText}" TextWrapping="Wrap" TextAlignment="Center"
                        FontSize="11" Foreground="#94A3B8" LineHeight="16" />
           </StackPanel>
@@ -100,33 +104,33 @@
     </Border>
 
     <!-- 第三栏：问答对话流 (Chat Stream) -->
-    <Border Grid.Column="2" Classes="card" Padding="18">
+    <Border Grid.Column="2" Classes="card" Padding="20">
       <Grid RowDefinitions="Auto,*" IsVisible="{Binding HasSelectedEntry}">
 
         <!-- 对话头部 -->
-        <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,14">
+        <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,16">
           <StackPanel Spacing="3">
-            <TextBlock Text="{Binding SelectedEntry.SummaryText}" FontSize="15" FontWeight="Bold" Foreground="#F8FAFC" />
+            <TextBlock Text="{Binding SelectedEntry.SummaryText}" FontSize="16" FontWeight="Bold" Foreground="#F8FAFC" />
             <TextBlock Text="{Binding SelectedEntry.TimeText}" FontSize="11" Foreground="#64748B" />
           </StackPanel>
-          <Button Grid.Column="1" Content="📋 复制全部问答" Classes="primary" Padding="10,6" FontSize="11"
+          <Button Grid.Column="1" Content="📋 复制全部问答" Classes="primary" Padding="12,6" FontSize="11"
                   Command="{Binding CopyAnswerCommand}" />
         </Grid>
 
         <!-- 对话内容滚动流 -->
         <ScrollViewer Grid.Row="1">
-          <StackPanel Spacing="14">
+          <StackPanel Spacing="16">
 
-            <!-- 失败错误提示 -->
-            <Border IsVisible="{Binding SelectedEntry.HasError}" Padding="12" CornerRadius="8"
-                    Background="#450A0A" BorderBrush="#DC2626" BorderThickness="1">
-              <StackPanel Spacing="4">
+            <!-- 失败错误提示面板 -->
+            <Border IsVisible="{Binding SelectedEntry.HasError}" Padding="14" CornerRadius="8"
+                    Background="#381014" BorderBrush="#DC2626" BorderThickness="1">
+              <StackPanel Spacing="6">
                 <StackPanel Orientation="Horizontal" Spacing="6">
-                  <TextBlock Text="⚠️" FontSize="12" VerticalAlignment="Center" />
+                  <Path Data="{StaticResource IconAlertTriangle}" Width="16" Height="16" Classes="vector-icon" Stroke="#F87171" />
                   <TextBlock Text="本次运行未成功完成" FontSize="12" FontWeight="Bold" Foreground="#FCA5A5" />
                 </StackPanel>
                 <SelectableTextBlock Text="{Binding SelectedEntry.Error}" FontSize="11" TextWrapping="Wrap"
-                                     Foreground="#FECACA" LineHeight="16" />
+                                     Foreground="#FECACA" LineHeight="17" />
               </StackPanel>
             </Border>
 
@@ -134,15 +138,15 @@
             <ItemsControl ItemsSource="{Binding SelectedEntry.Rounds}">
               <ItemsControl.ItemTemplate>
                 <DataTemplate x:DataType="models:HistoryRoundDto">
-                  <StackPanel Margin="0,0,0,16" Spacing="8">
+                  <StackPanel Margin="0,0,0,18" Spacing="10">
 
                     <!-- 用户提问气泡 (蓝色微光卡片) -->
-                    <Border Padding="12,10" CornerRadius="10" Background="#1E3A8A"
-                            BorderBrush="#2563EB" BorderThickness="1"
-                            HorizontalAlignment="Left" MaxWidth="680">
-                      <StackPanel Spacing="4">
+                    <Border Padding="14,12" CornerRadius="10" Background="#172554"
+                            BorderBrush="#1D4ED8" BorderThickness="1"
+                            HorizontalAlignment="Left" MaxWidth="700">
+                      <StackPanel Spacing="6">
                         <StackPanel Orientation="Horizontal" Spacing="6">
-                          <TextBlock Text="👤" FontSize="11" VerticalAlignment="Center" />
+                          <Path Data="{StaticResource IconUser}" Width="14" Height="14" Classes="vector-icon" Stroke="#93C5FD" />
                           <TextBlock Text="提问 (User)" FontSize="10" FontWeight="Bold" Foreground="#93C5FD" />
                         </StackPanel>
                         <SelectableTextBlock Text="{Binding QuestionText}" FontSize="12" TextWrapping="Wrap"
@@ -151,11 +155,11 @@
                     </Border>
 
                     <!-- ChatGPT 回答气泡 (深蓝灰卡片) -->
-                    <Border Padding="14,12" CornerRadius="10" Background="#0F172A"
-                            BorderBrush="#1E2D4A" BorderThickness="1" MaxWidth="760">
-                      <StackPanel Spacing="4">
+                    <Border Padding="16,14" CornerRadius="10" Background="#0F172A"
+                            BorderBrush="{StaticResource BrushBorder}" BorderThickness="1" MaxWidth="780">
+                      <StackPanel Spacing="6">
                         <StackPanel Orientation="Horizontal" Spacing="6">
-                          <TextBlock Text="🤖" FontSize="11" VerticalAlignment="Center" />
+                          <Path Data="{StaticResource IconBot}" Width="14" Height="14" Classes="vector-icon" Stroke="#10B981" />
                           <TextBlock Text="ChatGPT 回复" FontSize="10" FontWeight="Bold" Foreground="#10B981" />
                         </StackPanel>
                         <SelectableTextBlock Text="{Binding AnswerText}" FontSize="12" TextWrapping="Wrap"

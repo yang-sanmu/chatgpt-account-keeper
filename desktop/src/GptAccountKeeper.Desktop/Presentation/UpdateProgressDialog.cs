@@ -38,8 +38,8 @@ internal sealed class UpdateProgressDialog : Window
         _request = request;
 
         Title = $"正在更新到 {request.Version}";
-        Width = 600;
-        Height = 360;
+        Width = 620;
+        Height = 370;
         CanResize = false;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         Background = Palette.BgDark;
@@ -55,7 +55,7 @@ internal sealed class UpdateProgressDialog : Window
         _messageText = new TextBlock
         {
             Text = request.AlreadyDownloaded
-                ? "更新包已经下载，正在检查 Agent 是否处于安全安装点。"
+                ? "更新包已经下载完成，正在检查 Agent 是否处于安全安装点。"
                 : "正在连接更新服务，下载过程中可以随时取消。",
             TextWrapping = TextWrapping.Wrap,
             Foreground = Palette.TextSecondary,
@@ -74,7 +74,7 @@ internal sealed class UpdateProgressDialog : Window
         _cancelButton = new Button
         {
             Content = "取消更新",
-            Padding = new Thickness(18, 8),
+            Padding = new Thickness(20, 8),
             HorizontalAlignment = HorizontalAlignment.Right,
         };
         _cancelButton.Click += (_, _) => RequestCancellation();
@@ -83,10 +83,10 @@ internal sealed class UpdateProgressDialog : Window
         {
             Classes = { "card" },
             Margin = new Thickness(16),
-            Padding = new Thickness(22),
+            Padding = new Thickness(24),
             Child = new StackPanel
             {
-                Spacing = 14,
+                Spacing = 16,
                 Children =
                 {
                     new TextBlock
@@ -101,16 +101,16 @@ internal sealed class UpdateProgressDialog : Window
                     _messageText,
                     new Border
                     {
-                        Padding = new Thickness(10, 8),
+                        Padding = new Thickness(12, 8),
                         CornerRadius = new CornerRadius(6),
-                        Background = Brush.Parse("#0A101D"),
+                        Background = Brush.Parse("#0F172A"),
                         BorderBrush = Brush.Parse("#1E2D4A"),
                         BorderThickness = new Thickness(1),
                         Child = new TextBlock
                         {
-                            Text = "下载与安全检查可以取消；开始排空 Agent 后将自动完成安装并重启，避免损坏数据。",
+                            Text = "💡 下载与安全检查阶段可以随时取消；一旦开始排空 Agent 将自动完成安装并重启，避免损坏数据。",
                             TextWrapping = TextWrapping.Wrap,
-                            Foreground = Palette.Faint,
+                            Foreground = Palette.Muted,
                             FontSize = 11,
                             LineHeight = 16,
                         },

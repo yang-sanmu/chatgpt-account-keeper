@@ -6,13 +6,13 @@
     xmlns:pages="using:GptAccountKeeper.Desktop.Presentation.Pages"
     x:DataType="pages:ConversationsPageViewModel">
 
-  <Grid Margin="24,0,24,20" ColumnDefinitions="1*,1.2*" ColumnSpacing="16">
+  <Grid Margin="24,0,24,20" ColumnDefinitions="1*,1.25*" ColumnSpacing="16">
 
     <!-- 左侧：会话主题集列表 -->
-    <Border Classes="card" Padding="16">
+    <Border Classes="card" Padding="18">
       <Grid RowDefinitions="Auto,*">
-        <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,12">
-          <StackPanel Spacing="2">
+        <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,14">
+          <StackPanel Spacing="3">
             <TextBlock Text="会话主题集" FontSize="15" FontWeight="Bold" Foreground="#F8FAFC" />
             <TextBlock Text="{Binding Summary}" FontSize="11" Foreground="#94A3B8" />
           </StackPanel>
@@ -25,16 +25,16 @@
           <ListBox ItemsSource="{Binding Items}" SelectedItem="{Binding Selected, Mode=TwoWay}">
             <ListBox.ItemTemplate>
               <DataTemplate x:DataType="models:ConversationSetDto">
-                <Border Margin="0,3" Padding="12,10" CornerRadius="8" Background="#0F172A" BorderBrush="#1E2D4A" BorderThickness="1">
-                  <StackPanel Spacing="4">
+                <Border Margin="0,2" Padding="14,11" CornerRadius="8" Background="#0F172A" BorderBrush="{StaticResource BrushBorderSubtle}" BorderThickness="1">
+                  <StackPanel Spacing="5">
                     <Grid ColumnDefinitions="*,Auto">
                       <TextBlock Text="{Binding Name}" FontWeight="Bold" FontSize="13" Foreground="#F8FAFC" />
-                      <Border Grid.Column="1" Padding="6,2" CornerRadius="4" Background="#1E293B">
+                      <Border Grid.Column="1" Padding="7,2" CornerRadius="4" Background="#1E293B">
                         <TextBlock Text="{Binding RoundsText}" FontSize="10" FontWeight="SemiBold" Foreground="#93C5FD" />
                       </Border>
                     </Grid>
                     <TextBlock Text="{Binding Topic}" FontSize="11" Foreground="#94A3B8"
-                               TextTrimming="CharacterEllipsis" MaxLines="2" TextWrapping="Wrap" LineHeight="16" />
+                               TextTrimming="CharacterEllipsis" MaxLines="2" TextWrapping="Wrap" LineHeight="17" />
                   </StackPanel>
                 </Border>
               </DataTemplate>
@@ -43,20 +43,22 @@
 
           <!-- 空列表提示 -->
           <StackPanel IsVisible="{Binding IsEmpty}" VerticalAlignment="Center" HorizontalAlignment="Center"
-                      Spacing="10" MaxWidth="300">
-            <TextBlock Text="💬" FontSize="32" HorizontalAlignment="Center" />
-            <TextBlock Text="还没有会话主题" FontSize="14" FontWeight="SemiBold" Foreground="#F8FAFC" HorizontalAlignment="Center" />
-            <TextBlock TextWrapping="Wrap" TextAlignment="Center" FontSize="11" Foreground="#94A3B8" LineHeight="16"
+                      Spacing="12" MaxWidth="320">
+            <Border Width="64" Height="64" CornerRadius="32" Background="#1E293B" HorizontalAlignment="Center">
+              <Path Data="{StaticResource IconMessageSquare}" Width="26" Height="26" Classes="vector-icon" Stroke="#60A5FA" />
+            </Border>
+            <TextBlock Text="还没有会话主题" FontSize="15" FontWeight="SemiBold" Foreground="#F8FAFC" HorizontalAlignment="Center" />
+            <TextBlock TextWrapping="Wrap" TextAlignment="Center" FontSize="11" Foreground="#94A3B8" LineHeight="17"
                        Text="Agent 会围绕主题自动与 ChatGPT 开启真实对话并多轮深度追问，至少需要创建一个主题才能启动自动调度。" />
           </StackPanel>
         </Panel>
       </Grid>
     </Border>
 
-    <!-- 右侧：主题集编辑器 -->
-    <Border Grid.Column="1" Classes="card" Padding="20">
+    <!-- 右侧：主题集 Prompt 编辑器 -->
+    <Border Grid.Column="1" Classes="card" Padding="22">
       <ScrollViewer>
-        <StackPanel Spacing="14">
+        <StackPanel Spacing="16">
           <TextBlock Text="{Binding FormTitle}" FontSize="16" FontWeight="Bold" Foreground="#F8FAFC" />
 
           <StackPanel Spacing="4">
@@ -87,7 +89,7 @@
 
           <!-- 校验错误 -->
           <Border IsVisible="{Binding HasValidationError}"
-                  Padding="10" CornerRadius="8" Background="#450A0A" BorderBrush="#DC2626" BorderThickness="1">
+                  Padding="12" CornerRadius="8" Background="#381014" BorderBrush="#DC2626" BorderThickness="1">
             <TextBlock Text="{Binding ValidationError}" FontSize="11" Foreground="#FCA5A5" TextWrapping="Wrap" />
           </Border>
 
@@ -99,11 +101,11 @@
           </StackPanel>
 
           <!-- 提示卡片 -->
-          <Border Padding="12" Background="#0F172A" BorderBrush="#1E2D4A" BorderThickness="1" CornerRadius="8">
+          <Border Padding="14,12" Background="#0A101D" BorderBrush="{StaticResource BrushBorderSubtle}" BorderThickness="1" CornerRadius="8">
             <StackPanel Spacing="4">
               <TextBlock Text="💡 对话安全与轮换机制" FontSize="11" FontWeight="SemiBold" Foreground="#93C5FD" />
-              <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#94A3B8" LineHeight="16"
-                         Text="每轮对话完成后，Agent 会根据账号设置的窗口数自动切换到下一个主题；重命名主题时底层会先创建新主题再删除旧主题。" />
+              <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#94A3B8" LineHeight="17"
+                         Text="每轮对话完成后，Agent 会根据账号设置的窗口数自动切换到下一个主题；重命名主题时底层会先创建新主题再删除旧主题，保证正在进行的对话平稳过渡。" />
             </StackPanel>
           </Border>
         </StackPanel>

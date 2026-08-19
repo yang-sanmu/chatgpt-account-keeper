@@ -32,8 +32,8 @@ internal sealed class MigrationScanDialog : Window
         _inspect = inspect;
 
         Title = "正在扫描旧项目";
-        Width = 600;
-        Height = 350;
+        Width = 620;
+        Height = 360;
         CanResize = false;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         Background = Palette.BgDark;
@@ -65,23 +65,23 @@ internal sealed class MigrationScanDialog : Window
         {
             Classes = { "card" },
             Margin = new Thickness(16),
-            Padding = new Thickness(22),
+            Padding = new Thickness(24),
             Child = new StackPanel
             {
-                Spacing = 14,
+                Spacing = 16,
                 Children =
                 {
                     _stateText,
                     new ProgressBar
                     {
                         IsIndeterminate = true,
-                        Height = 5,
+                        Height = 6,
                         CornerRadius = new CornerRadius(3),
                     },
                     _messageText,
                     new Border
                     {
-                        Padding = new Thickness(10, 8),
+                        Padding = new Thickness(12, 8),
                         CornerRadius = new CornerRadius(6),
                         Background = Brush.Parse("#0A101D"),
                         BorderBrush = Brush.Parse("#1E2D4A"),
@@ -92,15 +92,24 @@ internal sealed class MigrationScanDialog : Window
                             TextWrapping = TextWrapping.Wrap,
                             Foreground = Palette.Info,
                             FontSize = 11,
+                            FontFamily = FontFamily.Parse("Consolas, monospace"),
                         },
                     },
-                    new TextBlock
+                    new Border
                     {
-                        Text = "扫描不会修改旧项目。导入完成前，请不要启动旧服务或使用相关 Chrome Profile。",
-                        TextWrapping = TextWrapping.Wrap,
-                        Foreground = Palette.Faint,
-                        FontSize = 11,
-                        LineHeight = 16,
+                        Padding = new Thickness(12, 8),
+                        CornerRadius = new CornerRadius(6),
+                        Background = Brush.Parse("#0F172A"),
+                        BorderBrush = Brush.Parse("#1E2D4A"),
+                        BorderThickness = new Thickness(1),
+                        Child = new TextBlock
+                        {
+                            Text = "💡 扫描不会修改旧项目。导入完成前，请不要启动旧服务或使用相关 Chrome Profile。",
+                            TextWrapping = TextWrapping.Wrap,
+                            Foreground = Palette.Muted,
+                            FontSize = 11,
+                            LineHeight = 16,
+                        },
                     },
                     _cancelButton,
                 },

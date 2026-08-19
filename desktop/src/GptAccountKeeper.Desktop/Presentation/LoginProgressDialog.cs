@@ -33,8 +33,8 @@ internal sealed class LoginProgressDialog : Window
         _force = force;
 
         Title = force ? "强制重新登录" : "账号登录";
-        Width = 560;
-        Height = 350;
+        Width = 580;
+        Height = 370;
         CanResize = false;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         Background = Palette.BgDark;
@@ -54,11 +54,11 @@ internal sealed class LoginProgressDialog : Window
             FontSize = 12,
             LineHeight = 18,
         };
-        _spinner = new ProgressBar { IsIndeterminate = true, Height = 5, CornerRadius = new CornerRadius(3) };
+        _spinner = new ProgressBar { IsIndeterminate = true, Height = 6, CornerRadius = new CornerRadius(3) };
         _closeButton = new Button
         {
             Content = "在后台继续",
-            Padding = new Thickness(18, 8),
+            Padding = new Thickness(20, 8),
             Classes = { "primary" },
             HorizontalAlignment = HorizontalAlignment.Right,
         };
@@ -74,15 +74,15 @@ internal sealed class LoginProgressDialog : Window
         {
             Classes = { "card" },
             Margin = new Thickness(16),
-            Padding = new Thickness(22),
+            Padding = new Thickness(24),
             Child = new StackPanel
             {
-                Spacing = 14,
+                Spacing = 16,
                 Children =
                 {
                     new StackPanel
                     {
-                        Spacing = 2,
+                        Spacing = 4,
                         Children =
                         {
                             new TextBlock
@@ -99,7 +99,7 @@ internal sealed class LoginProgressDialog : Window
                     _messageText,
                     new Border
                     {
-                        Padding = new Thickness(10, 6),
+                        Padding = new Thickness(12, 7),
                         CornerRadius = new CornerRadius(6),
                         Background = Brush.Parse("#0A101D"),
                         BorderBrush = Brush.Parse("#1E2D4A"),
@@ -113,15 +113,23 @@ internal sealed class LoginProgressDialog : Window
                             Foreground = account.ProxyMissing ? Palette.Danger : Palette.Ok,
                         },
                     },
-                    new TextBlock
+                    new Border
                     {
-                        Text = force
-                            ? "强制重登会清除该账号已保存的会话，登录完成前账号处于未登录状态。"
-                            : "已有有效会话时不会清除登录态；关闭本窗口不会取消登录，任务会在后台继续。",
-                        TextWrapping = TextWrapping.Wrap,
-                        FontSize = 11,
-                        Foreground = Palette.Faint,
-                        LineHeight = 16,
+                        Padding = new Thickness(12, 8),
+                        CornerRadius = new CornerRadius(6),
+                        Background = Brush.Parse("#0F172A"),
+                        BorderBrush = Brush.Parse("#1E2D4A"),
+                        BorderThickness = new Thickness(1),
+                        Child = new TextBlock
+                        {
+                            Text = force
+                                ? "💡 强制重登会清除该账号已保存的会话，登录完成前账号处于未登录状态。"
+                                : "💡 已有有效会话时不会清除登录态；关闭本窗口不会取消登录，任务会在后台继续。",
+                            TextWrapping = TextWrapping.Wrap,
+                            FontSize = 11,
+                            Foreground = Palette.Muted,
+                            LineHeight = 16,
+                        },
                     },
                     _closeButton,
                 },

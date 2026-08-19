@@ -53,8 +53,8 @@ internal sealed class UpdateAvailableDialog : Window
         later.Click += (_, _) => Close(UpdateChoice.RemindNextLaunch);
         var now = new Button
         {
-            Content = alreadyDownloaded ? "立即安装" : "立即更新",
-            Padding = new Thickness(14, 8),
+            Content = alreadyDownloaded ? "🚀 立即安装" : "📥 立即更新",
+            Padding = new Thickness(16, 8),
             Classes = { "primary" },
         };
         now.Click += (_, _) => Close(UpdateChoice.UpdateNow);
@@ -63,24 +63,31 @@ internal sealed class UpdateAvailableDialog : Window
         {
             Classes = { "card" },
             Margin = new Thickness(16),
-            Padding = new Thickness(22),
+            Padding = new Thickness(24),
             Child = new StackPanel
             {
-                Spacing = 14,
+                Spacing = 16,
                 Children =
                 {
-                    new TextBlock
+                    new StackPanel
                     {
-                        Text = $"新版本 {version} 可用",
-                        FontSize = 18,
-                        FontWeight = FontWeight.Bold,
-                        Foreground = Palette.TextPrimary,
-                    },
-                    new TextBlock
-                    {
-                        Text = $"当前版本 {currentVersion}",
-                        Foreground = Palette.TextSecondary,
-                        FontSize = 12,
+                        Spacing = 4,
+                        Children =
+                        {
+                            new TextBlock
+                            {
+                                Text = $"发现新版本 {version}",
+                                FontSize = 20,
+                                FontWeight = FontWeight.Bold,
+                                Foreground = Palette.TextPrimary,
+                            },
+                            new TextBlock
+                            {
+                                Text = $"当前版本 {currentVersion}",
+                                Foreground = Palette.TextSecondary,
+                                FontSize = 12,
+                            },
+                        },
                     },
                     new TextBlock
                     {
@@ -91,7 +98,7 @@ internal sealed class UpdateAvailableDialog : Window
                     },
                     new Border
                     {
-                        Padding = new Thickness(12, 10),
+                        Padding = new Thickness(14, 12),
                         CornerRadius = new CornerRadius(8),
                         Background = Brush.Parse("#0A101D"),
                         BorderBrush = Brush.Parse("#1E2D4A"),
@@ -109,15 +116,23 @@ internal sealed class UpdateAvailableDialog : Window
                             },
                         },
                     },
-                    new TextBlock
+                    new Border
                     {
-                        Text = alreadyDownloaded
-                            ? "更新包已下载完成。安装前 Agent 会先安全排空：仍有 Chrome 窗口或运行中的任务时会拒绝安装，不会强杀任务。"
-                            : "选择“立即更新”会下载更新包，并在 Agent 安全排空后安装重启：仍有 Chrome 窗口或运行中的任务时会拒绝安装，不会强杀任务。",
-                        TextWrapping = TextWrapping.Wrap,
-                        Foreground = Palette.TextSecondary,
-                        LineHeight = 18,
-                        FontSize = 12,
+                        Padding = new Thickness(12, 10),
+                        CornerRadius = new CornerRadius(8),
+                        Background = Brush.Parse("#0F172A"),
+                        BorderBrush = Brush.Parse("#1E2D4A"),
+                        BorderThickness = new Thickness(1),
+                        Child = new TextBlock
+                        {
+                            Text = alreadyDownloaded
+                                ? "🔒 更新包已下载完成。安装前 Agent 会先安全排空：仍有 Chrome 窗口或运行中的任务时会拒绝安装，不会强杀任务。"
+                                : "🔒 选择“立即更新”会下载更新包，并在 Agent 安全排空后安装重启：仍有 Chrome 窗口或运行中的任务时会拒绝安装，不会强杀任务。",
+                            TextWrapping = TextWrapping.Wrap,
+                            Foreground = Palette.TextSecondary,
+                            LineHeight = 17,
+                            FontSize = 12,
+                        },
                     },
                     new TextBlock
                     {
@@ -129,10 +144,10 @@ internal sealed class UpdateAvailableDialog : Window
                     },
                     new StackPanel
                     {
-                        Margin = new Thickness(0, 2, 0, 0),
+                        Margin = new Thickness(0, 4, 0, 0),
                         Orientation = Orientation.Horizontal,
                         HorizontalAlignment = HorizontalAlignment.Right,
-                        Spacing = 8,
+                        Spacing = 10,
                         Children = { ignore, later, now },
                     },
                 },
@@ -146,13 +161,13 @@ internal sealed class CloseChoiceDialog : Window
     public CloseChoiceDialog()
     {
         Title = "关闭 ChatGPT Account Keeper";
-        Width = 500;
-        Height = 250;
+        Width = 520;
+        Height = 270;
         CanResize = false;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         Background = Palette.BgDark;
 
-        var remember = new CheckBox { Content = "记住本次选择（以后可在设置中修改）", Margin = new Thickness(0, 4) };
+        var remember = new CheckBox { Content = "记住本次选择（以后可在设置中随时修改）", Margin = new Thickness(0, 4) };
         var cancel = new Button { Content = "取消", Padding = new Thickness(16, 8) };
         cancel.Click += (_, _) => Close(new CloseChoiceResult(CloseChoice.Cancel, false));
         var hide = new Button
@@ -174,10 +189,10 @@ internal sealed class CloseChoiceDialog : Window
         {
             Classes = { "card" },
             Margin = new Thickness(16),
-            Padding = new Thickness(22),
+            Padding = new Thickness(24),
             Child = new StackPanel
             {
-                Spacing = 14,
+                Spacing = 16,
                 Children =
                 {
                     new TextBlock
@@ -189,7 +204,7 @@ internal sealed class CloseChoiceDialog : Window
                     },
                     new TextBlock
                     {
-                        Text = "隐藏到托盘会保留 Agent、自动对话和巡检；退出全部会请求 Agent 关闭本程序管理的 Chrome、结束任务并完成数据库检查点，未能在数秒内收尾的任务会被中止。可在设置中记住默认行为。",
+                        Text = "隐藏到托盘会保留 Agent 守护进程、自动对话和会话巡检；退出全部会请求 Agent 安全关闭本程序管理的 Chrome、结束任务并完成数据库检查点，未能在数秒内收尾的任务会被安全中止。",
                         TextWrapping = TextWrapping.Wrap,
                         Foreground = Palette.TextSecondary,
                         LineHeight = 18,
@@ -200,7 +215,7 @@ internal sealed class CloseChoiceDialog : Window
                     {
                         Orientation = Orientation.Horizontal,
                         HorizontalAlignment = HorizontalAlignment.Right,
-                        Spacing = 8,
+                        Spacing = 10,
                         Children = { cancel, hide, exit },
                     },
                 },
@@ -215,21 +230,21 @@ internal sealed class NoticeDialog : Window
     {
         Title = title;
         Width = 520;
-        Height = 250;
+        Height = 260;
         CanResize = false;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         Background = Palette.BgDark;
 
-        var close = new Button { Content = "知道了", Classes = { "primary" }, Padding = new Thickness(18, 8) };
+        var close = new Button { Content = "知道了", Classes = { "primary" }, Padding = new Thickness(20, 8) };
         close.Click += (_, _) => Close();
         Content = new Border
         {
             Classes = { "card" },
             Margin = new Thickness(16),
-            Padding = new Thickness(22),
+            Padding = new Thickness(24),
             Child = new StackPanel
             {
-                Spacing = 14,
+                Spacing = 16,
                 Children =
                 {
                     new TextBlock
@@ -263,8 +278,8 @@ internal sealed class MigrationPreviewDialog : Window
     public MigrationPreviewDialog(LegacyMigrationProbeResult preview)
     {
         Title = "确认导入旧项目";
-        Width = 640;
-        Height = 540;
+        Width = 660;
+        Height = 560;
         CanResize = false;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         Background = Palette.BgDark;
@@ -315,14 +330,22 @@ internal sealed class MigrationPreviewDialog : Window
                     FontWeight = FontWeight.Bold,
                     Foreground = Palette.TextPrimary,
                 },
-                new TextBlock
+                new Border
                 {
-                    Text = preview.SourceRoot,
-                    Margin = new Thickness(0, 8, 0, 0),
-                    TextWrapping = TextWrapping.Wrap,
-                    Foreground = Palette.TextSecondary,
-                    FontSize = 12,
-                    LineHeight = 18,
+                    Margin = new Thickness(0, 4, 0, 0),
+                    Padding = new Thickness(10, 6),
+                    CornerRadius = new CornerRadius(6),
+                    Background = Brush.Parse("#0A101D"),
+                    BorderBrush = Brush.Parse("#1E2D4A"),
+                    BorderThickness = new Thickness(1),
+                    Child = new SelectableTextBlock
+                    {
+                        Text = preview.SourceRoot,
+                        TextWrapping = TextWrapping.Wrap,
+                        Foreground = Palette.TextSecondary,
+                        FontSize = 11,
+                        LineHeight = 16,
+                    },
                 },
             },
         };
@@ -335,7 +358,7 @@ internal sealed class MigrationPreviewDialog : Window
         {
             Orientation = Orientation.Horizontal,
             HorizontalAlignment = HorizontalAlignment.Right,
-            Spacing = 9,
+            Spacing = 10,
             Children = { cancel, import },
         };
         Grid.SetRow(footer, 2);
@@ -344,7 +367,7 @@ internal sealed class MigrationPreviewDialog : Window
         {
             Classes = { "card" },
             Margin = new Thickness(16),
-            Padding = new Thickness(22),
+            Padding = new Thickness(24),
             Child = new Grid
             {
                 RowDefinitions = new RowDefinitions("Auto,*,Auto"),
@@ -367,41 +390,64 @@ internal sealed class MigrationPreviewDialog : Window
     {
         var panel = new StackPanel
         {
-            Margin = new Thickness(0, 20, 0, 16),
-            Spacing = 8,
+            Margin = new Thickness(0, 16, 0, 16),
+            Spacing = 10,
             Children =
             {
-                new TextBlock { Text = $"账号 {counts.Accounts} · Profile {counts.Profiles} · 已归档 {counts.ArchivedProfiles}", Foreground = Palette.TextPrimary },
-                new TextBlock { Text = $"分组 {counts.Groups} · 会话集 {counts.ConversationSets} · 代理节点 {counts.ProxyNodes}", Foreground = Palette.TextPrimary },
-                new TextBlock { Text = $"状态 {counts.Statuses} · 历史 {counts.Histories} · 损坏历史行 {counts.Rejects}", Foreground = Palette.TextPrimary },
-                new TextBlock { Text = $"Profile 数据 {FormatBytes(preview.TotalProfileBytes)}", Foreground = Palette.Info },
-                new TextBlock { Text = space, FontWeight = FontWeight.SemiBold, Foreground = Palette.Ok },
                 new Border
                 {
-                    Padding = new Thickness(12),
+                    Padding = new Thickness(14, 10),
+                    CornerRadius = new CornerRadius(8),
+                    Background = Brush.Parse("#0F172A"),
+                    BorderBrush = Brush.Parse("#1E2D4A"),
+                    BorderThickness = new Thickness(1),
+                    Child = new StackPanel
+                    {
+                        Spacing = 6,
+                        Children =
+                        {
+                            new TextBlock { Text = $"👥 账号 {counts.Accounts} · ▣ Profile {counts.Profiles} · 已归档 {counts.ArchivedProfiles}", Foreground = Palette.TextPrimary, FontSize = 12 },
+                            new TextBlock { Text = $"🏷️ 分组 {counts.Groups} · ✎ 会话集 {counts.ConversationSets} · 🌐 代理节点 {counts.ProxyNodes}", Foreground = Palette.TextPrimary, FontSize = 12 },
+                            new TextBlock { Text = $"📊 状态 {counts.Statuses} · ◷ 历史 {counts.Histories} · 损坏行 {counts.Rejects}", Foreground = Palette.TextPrimary, FontSize = 12 },
+                            new TextBlock { Text = $"💾 Profile 数据 {FormatBytes(preview.TotalProfileBytes)}", Foreground = Palette.Info, FontWeight = FontWeight.SemiBold, FontSize = 12 },
+                            new TextBlock { Text = space, FontWeight = FontWeight.SemiBold, Foreground = Palette.Ok, FontSize = 12 },
+                        },
+                    },
+                },
+                new Border
+                {
+                    Padding = new Thickness(14, 10),
                     CornerRadius = new CornerRadius(8),
                     Background = Brush.Parse("#0F243E"),
                     BorderBrush = Brush.Parse("#1D4ED8"),
                     BorderThickness = new Thickness(1),
                     Child = new TextBlock
                     {
-                        Text = "程序只复制旧数据，不移动、不覆盖、不删除旧项目。迁移完成前请不要启动旧服务或相关 Chrome。首次迁移后调度保持停止。",
+                        Text = "💡 程序只复制旧数据，不移动、不覆盖、不删除旧项目。迁移完成前请不要启动旧服务或相关 Chrome。首次迁移后调度保持停止状态。",
                         TextWrapping = TextWrapping.Wrap,
                         Foreground = Brush.Parse("#93C5FD"),
                         FontSize = 11,
-                        LineHeight = 16,
+                        LineHeight = 17,
                     },
                 },
             },
         };
         foreach (var warning in warnings)
         {
-            panel.Children.Add(new TextBlock
+            panel.Children.Add(new Border
             {
-                Text = $"⚠ {warning}",
-                TextWrapping = TextWrapping.Wrap,
-                Foreground = Palette.Warning,
-                FontSize = 11,
+                Padding = new Thickness(12, 8),
+                CornerRadius = new CornerRadius(6),
+                Background = Brush.Parse("#38220A"),
+                BorderBrush = Brush.Parse("#92400E"),
+                BorderThickness = new Thickness(1),
+                Child = new TextBlock
+                {
+                    Text = $"⚠ {warning}",
+                    TextWrapping = TextWrapping.Wrap,
+                    Foreground = Palette.Warning,
+                    FontSize = 11,
+                },
             });
         }
         if (preview.ActiveLocks.Length > 0)
@@ -409,8 +455,9 @@ internal sealed class MigrationPreviewDialog : Window
             importButton.IsEnabled = false;
             var confirmLocks = new CheckBox
             {
-                Content = "我已确认旧服务及所有相关 Chrome 均已退出",
+                Content = "我已确认旧服务及所有相关 Chrome 均已完全退出",
                 Foreground = Palette.Danger,
+                Margin = new Thickness(0, 4, 0, 0),
             };
             confirmLocks.IsCheckedChanged += (_, _) =>
                 importButton.IsEnabled = confirmLocks.IsChecked == true && preview.EnoughSpace != false;
@@ -456,10 +503,10 @@ internal sealed class ConfirmationDialog : Window
         {
             Classes = { "card" },
             Margin = new Thickness(16),
-            Padding = new Thickness(22),
+            Padding = new Thickness(24),
             Child = new StackPanel
             {
-                Spacing = 14,
+                Spacing = 16,
                 Children =
                 {
                     new TextBlock { Text = title, FontSize = 18, FontWeight = FontWeight.Bold, Foreground = Palette.TextPrimary },
@@ -468,7 +515,7 @@ internal sealed class ConfirmationDialog : Window
                     {
                         Orientation = Orientation.Horizontal,
                         HorizontalAlignment = HorizontalAlignment.Right,
-                        Spacing = 9,
+                        Spacing = 10,
                         Children = { cancel, confirm },
                     },
                 },
@@ -495,20 +542,28 @@ internal sealed class AccountRemovalDialog : Window
         {
             Classes = { "card" },
             Margin = new Thickness(16),
-            Padding = new Thickness(22),
+            Padding = new Thickness(24),
             Child = new StackPanel
             {
-                Spacing = 14,
+                Spacing = 16,
                 Children =
                 {
                     new TextBlock { Text = "选择 Profile 的处理方式", FontSize = 18, FontWeight = FontWeight.Bold, Foreground = Palette.TextPrimary },
-                    new TextBlock
+                    new Border
                     {
-                        Text = $"账号：{account.DisplayName}\n\n仅移除账号会保留 Profile 为孤儿；归档会把 Profile 移出活动目录；永久删除会清除其中全部登录态且不可恢复。运行中的账号不能删除。",
-                        TextWrapping = TextWrapping.Wrap,
-                        Foreground = Palette.TextSecondary,
-                        FontSize = 12,
-                        LineHeight = 18,
+                        Padding = new Thickness(12, 10),
+                        CornerRadius = new CornerRadius(8),
+                        Background = Brush.Parse("#0A101D"),
+                        BorderBrush = Brush.Parse("#1E2D4A"),
+                        BorderThickness = new Thickness(1),
+                        Child = new TextBlock
+                        {
+                            Text = $"账号：{account.DisplayName}\n\n• 仅移除账号：保留 Profile 为孤儿，可随时重新关联；\n• 归档 Profile：将 Profile 移出活动目录备用；\n• 永久删除：彻底清除该 Profile 及全部登录态，不可恢复；\n• 运行保护：运行中的账号不能删除。",
+                            TextWrapping = TextWrapping.Wrap,
+                            Foreground = Palette.TextSecondary,
+                            FontSize = 12,
+                            LineHeight = 18,
+                        },
                     },
                     new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, HorizontalAlignment = HorizontalAlignment.Right, Children = { cancel, detach, archive, purge } },
                 },
@@ -520,7 +575,7 @@ internal sealed class AccountRemovalDialog : Window
             var button = new Button
             {
                 Content = text,
-                Padding = new Thickness(12, 8),
+                Padding = new Thickness(14, 8),
             };
             if (isWarn) button.Classes.Add("warn");
             else if (isDanger) button.Classes.Add("danger");

@@ -9,15 +9,15 @@
   <Grid Margin="24,0,24,20" ColumnDefinitions="1.35*,1*" ColumnSpacing="16">
 
     <!-- 左侧：Profile 列表与扫描工具 -->
-    <Border Classes="card" Padding="16">
+    <Border Classes="card" Padding="18">
       <Grid RowDefinitions="Auto,*">
-        <StackPanel Spacing="10" Margin="0,0,0,12">
-          <TextBlock Text="{Binding Summary}" FontSize="12" Foreground="#93C5FD" TextWrapping="Wrap" />
+        <StackPanel Spacing="12" Margin="0,0,0,14">
+          <TextBlock Text="{Binding Summary}" FontSize="12" FontWeight="Medium" Foreground="#93C5FD" TextWrapping="Wrap" />
           <StackPanel Orientation="Horizontal" Spacing="8">
             <Button Content="🔍 重新扫描" Classes="primary" Padding="10,5" FontSize="11" Command="{Binding ScanCommand}" />
             <Button Content="🧹 清理全部可重建缓存" Padding="10,5" FontSize="11" Command="{Binding CleanAllCommand}" />
             <CheckBox Content="只看孤儿 Profile" IsChecked="{Binding OnlyOrphans, Mode=TwoWay}"
-                      VerticalAlignment="Center" Margin="6,0,0,0" />
+                      VerticalAlignment="Center" Margin="8,0,0,0" />
           </StackPanel>
         </StackPanel>
 
@@ -25,10 +25,10 @@
           <ListBox ItemsSource="{Binding Items}" SelectedItem="{Binding Selected, Mode=TwoWay}">
             <ListBox.ItemTemplate>
               <DataTemplate x:DataType="models:ProfileEntryDto">
-                <Border Margin="0,2" Padding="12,10" CornerRadius="8" Background="#0F172A" BorderBrush="#1E2D4A" BorderThickness="1">
+                <Border Margin="0,2" Padding="14,10" CornerRadius="8" Background="#0F172A" BorderBrush="{StaticResource BrushBorderSubtle}" BorderThickness="1">
                   <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12" VerticalAlignment="Center">
-                    <StackPanel Spacing="2">
-                      <TextBlock Text="{Binding DisplayName}" FontWeight="Bold" FontSize="12" Foreground="#F8FAFC"
+                    <StackPanel Spacing="3">
+                      <TextBlock Text="{Binding DisplayName}" FontWeight="Bold" FontSize="13" Foreground="#F8FAFC"
                                  TextTrimming="CharacterEllipsis" />
                       <TextBlock Text="{Binding SizeText}" FontSize="10" Foreground="#94A3B8" />
                     </StackPanel>
@@ -43,10 +43,12 @@
 
           <!-- 空列表提示 -->
           <StackPanel IsVisible="{Binding IsEmpty}" VerticalAlignment="Center" HorizontalAlignment="Center"
-                      Spacing="8" MaxWidth="330">
-            <TextBlock Text="📁" FontSize="30" HorizontalAlignment="Center" />
-            <TextBlock Text="暂无 Profile 数据" FontSize="14" FontWeight="SemiBold" Foreground="#F8FAFC" HorizontalAlignment="Center" />
-            <TextBlock TextWrapping="Wrap" TextAlignment="Center" FontSize="11" Foreground="#94A3B8" LineHeight="16"
+                      Spacing="12" MaxWidth="330">
+            <Border Width="64" Height="64" CornerRadius="32" Background="#1E293B" HorizontalAlignment="Center">
+              <Path Data="{StaticResource IconFolder}" Width="26" Height="26" Classes="vector-icon" Stroke="#60A5FA" />
+            </Border>
+            <TextBlock Text="暂无 Profile 数据" FontSize="15" FontWeight="SemiBold" Foreground="#F8FAFC" HorizontalAlignment="Center" />
+            <TextBlock TextWrapping="Wrap" TextAlignment="Center" FontSize="11" Foreground="#94A3B8" LineHeight="17"
                        Text="{Binding EmptyText}" />
           </StackPanel>
         </Panel>
@@ -54,20 +56,20 @@
     </Border>
 
     <!-- 右侧：所选 Profile 操作与安全说明 -->
-    <Border Grid.Column="1" Classes="card" Padding="20">
+    <Border Grid.Column="1" Classes="card" Padding="22">
       <ScrollViewer>
-        <StackPanel Spacing="14" IsVisible="{Binding HasSelected}">
+        <StackPanel Spacing="16" IsVisible="{Binding HasSelected}">
           <TextBlock Text="所选 Profile 详情" FontSize="16" FontWeight="Bold" Foreground="#F8FAFC" />
 
-          <Border Padding="14" CornerRadius="10" Background="#0F172A" BorderBrush="#1E2D4A" BorderThickness="1">
-            <StackPanel Spacing="6">
+          <Border Padding="16" CornerRadius="10" Background="#0F172A" BorderBrush="{StaticResource BrushBorder}" BorderThickness="1">
+            <StackPanel Spacing="8">
               <TextBlock Text="{Binding Selected.DisplayName}" FontSize="16" FontWeight="Bold" Foreground="#93C5FD" TextWrapping="Wrap" />
               <Grid ColumnDefinitions="*,*" Margin="0,4,0,0">
-                <StackPanel Spacing="2">
+                <StackPanel Spacing="3">
                   <TextBlock Text="状态" FontSize="10" Foreground="#64748B" />
                   <TextBlock Text="{Binding Selected.StateText}" FontSize="12" FontWeight="SemiBold" Foreground="#F8FAFC" />
                 </StackPanel>
-                <StackPanel Grid.Column="1" Spacing="2">
+                <StackPanel Grid.Column="1" Spacing="3">
                   <TextBlock Text="磁盘占用" FontSize="10" Foreground="#64748B" />
                   <TextBlock Text="{Binding Selected.SizeText}" FontSize="12" FontWeight="SemiBold" Foreground="#F8FAFC" />
                 </StackPanel>
@@ -76,25 +78,25 @@
           </Border>
 
           <!-- 孤儿状态提示 -->
-          <Border Padding="10" CornerRadius="8" Background="#1E293B" BorderBrush="#334155" BorderThickness="1">
-            <TextBlock Text="{Binding OrphanHint}" FontSize="11" Foreground="#FCD34D" TextWrapping="Wrap" />
+          <Border Padding="12" CornerRadius="8" Background="#1E293B" BorderBrush="{StaticResource BrushBorderHover}" BorderThickness="1">
+            <TextBlock Text="{Binding OrphanHint}" FontSize="11" Foreground="#FCD34D" TextWrapping="Wrap" LineHeight="16" />
           </Border>
 
-          <StackPanel Spacing="8">
-            <Button Content="🧹 清理所选缓存 (安全)" HorizontalAlignment="Stretch" Padding="12,7"
+          <StackPanel Spacing="10">
+            <Button Content="🧹 清理所选缓存 (安全)" HorizontalAlignment="Stretch" Padding="12,8"
                     Command="{Binding CleanSelectedCommand}" />
-            <Button Content="📦 归档孤儿 Profile…" HorizontalAlignment="Stretch" Padding="12,7"
+            <Button Content="📦 归档孤儿 Profile…" HorizontalAlignment="Stretch" Padding="12,8"
                     IsEnabled="{Binding CanOperateOrphan}" Command="{Binding ArchiveOrphanCommand}" />
-            <Button Content="🗑 永久删除孤儿 Profile…" Classes="danger" HorizontalAlignment="Stretch" Padding="12,7"
+            <Button Content="🗑 永久删除孤儿 Profile…" Classes="danger" HorizontalAlignment="Stretch" Padding="12,8"
                     IsEnabled="{Binding CanOperateOrphan}" Command="{Binding PurgeOrphanCommand}" />
           </StackPanel>
 
           <!-- 安全指引说明 -->
-          <Border Padding="12" Background="#0F172A" BorderBrush="#1E2D4A" BorderThickness="1" CornerRadius="8">
+          <Border Padding="14,12" Background="#0A101D" BorderBrush="{StaticResource BrushBorderSubtle}" BorderThickness="1" CornerRadius="8">
             <StackPanel Spacing="4">
               <TextBlock Text="🛡️ 缓存与存储安全保障" FontSize="11" FontWeight="SemiBold" Foreground="#93C5FD" />
-              <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#94A3B8" LineHeight="16"
-                         Text="缓存清理只删可安全重建的网页、代码与 GPU 缓存，完全保留 Cookie、Local Storage 与 IndexedDB，登录态不受影响。永久删除会二次确认；关联账号或正在运行中的 Profile 受写保护不可删除。" />
+              <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#94A3B8" LineHeight="17"
+                         Text="缓存清理仅删除可安全重建的网页媒体与代码缓存，完全保留 Cookie、Local Storage 与 IndexedDB，账号登录态不会丢失。关联账号或正在运行中的 Profile 受写保护不可删除。" />
             </StackPanel>
           </Border>
         </StackPanel>

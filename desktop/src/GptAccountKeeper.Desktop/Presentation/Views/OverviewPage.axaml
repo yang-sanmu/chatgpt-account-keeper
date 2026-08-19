@@ -5,44 +5,49 @@
     xmlns:pages="using:GptAccountKeeper.Desktop.Presentation.Pages"
     x:DataType="pages:OverviewPageViewModel">
 
-  <ScrollViewer Padding="0,0,0,20">
-    <StackPanel Margin="24,0,24,24" Spacing="16">
+  <ScrollViewer Padding="0,0,0,24">
+    <StackPanel Margin="24,0,24,24" Spacing="18">
 
-      <!-- 首次启动引导 (仅在需要时显示) -->
+      <!-- 首次启动引导 Hero Card (仅在需要时显示) -->
       <Border IsVisible="{Binding NeedsFirstRun}"
               Classes="card"
               Background="#0F243E"
-              BorderBrush="#1D4ED8"
-              Padding="20">
-        <StackPanel Spacing="12">
-          <StackPanel Orientation="Horizontal" Spacing="8">
-            <TextBlock Text="🚀" FontSize="20" VerticalAlignment="Center" />
-            <TextBlock Text="首次启动：创建新数据或导入旧项目" FontSize="17" FontWeight="Bold" Foreground="#93C5FD" VerticalAlignment="Center" />
+              BorderBrush="#2563EB"
+              Padding="22">
+        <StackPanel Spacing="14">
+          <Grid ColumnDefinitions="*,Auto">
+            <StackPanel Spacing="4">
+              <StackPanel Orientation="Horizontal" Spacing="8">
+                <Path Data="{StaticResource IconSparkles}" Width="20" Height="20" Classes="vector-icon" Stroke="#60A5FA" />
+                <TextBlock Text="首次启动：创建新数据或导入旧版项目" FontSize="18" FontWeight="Bold" Foreground="#93C5FD" VerticalAlignment="Center" />
+              </StackPanel>
+              <TextBlock TextWrapping="Wrap" Foreground="#CBD5E1" FontSize="12" LineHeight="18" Margin="28,0,0,0"
+                         Text="导入时请选择旧项目根目录；如果选择 profiles 文件夹，程序会自动识别其父目录。预检完成后会展示账号数量、Profile 大小、运行锁检测与所需磁盘空间，确认后安全复制。" />
+            </StackPanel>
+          </Grid>
+          <StackPanel Orientation="Horizontal" Spacing="10" Margin="28,4,0,0">
+            <Button Content="📥 预览并导入旧项目" Classes="primary" Command="{Binding ImportLegacyCommand}" />
+            <Button Content="✨ 创建全新数据" Command="{Binding CreateFreshDataCommand}" />
+            <Button Content="📂 选择其他数据目录" Command="{Binding ChooseDataDirectoryCommand}" />
           </StackPanel>
-          <TextBlock TextWrapping="Wrap" Foreground="#CBD5E1" FontSize="12" LineHeight="18"
-                     Text="导入时请选择旧项目根目录；如果选择 profiles 文件夹，程序会自动识别父目录。扫描完成后会先展示账号、Profile、历史、所需空间和运行锁，确认后才安全复制。" />
-          <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,4,0,0">
-            <Button Content="预览并导入旧项目" Classes="primary" Command="{Binding ImportLegacyCommand}" />
-            <Button Content="创建全新数据" Command="{Binding CreateFreshDataCommand}" />
-            <Button Content="选择其他数据目录" Command="{Binding ChooseDataDirectoryCommand}" />
-          </StackPanel>
-          <ProgressBar Minimum="0" Maximum="1" Value="{Binding MigrationProgress}" Height="6" Margin="0,4,0,0" />
-          <TextBlock Text="{Binding MigrationStage}" TextWrapping="Wrap" FontSize="11" Foreground="#94A3B8" />
+          <ProgressBar Minimum="0" Maximum="1" Value="{Binding MigrationProgress}" Height="6" Margin="28,6,0,0" />
+          <TextBlock Text="{Binding MigrationStage}" TextWrapping="Wrap" FontSize="11" Foreground="#94A3B8" Margin="28,0,0,0" />
         </StackPanel>
       </Border>
 
-      <!-- 4 大核心看板指标 (Stats Overview) -->
-      <Grid ColumnDefinitions="*,*,*,*" ColumnSpacing="14">
+      <!-- 4 大核心看板指标 (Stats Overview Grid) -->
+      <Grid ColumnDefinitions="*,*,*,*" ColumnSpacing="16">
 
         <!-- 卡片 1: 总账号 -->
-        <Border Classes="card" Padding="18,16">
-          <Grid ColumnDefinitions="46,*" ColumnSpacing="14" VerticalAlignment="Center">
-            <Border Width="46" Height="46" CornerRadius="12" Background="#172554">
-              <TextBlock Text="👥" FontSize="22" HorizontalAlignment="Center" VerticalAlignment="Center" />
+        <Border Classes="stat-card" Padding="20,18">
+          <Grid ColumnDefinitions="48,*" ColumnSpacing="14" VerticalAlignment="Center">
+            <!-- 图标容器 -->
+            <Border Width="48" Height="48" CornerRadius="12" Background="#172554">
+              <Path Data="{StaticResource IconUsers}" Width="22" Height="22" Classes="vector-icon" Stroke="#60A5FA" />
             </Border>
             <StackPanel Grid.Column="1" Spacing="3" VerticalAlignment="Center">
-              <TextBlock Text="总账号数" FontSize="11" FontWeight="Medium" Foreground="#94A3B8" />
-              <TextBlock Text="{Binding AccountCount}" FontSize="26" FontWeight="Bold" Foreground="#F8FAFC" />
+              <TextBlock Text="总账号数" FontSize="12" FontWeight="Medium" Foreground="#94A3B8" />
+              <TextBlock Text="{Binding AccountCount}" FontSize="28" FontWeight="Bold" Foreground="#F8FAFC" />
               <TextBlock FontSize="11" Foreground="#60A5FA">
                 <Run Text="{Binding EnabledCount}" /><Run Text=" 个参与调度" />
               </TextBlock>
@@ -51,14 +56,14 @@
         </Border>
 
         <!-- 卡片 2: 已登录在线 -->
-        <Border Grid.Column="1" Classes="card" Padding="18,16">
-          <Grid ColumnDefinitions="46,*" ColumnSpacing="14" VerticalAlignment="Center">
-            <Border Width="46" Height="46" CornerRadius="12" Background="#064E3B">
-              <TextBlock Text="🟢" FontSize="20" HorizontalAlignment="Center" VerticalAlignment="Center" />
+        <Border Grid.Column="1" Classes="stat-card" Padding="20,18">
+          <Grid ColumnDefinitions="48,*" ColumnSpacing="14" VerticalAlignment="Center">
+            <Border Width="48" Height="48" CornerRadius="12" Background="#064E3B">
+              <Path Data="{StaticResource IconCheckCircle}" Width="22" Height="22" Classes="vector-icon" Stroke="#10B981" />
             </Border>
             <StackPanel Grid.Column="1" Spacing="3" VerticalAlignment="Center">
-              <TextBlock Text="已登录在线" FontSize="11" FontWeight="Medium" Foreground="#94A3B8" />
-              <TextBlock Text="{Binding LoggedInCount}" FontSize="26" FontWeight="Bold" Foreground="#10B981" />
+              <TextBlock Text="已登录在线" FontSize="12" FontWeight="Medium" Foreground="#94A3B8" />
+              <TextBlock Text="{Binding LoggedInCount}" FontSize="28" FontWeight="Bold" Foreground="#10B981" />
               <TextBlock FontSize="11" Foreground="#F59E0B" IsVisible="{Binding HasNeedsReauth}">
                 <Run Text="{Binding NeedsReauthCount}" /><Run Text=" 个需重新登录" />
               </TextBlock>
@@ -67,75 +72,79 @@
           </Grid>
         </Border>
 
-        <!-- 卡片 3: 打开的网页 Chrome -->
-        <Border Grid.Column="2" Classes="card" Padding="18,16">
-          <Grid ColumnDefinitions="46,*" ColumnSpacing="14" VerticalAlignment="Center">
-            <Border Width="46" Height="46" CornerRadius="12" Background="#1E1B4B">
-              <TextBlock Text="🌐" FontSize="22" HorizontalAlignment="Center" VerticalAlignment="Center" />
+        <!-- 卡片 3: 打开的 Chrome 窗口 -->
+        <Border Grid.Column="2" Classes="stat-card" Padding="20,18">
+          <Grid ColumnDefinitions="48,*" ColumnSpacing="14" VerticalAlignment="Center">
+            <Border Width="48" Height="48" CornerRadius="12" Background="#1E1B4B">
+              <Path Data="{StaticResource IconGlobe}" Width="22" Height="22" Classes="vector-icon" Stroke="#818CF8" />
             </Border>
             <StackPanel Grid.Column="1" Spacing="3" VerticalAlignment="Center">
-              <TextBlock Text="打开的 Chrome" FontSize="11" FontWeight="Medium" Foreground="#94A3B8" />
-              <TextBlock Text="{Binding OpenPageCount}" FontSize="26" FontWeight="Bold" Foreground="#818CF8" />
-              <TextBlock Text="运行中的活动窗口" FontSize="11" Foreground="#64748B" />
+              <TextBlock Text="打开的 Chrome" FontSize="12" FontWeight="Medium" Foreground="#94A3B8" />
+              <TextBlock Text="{Binding OpenPageCount}" FontSize="28" FontWeight="Bold" Foreground="#818CF8" />
+              <TextBlock Text="运行中的浏览器窗口" FontSize="11" Foreground="#64748B" />
             </StackPanel>
           </Grid>
         </Border>
 
         <!-- 卡片 4: 正在进行的任务 -->
-        <Border Grid.Column="3" Classes="card" Padding="18,16">
-          <Grid ColumnDefinitions="46,*" ColumnSpacing="14" VerticalAlignment="Center">
-            <Border Width="46" Height="46" CornerRadius="12" Background="#2E1065">
-              <TextBlock Text="⚡" FontSize="22" HorizontalAlignment="Center" VerticalAlignment="Center" />
+        <Border Grid.Column="3" Classes="stat-card" Padding="20,18">
+          <Grid ColumnDefinitions="48,*" ColumnSpacing="14" VerticalAlignment="Center">
+            <Border Width="48" Height="48" CornerRadius="12" Background="#2E1065">
+              <Path Data="{StaticResource IconActivity}" Width="22" Height="22" Classes="vector-icon" Stroke="#C084FC" />
             </Border>
             <StackPanel Grid.Column="1" Spacing="3" VerticalAlignment="Center">
-              <TextBlock Text="进行中的任务" FontSize="11" FontWeight="Medium" Foreground="#94A3B8" />
-              <TextBlock Text="{Binding ActiveOperationCount}" FontSize="26" FontWeight="Bold" Foreground="#C084FC" />
+              <TextBlock Text="进行中的任务" FontSize="12" FontWeight="Medium" Foreground="#94A3B8" />
+              <TextBlock Text="{Binding ActiveOperationCount}" FontSize="28" FontWeight="Bold" Foreground="#C084FC" />
               <TextBlock Text="多阶段任务正在执行" FontSize="11" Foreground="#64748B" />
             </StackPanel>
           </Grid>
         </Border>
       </Grid>
 
-      <!-- 双栏卡片区 -->
-      <Grid ColumnDefinitions="1*,1*" ColumnSpacing="14">
+      <!-- 双栏控制区 -->
+      <Grid ColumnDefinitions="1*,1*" ColumnSpacing="16">
 
         <!-- 左栏：自动调度与连接状态 -->
-        <StackPanel Spacing="14">
-          <Border Classes="card" Padding="20">
-            <StackPanel Spacing="14">
+        <StackPanel Spacing="16">
+          <!-- 自动调度控制中心 -->
+          <Border Classes="card" Padding="22">
+            <StackPanel Spacing="16">
               <Grid ColumnDefinitions="*,Auto">
-                <StackPanel Spacing="2">
+                <StackPanel Spacing="3">
                   <TextBlock Text="自动调度控制中心" FontSize="16" FontWeight="SemiBold" Foreground="#F8FAFC" />
-                  <TextBlock Text="后台自动轮换对话与状态巡检" FontSize="11" Foreground="#94A3B8" />
+                  <TextBlock Text="后台按设定的时间间隔轮换对话与状态巡检" FontSize="11" Foreground="#94A3B8" />
                 </StackPanel>
-                <Border Grid.Column="1" Padding="10,4" CornerRadius="16" Background="#0F172A" BorderBrush="#1E2D4A" BorderThickness="1">
-                  <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
-                    <Ellipse Width="8" Height="8" Fill="{Binding SchedulerStatusColor}" />
+                <Border Grid.Column="1" Padding="12,5" CornerRadius="16" Background="#0F172A" BorderBrush="{StaticResource BrushBorder}" BorderThickness="1">
+                  <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                    <Ellipse Width="8" Height="8" Fill="{Binding SchedulerStatusColor}" VerticalAlignment="Center" />
                     <TextBlock Text="{Binding SchedulerStatusText}" FontSize="12" FontWeight="SemiBold"
-                               Foreground="{Binding SchedulerStatusColor}" />
+                               Foreground="{Binding SchedulerStatusColor}" VerticalAlignment="Center" />
                   </StackPanel>
                 </Border>
               </Grid>
 
               <StackPanel Orientation="Horizontal" Spacing="10">
-                <Button Content="启动自动调度" Classes="primary" Command="{Binding StartSchedulerCommand}" />
-                <Button Content="停止调度" Command="{Binding StopSchedulerCommand}" />
+                <Button Content="▶ 启动自动调度" Classes="primary" Command="{Binding StartSchedulerCommand}" />
+                <Button Content="⏹ 停止调度" Command="{Binding StopSchedulerCommand}" />
               </StackPanel>
 
-              <Border Padding="12" CornerRadius="8" Background="#0F172A" BorderBrush="#1E2D4A" BorderThickness="1">
-                <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#94A3B8" LineHeight="16"
-                           Text="💡 最小化到托盘后，自动对话与 Session 巡检依然由本地独立 Agent 持续执行。各账号会叠加随机抖动以防止被识别为机器人行为。" />
+              <Border Padding="14,12" CornerRadius="8" Background="#0A101D" BorderBrush="{StaticResource BrushBorderSubtle}" BorderThickness="1">
+                <StackPanel Spacing="4">
+                  <TextBlock Text="💡 托盘常驻与风控保护" FontSize="11" FontWeight="SemiBold" Foreground="#93C5FD" />
+                  <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#94A3B8" LineHeight="17"
+                             Text="最小化到系统托盘后，自动对话与 Session 巡检依然由本地独立 Agent 持续执行。各账号会叠加随机抖动以防止被识别为机器人行为。" />
+                </StackPanel>
               </Border>
             </StackPanel>
           </Border>
 
-          <!-- Agent 连接状态 -->
-          <Border Classes="card" Padding="20">
-            <StackPanel Spacing="12">
+          <!-- Agent 守护进程状态 -->
+          <Border Classes="card" Padding="22">
+            <StackPanel Spacing="14">
               <Grid ColumnDefinitions="*,Auto">
                 <TextBlock Text="Agent 守护进程状态" FontSize="15" FontWeight="SemiBold" Foreground="#F8FAFC" />
                 <Border Grid.Column="1" Padding="8,3" CornerRadius="12" Background="#0F172A"
-                        BorderBrush="#1E2D4A" BorderThickness="1">
+                        BorderBrush="{StaticResource BrushBorder}" BorderThickness="1">
                   <TextBlock Text="{Binding ConnectionStatus}" FontSize="11" FontWeight="SemiBold" Foreground="#93C5FD" />
                 </Border>
               </Grid>
@@ -159,8 +168,8 @@
         </StackPanel>
 
         <!-- 右栏：数据位置与系统诊断 -->
-        <Border Classes="card" Padding="20">
-          <StackPanel Spacing="14">
+        <Border Grid.Column="1" Classes="card" Padding="22">
+          <StackPanel Spacing="16">
             <Grid ColumnDefinitions="*,Auto">
               <TextBlock Text="数据与系统诊断" FontSize="16" FontWeight="SemiBold" Foreground="#F8FAFC" />
               <Border Grid.Column="1" Padding="6,2" CornerRadius="4" Background="#1E293B">
@@ -168,23 +177,26 @@
               </Border>
             </Grid>
 
-            <StackPanel Spacing="4">
+            <StackPanel Spacing="5">
               <TextBlock Text="数据存储目录" FontSize="11" FontWeight="Medium" Foreground="#94A3B8" />
-              <Border Padding="10,8" CornerRadius="8" Background="#0A101D" BorderBrush="#1E2D4A" BorderThickness="1">
-                <SelectableTextBlock Text="{Binding DataDirectory}" TextWrapping="Wrap" FontSize="11" Foreground="#CBD5E1" />
+              <Border Padding="10,8" CornerRadius="8" Background="#0A101D" BorderBrush="{StaticResource BrushBorderSubtle}" BorderThickness="1">
+                <SelectableTextBlock Text="{Binding DataDirectory}" TextWrapping="Wrap" FontSize="11" Foreground="#CBD5E1" FontFamily="Consolas, monospace" />
               </Border>
             </StackPanel>
 
-            <StackPanel Spacing="4">
+            <StackPanel Spacing="5">
               <TextBlock Text="Agent 运行日志" FontSize="11" FontWeight="Medium" Foreground="#94A3B8" />
-              <Border Padding="10,8" CornerRadius="8" Background="#0A101D" BorderBrush="#1E2D4A" BorderThickness="1">
-                <SelectableTextBlock Text="{Binding AgentLogFile}" TextWrapping="Wrap" FontSize="11" Foreground="#CBD5E1" />
+              <Border Padding="10,8" CornerRadius="8" Background="#0A101D" BorderBrush="{StaticResource BrushBorderSubtle}" BorderThickness="1">
+                <SelectableTextBlock Text="{Binding AgentLogFile}" TextWrapping="Wrap" FontSize="11" Foreground="#CBD5E1" FontFamily="Consolas, monospace" />
               </Border>
             </StackPanel>
 
-            <Border Padding="12" CornerRadius="8" Background="#0F172A" BorderBrush="#1E2D4A" BorderThickness="1">
-              <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#94A3B8" LineHeight="16"
-                         Text="在「设置」页面中可以直接一键打开数据或日志文件夹，或者复制完整路径用于故障排查与备份。" />
+            <Border Padding="14,12" CornerRadius="8" Background="#0A101D" BorderBrush="{StaticResource BrushBorderSubtle}" BorderThickness="1">
+              <StackPanel Spacing="4">
+                <TextBlock Text="⚙ 快捷管理建议" FontSize="11" FontWeight="SemiBold" Foreground="#93C5FD" />
+                <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#94A3B8" LineHeight="17"
+                           Text="在「设置」页面中可以直接一键打开数据或日志文件夹，或者复制完整路径用于故障排查与备份。" />
+              </StackPanel>
             </Border>
           </StackPanel>
         </Border>

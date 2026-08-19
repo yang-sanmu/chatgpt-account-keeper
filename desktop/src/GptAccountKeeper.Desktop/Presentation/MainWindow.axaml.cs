@@ -41,6 +41,7 @@ internal sealed partial class MainWindow : Window
         ViewModel.Settings.CopyRequested = CopyToClipboardAsync;
         ViewModel.Settings.RevealRequested = RevealAsync;
         ViewModel.Overview.RevealRequested = RevealAsync;
+        ViewModel.Overview.StartSchedulerPromptRequested = ShowSchedulerStartPromptAsync;
     }
 
     public ShellViewModel ViewModel { get; }
@@ -295,6 +296,12 @@ internal sealed partial class MainWindow : Window
                 prompt.AlreadyDownloaded,
                 prompt.Summary)
             .ShowDialog<UpdateChoice>(this);
+    }
+
+    private Task<SchedulerStartChoice> ShowSchedulerStartPromptAsync()
+    {
+        ShowAndActivate();
+        return new SchedulerStartDialog().ShowDialog<SchedulerStartChoice>(this);
     }
 
     private Task ShowUpdateProgressAsync(UpdateProgressRequest request)

@@ -10,6 +10,7 @@ internal sealed class OverviewPageViewModel : PageViewModel
 {
     private readonly AgentSession _session;
     private readonly AppPaths _paths;
+    private readonly DesktopBehaviorViewModel _behavior;
     private bool _schedulerRunning;
     private bool _needsFirstRun;
     private double _migrationProgress;
@@ -26,12 +27,16 @@ internal sealed class OverviewPageViewModel : PageViewModel
     private int _openPageCount;
     private int _activeOperationCount;
 
-    public OverviewPageViewModel(AgentSession session, AppPaths paths)
+    public OverviewPageViewModel(
+        AgentSession session,
+        AppPaths paths,
+        DesktopBehaviorViewModel behavior)
         : base("overview", "⌂", "总览", "连接状态、调度与后台活动")
     {
         _session = session;
         _paths = paths;
-        StartSchedulerCommand = new AsyncRelayCommand(() => ChangeSchedulerAsync(true));
+        _behavior = behavior;
+        StartSchedulerCommand = new AsyncRelayCommand(StartSchedulerAsync);
         StopSchedulerCommand = new AsyncRelayCommand(() => ChangeSchedulerAsync(false));
     }
 
@@ -44,6 +49,9 @@ internal sealed class OverviewPageViewModel : PageViewModel
     public ICommand? ChooseDataDirectoryCommand { get; set; }
 
     public Func<string, Task>? RevealRequested { get; set; }
+
+    /// <summary>手动启动调度时，由主窗口询问是否记住自动启动偏好。</summary>
+    public Func<Task<SchedulerStartChoice>>? StartSchedulerPromptRequested { get; set; }
 
     public string ConnectionStatus
     {
@@ -171,7 +179,32 @@ internal sealed class OverviewPageViewModel : PageViewModel
 
     public void ApplyActiveOperationCount(int count) => ActiveOperationCount = count;
 
-    private Task ChangeSchedulerAsync(bool start) => _session.RunAsync(
+    internal Task EnsureSchedulerStartedAsync() => SchedulerRunning
+        ? Task.CompletedTask
+        : ChangeSchedulerAsync(true, "已根据设置自动启动调度");
+
+    internal async Task<bool> ApplySchedulerStartChoiceAsync(SchedulerStartChoice choice)
+    {
+        if (choice == SchedulerStartChoice.Cancel) return false;
+        if (choice == SchedulerStartChoice.Always)
+        {
+            await _behavior.SetAutoStartSchedulerAsync(true);
+        }
+        return true;
+    }
+
+    private async Task StartSchedulerAsync()
+    {
+        var choice = SchedulerStartChoice.StartOnce;
+        if (!_behavior.AutoStartScheduler && StartSchedulerPromptRequested is not null)
+        {
+            choice = await StartSchedulerPromptRequested();
+        }
+        if (!await ApplySchedulerStartChoiceAsync(choice)) return;
+        await ChangeSchedulerAsync(true);
+    }
+
+    private Task ChangeSchedulerAsync(bool start, string? successMessage = null) => _session.RunAsync(
         start ? "启动调度" : "停止调度",
         async () =>
         {
@@ -183,7 +216,7 @@ internal sealed class OverviewPageViewModel : PageViewModel
                 AgentSession.NewCommandId());
             SchedulerRunning = state.Running;
         },
-        start
+        successMessage ?? (start
             ? "调度已启动，隐藏到托盘后仍会继续执行"
-            : "已请求停止调度，正在运行的账号会先完成本次对话");
+            : "已请求停止调度，正在运行的账号会先完成本次对话"));
 }

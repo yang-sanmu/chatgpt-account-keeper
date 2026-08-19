@@ -934,11 +934,13 @@ public sealed class DesktopUsabilityTests
         await fixture.Shell.Behavior.LoadAsync(fixture.Shell.Lifetime);
         fixture.Shell.Behavior.SelectedTheme = fixture.Shell.Behavior.ThemeOptions.Single(
             option => option.Value == AppTheme.Light);
+        await fixture.Shell.Behavior.SetAutoStartSchedulerAsync(true);
         await fixture.Shell.Behavior.RememberCloseChoiceAsync(CloseChoice.HideToTray);
         await fixture.Shell.Behavior.SaveWindowPlacementAsync(120, 80, 1280, 840, maximized: true);
 
         var settings = await new DesktopSettingsStore(fixture.Paths).LoadAsync();
         Assert.Equal(AppTheme.Light, settings.Theme);
+        Assert.True(settings.AutoStartScheduler);
         Assert.Equal(CloseBehavior.MinimizeToTray, settings.CloseBehavior);
         Assert.Equal(120, settings.WindowX);
         Assert.Equal(80, settings.WindowY);
@@ -1048,6 +1050,39 @@ public sealed class DesktopUsabilityTests
         Assert.True(checked_.Wait(TimeSpan.FromSeconds(10)));
         Assert.NotEqual("idle", updates.Snapshot.State);
         await Task.CompletedTask;
+    }
+
+    [Fact]
+    public async Task ManualSchedulerStartChoiceControlsTheRememberedLaunchBehavior()
+    {
+        await using var fixture = CreateShellFixture();
+        await fixture.Shell.Behavior.LoadAsync(fixture.Shell.Lifetime);
+
+        Assert.False(await fixture.Shell.Overview.ApplySchedulerStartChoiceAsync(SchedulerStartChoice.Cancel));
+        Assert.False(fixture.Shell.Behavior.AutoStartScheduler);
+
+        Assert.True(await fixture.Shell.Overview.ApplySchedulerStartChoiceAsync(SchedulerStartChoice.StartOnce));
+        Assert.False(fixture.Shell.Behavior.AutoStartScheduler);
+
+        Assert.True(await fixture.Shell.Overview.ApplySchedulerStartChoiceAsync(SchedulerStartChoice.Always));
+        Assert.True(fixture.Shell.Behavior.AutoStartScheduler);
+        Assert.True((await new DesktopSettingsStore(fixture.Paths).LoadAsync()).AutoStartScheduler);
+    }
+
+    [Theory]
+    [InlineData(false, true, false, false)]
+    [InlineData(true, false, false, false)]
+    [InlineData(true, true, true, false)]
+    [InlineData(true, true, false, true)]
+    public void SchedulerOnlyAutoStartsAfterAConnectedLaunch(
+        bool enabled,
+        bool connected,
+        bool alreadyRunning,
+        bool expected)
+    {
+        Assert.Equal(
+            expected,
+            ShellViewModel.ShouldStartSchedulerOnLaunch(enabled, connected, alreadyRunning));
     }
 
     [Fact]
@@ -1210,12 +1245,16 @@ public sealed class DesktopUsabilityTests
             {
                 IgnoredUpdateVersion = "1.4.0",
                 PendingLegacyImportRoot = Path.Combine(root, "legacy"),
+                StartAtLogin = true,
+                AutoStartScheduler = true,
             });
 
             var reloaded = await store.LoadAsync();
 
             Assert.Equal("1.4.0", reloaded.IgnoredUpdateVersion);
             Assert.Equal(Path.Combine(root, "legacy"), reloaded.PendingLegacyImportRoot);
+            Assert.True(reloaded.StartAtLogin);
+            Assert.True(reloaded.AutoStartScheduler);
         }
         finally
         {

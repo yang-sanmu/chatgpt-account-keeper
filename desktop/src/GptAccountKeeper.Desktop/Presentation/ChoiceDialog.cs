@@ -16,6 +16,13 @@ internal enum CloseChoice
 
 internal sealed record CloseChoiceResult(CloseChoice Choice, bool Remember);
 
+internal enum SchedulerStartChoice
+{
+    Cancel,
+    StartOnce,
+    Always,
+}
+
 internal enum UpdateChoice
 {
     /// <summary>关掉弹窗但不记任何压制状态：下一轮后台检查仍会提示。</summary>
@@ -142,6 +149,79 @@ internal sealed class UpdateAvailableDialog : Window
                         HorizontalAlignment = HorizontalAlignment.Right,
                         Spacing = 10,
                         Children = { ignore, later, now },
+                    },
+                },
+            },
+        };
+    }
+}
+
+/// <summary>首次手动启动调度时，明确区分“本次启动”和“以后随应用启动”。</summary>
+internal sealed class SchedulerStartDialog : Window
+{
+    public SchedulerStartDialog()
+    {
+        Title = "启动自动调度";
+        Width = 560;
+        SizeToContent = SizeToContent.Height;
+        CanResize = false;
+        ShowInTaskbar = false;
+        WindowStartupLocation = WindowStartupLocation.CenterOwner;
+
+        var cancel = new Button { Content = "取消", Padding = new Thickness(16, 8) };
+        cancel.Click += (_, _) => Close(SchedulerStartChoice.Cancel);
+        var once = new Button { Content = "仅本次启动", Padding = new Thickness(16, 8) };
+        once.Click += (_, _) => Close(SchedulerStartChoice.StartOnce);
+        var always = new Button
+        {
+            Content = "以后自动启动",
+            Padding = new Thickness(16, 8),
+            Classes = { "primary" },
+        };
+        always.Click += (_, _) => Close(SchedulerStartChoice.Always);
+
+        Content = new Border
+        {
+            Classes = { "card" },
+            Margin = new Thickness(16),
+            Padding = new Thickness(22),
+            Child = new StackPanel
+            {
+                Spacing = 14,
+                Children =
+                {
+                    new TextBlock
+                    {
+                        Text = "启动调度，并在以后自动启动吗？",
+                        FontSize = 18,
+                        FontWeight = FontWeight.Bold,
+                    },
+                    new TextBlock
+                    {
+                        Text = "选择“以后自动启动”后，每次打开应用并成功连接 Agent，都会自动启动账号调度；选择“仅本次启动”不会修改设置。",
+                        TextWrapping = TextWrapping.Wrap,
+                        Classes = { "muted" },
+                        FontSize = 12,
+                        LineHeight = 18,
+                    },
+                    new Border
+                    {
+                        Classes = { "subtle-card" },
+                        Padding = new Thickness(12, 9),
+                        Child = new TextBlock
+                        {
+                            Text = "可随时在“设置 → 桌面与系统行为 → 启动行为”中修改。",
+                            TextWrapping = TextWrapping.Wrap,
+                            FontSize = 11,
+                        },
+                    },
+                    new StackPanel
+                    {
+                        Margin = new Thickness(0, 4, 0, 0),
+                        Orientation = Orientation.Horizontal,
+                        HorizontalAlignment = HorizontalAlignment.Right,
+                        Spacing = 10,
+                        Children = { cancel, once, always },
                     },
                 },
             },

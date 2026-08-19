@@ -34,6 +34,9 @@ internal sealed class DesktopSettings
 
     public bool StartAtLogin { get; init; }
 
+    /// <summary>桌面程序连接 Agent 后，是否自动启动账号调度。</summary>
+    public bool AutoStartScheduler { get; init; }
+
     public UpdatePolicy UpdatePolicy { get; init; } = UpdatePolicy.NotifyOnly;
 
     /// <summary>

@@ -39,6 +39,7 @@ internal sealed class ShellViewModel : ObservableObject
     private bool _suppressReconnect;
     private bool _initialized;
     private bool _isAgentConnected;
+    private bool _schedulerLaunchPreferenceEvaluated;
 
     public ShellViewModel(
         AgentConnectionService connection,
@@ -64,7 +65,7 @@ internal sealed class ShellViewModel : ObservableObject
             InstallRequested = InstallUpdateAsync,
         };
 
-        Overview = new OverviewPageViewModel(_session, paths);
+        Overview = new OverviewPageViewModel(_session, paths, Behavior);
         Accounts = new AccountsPageViewModel(_session);
         Operations = new OperationsPageViewModel(_session);
         Proxies = new ProxiesPageViewModel(_session);
@@ -269,6 +270,11 @@ internal sealed class ShellViewModel : ObservableObject
     }
 
     public void Stop() => _lifetime.Cancel();
+
+    internal static bool ShouldStartSchedulerOnLaunch(
+        bool enabled,
+        bool agentConnected,
+        bool schedulerRunning) => enabled && agentConnected && !schedulerRunning;
 
     public async Task<AgentActivityResult?> GetActivityAsync()
     {
@@ -558,6 +564,7 @@ internal sealed class ShellViewModel : ObservableObject
             if (!snapshot.IsConnected) return;
             Overview.NeedsFirstRun = false;
             await RefreshCoreAsync();
+            await ApplySchedulerLaunchPreferenceAsync();
         }
         catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
         {
@@ -567,6 +574,23 @@ internal sealed class ShellViewModel : ObservableObject
             Overview.ConnectionStatus = "连接失败";
             Overview.ConnectionDetail = exception.Message;
             Toasts.Error($"连接 Agent 失败：{exception.Message}");
+        }
+    }
+
+    /// <summary>
+    /// 本次桌面进程第一次成功连接 Agent 时应用一次启动偏好。连接失败后仍可在
+    /// 用户重试时补做；一旦评估过，后续断线重连不会把手动停止的调度重新拉起。
+    /// </summary>
+    private async Task ApplySchedulerLaunchPreferenceAsync()
+    {
+        if (_schedulerLaunchPreferenceEvaluated || !IsAgentConnected) return;
+        _schedulerLaunchPreferenceEvaluated = true;
+        if (ShouldStartSchedulerOnLaunch(
+                Behavior.AutoStartScheduler,
+                agentConnected: true,
+                Overview.SchedulerRunning))
+        {
+            await Overview.EnsureSchedulerStartedAsync();
         }
     }
 

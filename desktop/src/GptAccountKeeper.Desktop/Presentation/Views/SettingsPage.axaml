@@ -173,8 +173,31 @@
               </ComboBox>
             </StackPanel>
 
-            <CheckBox Content="开机登录系统后自动启动并隐藏到托盘恢复调度"
-                      IsChecked="{Binding Behavior.StartAtLogin, Mode=TwoWay}" />
+            <!-- 应用开机自启与调度自启是两个独立行为。 -->
+            <StackPanel Spacing="5">
+              <TextBlock Text="启动行为" FontSize="11" FontWeight="Medium"
+                         Foreground="{DynamicResource BrushTextSecondary}" />
+              <Border Padding="14,12" Classes="subtle-card">
+                <StackPanel Spacing="10">
+                  <StackPanel Spacing="3">
+                    <CheckBox Content="登录系统时自动启动应用"
+                              IsChecked="{Binding Behavior.StartAtLogin, Mode=TwoWay}" />
+                    <TextBlock Margin="28,0,0,0" Text="以隐藏到托盘方式启动，不主动弹出主窗口。"
+                               FontSize="10" Foreground="{DynamicResource BrushTextMuted}" />
+                  </StackPanel>
+
+                  <Rectangle Height="1" Fill="{DynamicResource BrushBorderSubtle}" />
+
+                  <StackPanel Spacing="3">
+                    <CheckBox Content="打开应用后自动启动调度"
+                              IsChecked="{Binding Behavior.AutoStartScheduler, Mode=TwoWay}" />
+                    <TextBlock Margin="28,0,0,0" Text="成功连接 Agent 后启动账号调度；关闭此项仍可随时手动启动。"
+                               TextWrapping="Wrap" FontSize="10"
+                               Foreground="{DynamicResource BrushTextMuted}" />
+                  </StackPanel>
+                </StackPanel>
+              </Border>
+            </StackPanel>
 
             <Border Padding="14,12" Background="{DynamicResource BrushSubtleBg}"
                     BorderBrush="{DynamicResource BrushBorderSubtle}" BorderThickness="1" CornerRadius="8">

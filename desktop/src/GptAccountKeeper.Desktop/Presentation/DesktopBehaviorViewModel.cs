@@ -22,6 +22,7 @@ internal sealed class DesktopBehaviorViewModel : ObservableObject
     private CloseBehaviorOptionViewModel _closeBehavior;
     private UpdatePolicyOptionViewModel _updatePolicy;
     private bool _startAtLogin;
+    private bool _autoStartScheduler;
     private bool _loaded;
     private string _updateStatus = "启动时会自动检查一次更新，之后每 6 小时后台检查";
     private bool _canDownloadUpdate;
@@ -149,6 +150,23 @@ internal sealed class DesktopBehaviorViewModel : ObservableObject
         }
     }
 
+    public bool AutoStartScheduler
+    {
+        get => _autoStartScheduler;
+        set
+        {
+            if (!SetProperty(ref _autoStartScheduler, value) || !_loaded) return;
+            _ = PersistAsync();
+        }
+    }
+
+    /// <summary>供“启动调度”提示窗使用；等待落盘后再执行本次启动。</summary>
+    public async Task SetAutoStartSchedulerAsync(bool enabled)
+    {
+        if (!SetProperty(ref _autoStartScheduler, enabled, nameof(AutoStartScheduler))) return;
+        if (_loaded) await PersistAsync();
+    }
+
     public string UpdateStatus
     {
         get => _updateStatus;
@@ -210,6 +228,8 @@ internal sealed class DesktopBehaviorViewModel : ObservableObject
         _startAtLogin = settings.StartAtLogin;
         _startup.SetEnabled(settings.StartAtLogin);
         OnPropertyChanged(nameof(StartAtLogin));
+        _autoStartScheduler = settings.AutoStartScheduler;
+        OnPropertyChanged(nameof(AutoStartScheduler));
         _closeBehavior = CloseBehaviorOptions.First(option => option.Value == settings.CloseBehavior);
         OnPropertyChanged(nameof(SelectedCloseBehavior));
         OnPropertyChanged(nameof(CloseBehavior));
@@ -274,6 +294,7 @@ internal sealed class DesktopBehaviorViewModel : ObservableObject
                 {
                     Theme = SelectedTheme.Value,
                     StartAtLogin = StartAtLogin,
+                    AutoStartScheduler = AutoStartScheduler,
                     CloseBehavior = SelectedCloseBehavior.Value,
                     UpdatePolicy = SelectedUpdatePolicy.Value,
                     IgnoredUpdateVersion = _ignoredUpdateVersion,

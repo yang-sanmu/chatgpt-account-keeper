@@ -72,15 +72,18 @@
 
           <StackPanel Spacing="3">
             <TextBlock Text="绑定网络出口节点" FontSize="10" Foreground="{DynamicResource BrushTextMuted}" />
-            <ComboBox HorizontalAlignment="Stretch" ItemsSource="{Binding ProxyChoices}"
-                      SelectedItem="{Binding GroupProxy, Mode=TwoWay}"
-                      IsEnabled="{Binding CanEditGroup}">
-              <ComboBox.ItemTemplate>
+            <vm:FilterComboBox HorizontalAlignment="Stretch" ItemsSource="{Binding ProxyChoices}"
+                               SelectedItem="{Binding GroupProxy, Mode=TwoWay}"
+                               ValueMemberBinding="{Binding Title}"
+                               IsEnabled="{Binding CanEditGroup}"
+                               PlaceholderText="🔍 搜索/选择出口节点…"
+                               ToolTip.Tip="点击展开全部可用节点，输入关键词可模糊筛选">
+              <vm:FilterComboBox.ItemTemplate>
                 <DataTemplate x:DataType="vm:RouteChoiceViewModel">
                   <TextBlock Text="{Binding Title}" />
                 </DataTemplate>
-              </ComboBox.ItemTemplate>
-            </ComboBox>
+              </vm:FilterComboBox.ItemTemplate>
+            </vm:FilterComboBox>
           </StackPanel>
 
           <Grid ColumnDefinitions="*,*" ColumnSpacing="10">

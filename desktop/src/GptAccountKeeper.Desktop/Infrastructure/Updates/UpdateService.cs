@@ -41,7 +41,7 @@ internal sealed record UpdatePrompt(
 internal sealed class UpdateService : IDisposable
 {
     private const string RepositoryUrl = "https://github.com/yang-sanmu/chatgpt-account-keeper";
-    private static readonly TimeSpan CheckInterval = TimeSpan.FromHours(6);
+    private static readonly TimeSpan CheckInterval = TimeSpan.FromMinutes(30);
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly CancellationTokenSource _lifetime = new();
     private readonly UpdateGate _state = new();
@@ -52,7 +52,7 @@ internal sealed class UpdateService : IDisposable
 
     public UpdateSnapshot Snapshot { get; private set; } = new(
         "idle",
-        "启动时会自动检查一次更新，之后每 6 小时后台检查");
+        "启动时会自动检查一次更新，之后每 30 分钟后台检查");
 
     public event EventHandler<UpdateSnapshot>? Changed;
 

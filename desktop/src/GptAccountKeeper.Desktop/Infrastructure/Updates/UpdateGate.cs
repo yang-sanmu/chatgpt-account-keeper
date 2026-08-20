@@ -64,7 +64,7 @@ internal sealed class UpdateGate
         // 说的就是这个版本：整条状态换成"已下载待安装"。
         if (IsDownloaded(candidate.Version)) return Downloaded(candidate.Version!);
         // 不带版本号的状态（checking / error）说的不是某个具体版本，
-        // 不能顺手把"已下载待安装"抹掉 —— 否则每 6 小时一轮后台检查都会让
+        // 不能顺手把"已下载待安装"抹掉 —— 否则每 30 分钟一轮后台检查都会让
         // "安全安装"变灰，而一旦这轮检查因断网失败，按钮就再也回不来了。
         if (candidate.Version is null)
         {

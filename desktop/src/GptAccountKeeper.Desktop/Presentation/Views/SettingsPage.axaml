@@ -244,7 +244,7 @@
             <Border Padding="14,12" Background="{DynamicResource BrushSubtleBg}"
                     BorderBrush="{DynamicResource BrushBorderSubtle}" BorderThickness="1" CornerRadius="8">
               <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource BrushTextSecondary}" LineHeight="17"
-                         Text="🔒 启动时会立即检查一次更新，之后每 6 小时后台检查一次；发现新版本会弹窗供选择立即更新、下次启动提醒或忽略本次更新。安装更新前 Agent 必须先安全排空，不会强杀任务。" />
+                         Text="🔒 启动时会立即检查一次更新，之后每 30 分钟后台检查一次；发现新版本会弹窗供选择立即更新、下次启动提醒或忽略本次更新。安装更新前 Agent 必须先安全排空，不会强杀任务。" />
             </Border>
           </StackPanel>
         </Border>

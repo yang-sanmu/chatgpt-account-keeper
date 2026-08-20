@@ -24,7 +24,7 @@ internal sealed class DesktopBehaviorViewModel : ObservableObject
     private bool _startAtLogin;
     private bool _autoStartScheduler;
     private bool _loaded;
-    private string _updateStatus = "启动时会自动检查一次更新，之后每 6 小时后台检查";
+    private string _updateStatus = "启动时会自动检查一次更新，之后每 30 分钟后台检查";
     private bool _canDownloadUpdate;
     private bool _canInstallUpdate;
     private string? _ignoredUpdateVersion;
@@ -355,7 +355,7 @@ internal sealed class DesktopBehaviorViewModel : ObservableObject
     internal async Task HandleUpdatePromptAsync(UpdatePrompt prompt)
     {
         if (UpdatePromptRequested is null) return;
-        // 后台每 6 小时一轮，一次"立即更新"的下载可能跨过下一轮检查。
+        // 后台每 30 分钟一轮，一次"立即更新"的下载可能跨过下一轮检查。
         // 不加这道闩会叠出第二个模态窗，把第一个挡在后面。
         if (Interlocked.Exchange(ref _promptOpen, 1) != 0) return;
         try

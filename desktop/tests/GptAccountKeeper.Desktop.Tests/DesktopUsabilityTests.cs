@@ -1133,7 +1133,7 @@ public sealed class DesktopUsabilityTests
     }
 
     /// <summary>
-    /// 每 6 小时一轮的后台检查会先发 checking、失败时再发 error，两者都不带版本号。
+    /// 每 30 分钟一轮的后台检查会先发 checking、失败时再发 error，两者都不带版本号。
     /// 它们不能把已下载的更新变成不可安装 —— 否则一次断网就让"安全安装"永久变灰。
     /// </summary>
     [Fact]
@@ -1207,7 +1207,7 @@ public sealed class DesktopUsabilityTests
         Assert.True(nextLaunch.ShouldPrompt("1.4.0", manual: false));
     }
 
-    /// <summary>自动检查只在同一版本第一次出现时弹窗，之后每 6 小时一轮不再重复打扰。</summary>
+    /// <summary>自动检查只在同一版本第一次出现时弹窗，之后每 30 分钟一轮不再重复打扰。</summary>
     [Fact]
     public void AnAutomaticRecheckDoesNotPromptTwiceForTheSameVersion()
     {

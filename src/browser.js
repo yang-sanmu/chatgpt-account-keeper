@@ -1,5 +1,8 @@
 import { chromium } from "playwright-core";
 import fs from "node:fs/promises";
+import fsSync from "node:fs";
+import { spawn } from "node:child_process";
+import net from "node:net";
 import path from "node:path";
 import WebSocket from "ws";
 import { fromRoot, ensureDir } from "./paths.js";
@@ -7,6 +10,7 @@ import { proxyForAccount, ensureRunning } from "./proxyManager.js";
 import { getAccount, effectiveProxyId } from "./store.js";
 import { resolveRegionForAccount } from "./geo.js";
 import { scheduleProfileCacheMaintenance } from "./profileMaintenance.js";
+import { replaceFileSync } from "./atomicFile.js";
 import * as log from "./logger.js";
 
 /**
@@ -26,6 +30,9 @@ const BROWSER_CHANNEL = "chrome";
 const HEADLESS_IDENTITY_CACHE_MS = 5 * 60 * 1000;
 const DEVTOOLS_ENDPOINT_TIMEOUT_MS = 10_000;
 const CDP_COMMAND_TIMEOUT_MS = 10_000;
+const INTERACTIVE_CDP_TIMEOUT_MS = 15_000;
+const INTERACTIVE_CDP_POLL_TIMEOUT_MS = 750;
+const INTERACTIVE_PROCESS_EXIT_TIMEOUT_MS = 2_000;
 const IDENTITY_TARGET_TYPES = new Set([
   "page",
   "iframe",
@@ -637,36 +644,16 @@ async function installHeadlessTargetIdentity(
 
 /**
  * WebRTC 的 UDP 不受 --proxy-server 约束，会绕过代理直接走系统网络。
- * 实测走节点的浏览器里，WebRTC 漏出的是系统 Clash 的出口 IP，与该浏览器
+ * 实测走节点的浏览器里，WebRTC 会漏出系统 Clash 的出口 IP，与该浏览器
  * 的 HTTP 出口分属两个国家——同一会话出现两个国家的 IP 是明确的代理特征。
  *
- * 注意：品牌版 Chrome 会忽略 --force-webrtc-ip-handling-policy
- * （该策略只认企业策略配置），自带 Chromium 才吃这个开关。所以保留开关做兜底，
- * 真正生效的是下面在页面层清空 iceServers 的做法。
+ * 品牌 Chrome 会忽略 content shell 的 --force-webrtc-ip-handling-policy 开关；
+ * 页面层包装 RTCPeerConnection 又会进入 hCaptcha 的 hsw 证明，表现为图片题
+ * 做对但 Stripe 服务端仍返回 `Captcha challenge failed`。因此在 Profile 启动前
+ * 写入 Chrome 正式偏好 webrtc.ip_handling_policy，页面对象始终保持原生。
  */
-export const WEBRTC_NO_LEAK_FLAG =
-  "--force-webrtc-ip-handling-policy=disable_non_proxied_udp";
-
-/**
- * 页面层堵 WebRTC：保留 RTCPeerConnection 本身，只把 iceServers 清空。
- *
- * 不直接删掉这个 API——真实 Chrome 一定有它，删了反而是更明显的特征。
- * 清空 STUN 服务器后页面仍能正常构造连接对象，但收集不到公网候选地址，
- * 也就漏不出出口 IP。ChatGPT 不使用 WebRTC，无功能影响。
- */
-export function webrtcGuardScript() {
-  const Native = window.RTCPeerConnection;
-  if (!Native) return;
-  const Patched = function (config, ...rest) {
-    return new Native({ ...(config || {}), iceServers: [] }, ...rest);
-  };
-  Patched.prototype = Native.prototype;
-  // 保持 name / toString 与原生一致，避免被指纹脚本看出是包装过的
-  Object.defineProperty(Patched, "name", { value: "RTCPeerConnection" });
-  Patched.toString = () => Native.toString();
-  window.RTCPeerConnection = Patched;
-  if (window.webkitRTCPeerConnection) window.webkitRTCPeerConnection = Patched;
-}
+const WEBRTC_IP_HANDLING_POLICY = "disable_non_proxied_udp";
+let preferencesTempCounter = 0;
 
 /**
  * 构造启动参数。
@@ -685,7 +672,9 @@ export function baseLaunchArgs(headless) {
     viewport: headless ? { width: 1280, height: 900 } : null,
     locale: "zh-CN",
     args: [
-      "--disable-blink-features=AutomationControlled",
+      // 有头窗口由 Chrome 原生进程启动；不要给验证脚本留下这个反自动化开关。
+      // Headless 后台任务仍需要它配合浏览器级身份恢复。
+      ...(headless ? ["--disable-blink-features=AutomationControlled"] : []),
       "--no-first-run",
       "--no-default-browser-check",
       ...(!headless ? ["--start-maximized"] : []),
@@ -696,14 +685,407 @@ export function baseLaunchArgs(headless) {
 }
 
 /**
- * 只有走代理的浏览器才需要堵 WebRTC：未绑节点的账号 HTTP 本来就走系统网络，
- * 与 WebRTC 出口一致，没有可暴露的矛盾，不必改动其行为。
+ * 私有节点和“跟随系统代理”都可能让 HTTP 与直出 UDP 使用不同出口，因此所有
+ * 隔离账号 Profile 都启用同一原生偏好。该策略仍允许代理支持的 UDP 或 TCP
+ * 回退，不替换/删除网页 API。
  */
-export function applyWebrtcPolicy(launchArgs, usingProxy) {
-  if (usingProxy && !launchArgs.args.includes(WEBRTC_NO_LEAK_FLAG)) {
-    launchArgs.args.push(WEBRTC_NO_LEAK_FLAG);
+export function applyWebrtcProfilePolicy(
+  userDataDir,
+  { fsImpl = fsSync, replaceFile = replaceFileSync } = {}
+) {
+  const profileDir = path.join(path.resolve(userDataDir), "Default");
+  const preferencesFile = path.join(profileDir, "Preferences");
+  fsImpl.mkdirSync(profileDir, { recursive: true });
+
+  let preferences = {};
+  try {
+    preferences = JSON.parse(fsImpl.readFileSync(preferencesFile, "utf8"));
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw new Error(`Chrome Preferences 无法解析，拒绝覆盖：${preferencesFile}`, {
+        cause: error,
+      });
+    }
   }
-  return launchArgs;
+  if (!preferences || typeof preferences !== "object" || Array.isArray(preferences)) {
+    throw new Error(`Chrome Preferences 根节点无效，拒绝覆盖：${preferencesFile}`);
+  }
+  if (preferences.webrtc?.ip_handling_policy === WEBRTC_IP_HANDLING_POLICY) {
+    return false;
+  }
+
+  const existingWebrtc =
+    preferences.webrtc &&
+    typeof preferences.webrtc === "object" &&
+    !Array.isArray(preferences.webrtc)
+      ? preferences.webrtc
+      : {};
+  const next = {
+    ...preferences,
+    webrtc: {
+      ...existingWebrtc,
+      ip_handling_policy: WEBRTC_IP_HANDLING_POLICY,
+    },
+  };
+  const tempFile = path.join(
+    profileDir,
+    `.Preferences.${process.pid}.${++preferencesTempCounter}.tmp`
+  );
+  let operationError = null;
+  try {
+    fsImpl.writeFileSync(tempFile, JSON.stringify(next), "utf8");
+    replaceFile(tempFile, preferencesFile, { fsImpl });
+  } catch (error) {
+    operationError = error;
+  }
+  try {
+    fsImpl.unlinkSync(tempFile);
+  } catch (error) {
+    if (error?.code !== "ENOENT" && !operationError) operationError = error;
+  }
+  if (operationError) throw operationError;
+  return true;
+}
+
+/**
+ * Playwright 的 launchPersistentContext 会自动追加一整套自动化启动参数。
+ * Stripe/hCaptcha 会把这些浏览器进程级特征纳入证明：页面图片题虽然通过，
+ * 服务端仍可能拒绝 verify_challenge。交互窗口因此由本机 Chrome 原生启动，
+ * Playwright 只在启动完成后通过本地 CDP 接管页面和生命周期。
+ */
+export function chromeExecutableCandidates(
+  environment = process.env,
+  platform = process.platform
+) {
+  const platformPath = platform === "win32" ? path.win32 : path.posix;
+  const pathDelimiter = platform === "win32" ? ";" : ":";
+  const pathEntries = String(environment.PATH ?? environment.Path ?? "")
+    .split(pathDelimiter)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  const unique = (entries) => [...new Set(entries.filter(Boolean))];
+
+  if (platform === "win32") {
+    const programFiles = environment.ProgramFiles ?? environment.PROGRAMFILES;
+    const programFilesX86 =
+      environment["ProgramFiles(x86)"] ?? environment["PROGRAMFILES(X86)"];
+    const localAppData = environment.LOCALAPPDATA;
+    return unique([
+      programFiles &&
+        path.win32.join(programFiles, "Google", "Chrome", "Application", "chrome.exe"),
+      programFilesX86 &&
+        path.win32.join(
+          programFilesX86,
+          "Google",
+          "Chrome",
+          "Application",
+          "chrome.exe"
+        ),
+      localAppData &&
+        path.win32.join(
+          localAppData,
+          "Google",
+          "Chrome",
+          "Application",
+          "chrome.exe"
+        ),
+      ...pathEntries.map((entry) => platformPath.join(entry, "chrome.exe")),
+    ]);
+  }
+  if (platform === "darwin") {
+    return unique([
+      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+      environment.HOME &&
+        path.posix.join(
+          environment.HOME,
+          "Applications",
+          "Google Chrome.app",
+          "Contents",
+          "MacOS",
+          "Google Chrome"
+        ),
+      ...pathEntries.flatMap((entry) => [
+        platformPath.join(entry, "google-chrome-stable"),
+        platformPath.join(entry, "google-chrome"),
+      ]),
+    ]);
+  }
+  return unique([
+    "/usr/bin/google-chrome-stable",
+    "/usr/bin/google-chrome",
+    "/usr/local/bin/google-chrome-stable",
+    "/usr/local/bin/google-chrome",
+    "/opt/google/chrome/chrome",
+    ...pathEntries.flatMap((entry) => [
+      platformPath.join(entry, "google-chrome-stable"),
+      platformPath.join(entry, "google-chrome"),
+    ]),
+  ]);
+}
+
+export function findChromeExecutable(
+  candidates = chromeExecutableCandidates(),
+  exists = fsSync.existsSync
+) {
+  return candidates.find((candidate) => exists(candidate)) ?? null;
+}
+
+/**
+ * 只把业务确实需要的参数交给交互式 Chrome。这里刻意使用允许列表，防止未来
+ * 给 Playwright Headless 新增的反自动化/沙箱参数意外进入付款窗口。
+ */
+export function buildInteractiveChromeArgs({
+  userDataDir,
+  launchArgs,
+  debugPort,
+}) {
+  const args = [
+    `--user-data-dir=${path.resolve(userDataDir)}`,
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--start-maximized",
+    `--remote-debugging-address=127.0.0.1`,
+    `--remote-debugging-port=${debugPort}`,
+  ];
+
+  for (const arg of launchArgs.args ?? []) {
+    if (
+      arg.startsWith("--disk-cache-size=") ||
+      arg.startsWith("--media-cache-size=")
+    ) {
+      if (!args.includes(arg)) args.push(arg);
+    }
+  }
+
+  if (launchArgs.locale) {
+    args.push(
+      `--lang=${launchArgs.locale}`,
+      // --lang 只控制 Chrome UI；既有 Profile 的 intl.accept_languages 会继续
+      // 覆盖 navigator.language 与请求头。Chromium 的原生 --accept-lang 同时
+      // 覆盖两者，不需要修改 Profile 或注入页面脚本。
+      `--accept-lang=${launchArgs.locale}`
+    );
+  }
+  if (launchArgs.proxy?.server) {
+    args.push(`--proxy-server=${launchArgs.proxy.server}`);
+    const bypass = String(launchArgs.proxy.bypass ?? "")
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter(Boolean)
+      .join(";");
+    if (bypass) args.push(`--proxy-bypass-list=${bypass}`);
+  }
+
+  args.push("about:blank");
+  return args;
+}
+
+async function reserveLocalDebugPort() {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      const port = typeof address === "object" ? address?.port : null;
+      server.close((error) => {
+        if (error) reject(error);
+        else if (!port) reject(new Error("无法分配 Chrome 本地调试端口"));
+        else resolve(port);
+      });
+    });
+  });
+}
+
+async function waitForInteractiveCdp(port, child, getSpawnError = () => null) {
+  const deadline = Date.now() + INTERACTIVE_CDP_TIMEOUT_MS;
+  let lastError = null;
+  while (Date.now() < deadline) {
+    const spawnError = getSpawnError();
+    if (spawnError) throw spawnError;
+    if (child.exitCode != null || child.signalCode != null) {
+      throw new Error(
+        `Chrome 在调试端口就绪前退出（exit=${child.exitCode}, signal=${child.signalCode}）`
+      );
+    }
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/json/version`, {
+        signal: AbortSignal.timeout(INTERACTIVE_CDP_POLL_TIMEOUT_MS),
+      });
+      if (!response.ok) {
+        throw new Error(`Chrome DevTools 探测返回 HTTP ${response.status}`);
+      }
+      const metadata = await response.json();
+      const webSocketUrl = new URL(metadata?.webSocketDebuggerUrl);
+      if (
+        webSocketUrl.protocol === "ws:" &&
+        Number(webSocketUrl.port) === port &&
+        webSocketUrl.pathname.startsWith("/devtools/browser/")
+      ) {
+        return;
+      }
+      throw new Error("Chrome DevTools 探测响应无效");
+    } catch (error) {
+      lastError = error;
+    }
+    await delay(100);
+  }
+  throw new Error(
+    `等待交互式 Chrome 本地调试端口超时：${String(
+      lastError?.message || lastError || "unknown"
+    )}`
+  );
+}
+
+function childHasExited(child) {
+  return !child || child.exitCode != null || child.signalCode != null;
+}
+
+async function stopChromeChild(
+  child,
+  { timeoutMs = INTERACTIVE_PROCESS_EXIT_TIMEOUT_MS } = {}
+) {
+  if (childHasExited(child)) return;
+
+  let onExit;
+  let exited = null;
+  if (typeof child.once === "function") {
+    exited = new Promise((resolve) => {
+      onExit = resolve;
+      child.once("exit", onExit);
+    });
+  }
+
+  if (!child.killed) child.kill();
+  if (!exited) return;
+
+  await Promise.race([exited, delay(timeoutMs)]);
+  if (!childHasExited(child)) {
+    // SIGTERM 在 Unix 上可能被忽略；Windows 的 kill 也可能只表示信号已发出。
+    // 最后一层兜底确保 Profile 锁在 close() 返回前真正释放。
+    child.kill("SIGKILL");
+    await Promise.race([exited, delay(500)]);
+  }
+  child.off?.("exit", onExit);
+}
+
+/**
+ * CDP 接入的默认持久 Context 不能用 Playwright 的普通 context.close 负责进程
+ * 生命周期。把同一公开方法收口到 browser.close，保持 login/openPage/退出清理
+ * 的既有调用约定不变。
+ */
+export function installInteractiveContextClose(context, browser, child) {
+  let closing = null;
+  const close = () => {
+    if (!closing) {
+      closing = Promise.resolve()
+        .then(() => browser.close())
+        .finally(() => stopChromeChild(child));
+    }
+    return closing;
+  };
+  Object.defineProperty(context, "close", {
+    configurable: true,
+    value: close,
+  });
+  return context;
+}
+
+export async function applyInteractiveTimezone(context, page, timezoneId) {
+  if (!timezoneId) return;
+  const sessions = new Map();
+  const configure = async (targetPage) => {
+    if (!targetPage || sessions.has(targetPage)) return;
+    const session = await context.newCDPSession(targetPage);
+    try {
+      await session.send("Emulation.setTimezoneOverride", { timezoneId });
+      sessions.set(targetPage, session);
+      targetPage.once("close", () => {
+        if (sessions.get(targetPage) !== session) return;
+        sessions.delete(targetPage);
+        session.detach().catch(() => {});
+      });
+    } catch (error) {
+      await session.detach().catch(() => {});
+      throw error;
+    }
+  };
+  // Chrome 可能按 Profile 启动设置恢复多个既有标签页。它们与业务页共享同一
+  // 浏览器出口，必须使用同一时区，不能只覆盖最终选中的 about:blank。
+  for (const targetPage of new Set([...(context.pages?.() ?? []), page])) {
+    await configure(targetPage);
+  }
+  const onPage = (targetPage) => {
+    configure(targetPage).catch((error) => {
+      log.warn(`新窗口设置时区失败：${String(error?.message || error)}`);
+    });
+  };
+  context.on("page", onPage);
+  context.once("close", () => {
+    context.off("page", onPage);
+    const active = [...sessions.values()];
+    sessions.clear();
+    for (const session of active) session.detach().catch(() => {});
+  });
+}
+
+export async function launchInteractivePersistentContext(
+  userDataDir,
+  launchArgs,
+  dependencies = {}
+) {
+  const executable =
+    dependencies.executable ?? findChromeExecutable(dependencies.candidates);
+  if (!executable) {
+    throw new ChromeNotFoundError(new Error("Google Chrome executable not found"));
+  }
+
+  const port = dependencies.port ?? (await reserveLocalDebugPort());
+  const spawnProcess = dependencies.spawnProcess ?? spawn;
+  const connectOverCDP =
+    dependencies.connectOverCDP ??
+    ((endpoint) => chromium.connectOverCDP(endpoint));
+  const child = spawnProcess(
+    executable,
+    buildInteractiveChromeArgs({ userDataDir, launchArgs, debugPort: port }),
+    {
+      stdio: "ignore",
+      windowsHide: false,
+      shell: false,
+    }
+  );
+  let spawnError = null;
+  child.on?.("error", (error) => {
+    spawnError = error;
+  });
+
+  let browser = null;
+  try {
+    await (dependencies.waitForCdp ?? waitForInteractiveCdp)(
+      port,
+      child,
+      () => spawnError
+    );
+    browser = await connectOverCDP(`http://127.0.0.1:${port}`);
+    const context = browser.contexts()[0];
+    if (!context) throw new Error("交互式 Chrome 没有默认浏览器上下文");
+    installInteractiveContextClose(context, browser, child);
+
+    const pages = context.pages();
+    const page =
+      pages.find((candidate) => candidate.url() === "about:blank") ??
+      pages[0] ??
+      (await context.newPage());
+    await (dependencies.applyTimezone ?? applyInteractiveTimezone)(
+      context,
+      page,
+      launchArgs.timezoneId
+    );
+    return { context, page };
+  } catch (error) {
+    if (browser) await browser.close().catch(() => {});
+    await stopChromeChild(child);
+    throw normalizeChromeLaunchError(error);
+  }
 }
 
 /**
@@ -733,6 +1115,10 @@ export function applyProxyBypass(proxy, domains = []) {
 export function isMissingChannelError(err) {
   const msg = String(err?.message || err);
   return (
+    (err?.code === "ENOENT" &&
+      /(?:chrome(?:\.exe)?|google-chrome-stable|Google Chrome)$/i.test(
+        String(err?.path ?? "")
+      )) ||
     /Chromium distribution ['"]?chrome['"]? is not found/i.test(msg) ||
     /channel ['"]?chrome['"]? is not installed/i.test(msg) ||
     (/executable doesn't exist/i.test(msg) &&
@@ -751,7 +1137,6 @@ export async function initializeLaunchedContext(context, options = {}) {
   const {
     headless = false,
     headlessIdentity = null,
-    usingProxy = false,
     accountId = "unknown",
     userDataDir = null,
     debugPortNotBefore = 0,
@@ -763,9 +1148,6 @@ export async function initializeLaunchedContext(context, options = {}) {
     await context.addInitScript(() => {
       Object.defineProperty(navigator, "webdriver", { get: () => undefined });
     });
-
-    // 走代理时才需要堵 WebRTC：未走代理的浏览器 HTTP 与 WebRTC 同源。
-    if (usingProxy) await context.addInitScript(webrtcGuardScript);
 
     if (headless) {
       if (!headlessIdentity) throw new Error("缺少 Headless 浏览器身份信息");
@@ -839,9 +1221,11 @@ export async function launchForAccount(account, opts = {}) {
     const region = await resolveRegionForAccount(liveAccount);
     if (region.timezoneId) launchArgs.timezoneId = region.timezoneId;
     if (region.locale) launchArgs.locale = region.locale;
-
-    applyWebrtcPolicy(launchArgs, true);
   }
+
+  // 即使没有绑定私有节点，Chrome 也可能跟随系统 HTTP 代理；WebRTC UDP 不会
+  // 自动跟随该代理，因此账号 Profile 必须统一使用原生防漏偏好。
+  applyWebrtcProfilePolicy(userDataDir);
 
   if (headless) {
     headlessIdentity = await configureHeadlessLaunch(launchArgs);
@@ -850,9 +1234,18 @@ export async function launchForAccount(account, opts = {}) {
   if (browserShutdownRequested) throw new Error("Agent 正在退出，已取消启动 Chrome");
 
   let context;
+  let interactiveLaunch = null;
   const debugPortNotBefore = Date.now();
   try {
-    context = await chromium.launchPersistentContext(userDataDir, launchArgs);
+    if (headless) {
+      context = await chromium.launchPersistentContext(userDataDir, launchArgs);
+    } else {
+      interactiveLaunch = await launchInteractivePersistentContext(
+        userDataDir,
+        launchArgs
+      );
+      context = interactiveLaunch.context;
+    }
   } catch (e) {
     throw normalizeChromeLaunchError(e);
   }
@@ -870,10 +1263,11 @@ export async function launchForAccount(account, opts = {}) {
     throw new Error("Agent 正在退出，已取消启动 Chrome");
   }
 
+  if (!headless) return interactiveLaunch;
+
   return initializeLaunchedContext(context, {
-    headless,
+    headless: true,
     headlessIdentity,
-    usingProxy: !!launchArgs.proxy,
     accountId: liveAccount.id,
     userDataDir,
     debugPortNotBefore,

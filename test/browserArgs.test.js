@@ -1,10 +1,19 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import {
+  applyInteractiveTimezone,
+  applyWebrtcProfilePolicy,
   baseLaunchArgs,
   applyProxyBypass,
-  applyWebrtcPolicy,
-  webrtcGuardScript,
+  buildInteractiveChromeArgs,
+  chromeExecutableCandidates,
+  findChromeExecutable,
+  installInteractiveContextClose,
+  launchInteractivePersistentContext,
   isMissingChannelError,
   isMissingCdpSessionError,
   initializeLaunchedContext,
@@ -12,7 +21,6 @@ import {
   normalizeHeadlessUserAgent,
   normalizeChromeLaunchError,
   ChromeNotFoundError,
-  WEBRTC_NO_LEAK_FLAG,
 } from "../src/browser.js";
 
 test("代理直连域名会保留已有规则、去重且不修改原对象", () => {
@@ -65,31 +73,332 @@ test("只忽略已经消失的精确 CDP child session 错误", () => {
   );
 });
 
-test("走代理的浏览器必须堵住 WebRTC 泄露", () => {
-  // 实测：不加这个开关时，走韩国节点的浏览器会通过 WebRTC 漏出系统 Clash
-  // 的美国出口 IP，同一会话出现两个国家的 IP。
-  const args = applyWebrtcPolicy(baseLaunchArgs(true), true);
-  assert.ok(args.args.includes(WEBRTC_NO_LEAK_FLAG));
+test("品牌 Chrome 的 WebRTC 防漏不再依赖无效启动参数", () => {
+  const interactive = baseLaunchArgs(false);
+  assert.equal(
+    interactive.args.some((arg) => arg.includes("webrtc-ip-handling-policy")),
+    false
+  );
+
+  const background = baseLaunchArgs(true);
+  assert.equal(
+    background.args.some((arg) => arg.includes("webrtc-ip-handling-policy")),
+    false
+  );
 });
 
-test("未走代理时不改动 WebRTC 行为", () => {
-  // 未绑节点的账号 HTTP 与 WebRTC 都走系统网络，本来就一致，无需干预。
-  const args = applyWebrtcPolicy(baseLaunchArgs(true), false);
-  assert.equal(args.args.includes(WEBRTC_NO_LEAK_FLAG), false);
+test("账号 Profile 原子写入 WebRTC 正式偏好并保留其它设置", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "gptaccount-webrtc-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const profileDir = path.join(root, "Default");
+  fs.mkdirSync(profileDir, { recursive: true });
+  const preferencesFile = path.join(profileDir, "Preferences");
+  fs.writeFileSync(
+    preferencesFile,
+    JSON.stringify({ intl: { accept_languages: "en-GB" }, webrtc: { other: 1 } }),
+    "utf8"
+  );
+
+  assert.equal(applyWebrtcProfilePolicy(root), true);
+  assert.deepEqual(JSON.parse(fs.readFileSync(preferencesFile, "utf8")), {
+    intl: { accept_languages: "en-GB" },
+    webrtc: {
+      other: 1,
+      ip_handling_policy: "disable_non_proxied_udp",
+    },
+  });
+  assert.equal(applyWebrtcProfilePolicy(root), false, "重复启动不得反复改写文件");
+  assert.deepEqual(
+    fs.readdirSync(profileDir).filter((name) => name.endsWith(".tmp")),
+    []
+  );
 });
 
-test("重复调用不会累积重复开关", () => {
-  let args = baseLaunchArgs(true);
-  args = applyWebrtcPolicy(args, true);
-  args = applyWebrtcPolicy(args, true);
-  const hits = args.args.filter((a) => a === WEBRTC_NO_LEAK_FLAG);
-  assert.equal(hits.length, 1);
+test("损坏的 Chrome Preferences 会失败关闭且绝不被覆盖", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "gptaccount-webrtc-bad-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const profileDir = path.join(root, "Default");
+  fs.mkdirSync(profileDir, { recursive: true });
+  const preferencesFile = path.join(profileDir, "Preferences");
+  fs.writeFileSync(preferencesFile, "{broken", "utf8");
+
+  assert.throws(() => applyWebrtcProfilePolicy(root), /无法解析，拒绝覆盖/);
+  assert.equal(fs.readFileSync(preferencesFile, "utf8"), "{broken");
 });
 
-test("基础启动参数保留既有的反自动化开关", () => {
-  const args = baseLaunchArgs(false);
-  assert.equal(args.headless, false);
-  assert.ok(args.args.includes("--disable-blink-features=AutomationControlled"));
+test("反自动化 Blink 开关只用于 Headless，不进入交互付款窗口", () => {
+  const interactive = baseLaunchArgs(false);
+  assert.equal(interactive.headless, false);
+  assert.equal(
+    interactive.args.includes("--disable-blink-features=AutomationControlled"),
+    false
+  );
+
+  const background = baseLaunchArgs(true);
+  assert.ok(background.args.includes("--disable-blink-features=AutomationControlled"));
+});
+
+test("交互式 Chrome 只接收最小参数并正确映射代理、语言和绕过规则", () => {
+  const launchArgs = baseLaunchArgs(false);
+  launchArgs.locale = "en-US";
+  launchArgs.proxy = {
+    server: "http://127.0.0.1:21001",
+    bypass: "localhost, stripe.test ",
+  };
+  // 即使未来上层误加，也不能被允许列表带进交互窗口。
+  launchArgs.args.push("--no-sandbox", "--disable-extensions");
+
+  const args = buildInteractiveChromeArgs({
+    userDataDir: "profiles/a1",
+    launchArgs,
+    debugPort: 32123,
+  });
+
+  assert.ok(args.includes(`--user-data-dir=${path.resolve("profiles/a1")}`));
+  assert.ok(args.includes("--remote-debugging-address=127.0.0.1"));
+  assert.ok(args.includes("--remote-debugging-port=32123"));
+  assert.ok(args.includes("--proxy-server=http://127.0.0.1:21001"));
+  assert.ok(args.includes("--proxy-bypass-list=localhost;stripe.test"));
+  assert.ok(args.includes("--lang=en-US"));
+  assert.ok(args.includes("--accept-lang=en-US"));
+  assert.equal(
+    args.some((arg) => arg.includes("webrtc-ip-handling-policy")),
+    false
+  );
+  assert.equal(args.includes("--no-sandbox"), false);
+  assert.equal(args.includes("--disable-extensions"), false);
+  assert.equal(
+    args.includes("--disable-blink-features=AutomationControlled"),
+    false
+  );
+  assert.equal(args.at(-1), "about:blank");
+});
+
+test("Chrome 可执行文件候选覆盖 Windows 系统级与用户级安装", () => {
+  const candidates = chromeExecutableCandidates(
+    {
+      ProgramFiles: "C:\\Program Files",
+      "ProgramFiles(x86)": "C:\\Program Files (x86)",
+      LOCALAPPDATA: "C:\\Users\\tester\\AppData\\Local",
+      PATH: "",
+    },
+    "win32"
+  );
+  assert.deepEqual(candidates, [
+    "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+    "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+    "C:\\Users\\tester\\AppData\\Local\\Google\\Chrome\\Application\\chrome.exe",
+  ]);
+  assert.equal(
+    findChromeExecutable(candidates, (candidate) => candidate === candidates[1]),
+    candidates[1]
+  );
+});
+
+test("Chrome 可执行文件候选覆盖 macOS 用户安装与 Unix PATH", () => {
+  const mac = chromeExecutableCandidates(
+    {
+      HOME: "/Users/tester",
+      PATH: "/custom/bin:/usr/bin",
+    },
+    "darwin"
+  );
+  assert.ok(
+    mac.includes(
+      "/Users/tester/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+    )
+  );
+  assert.ok(mac.includes("/custom/bin/google-chrome"));
+
+  const linux = chromeExecutableCandidates(
+    { PATH: "/custom/bin:/usr/bin" },
+    "linux"
+  );
+  assert.ok(linux.includes("/custom/bin/google-chrome-stable"));
+  assert.equal(
+    linux.filter((candidate) => candidate === "/usr/bin/google-chrome").length,
+    1,
+    "固定目录与 PATH 重复时必须去重"
+  );
+});
+
+test("CDP 默认 Context 的 close 会关闭原生 Chrome 且可重复调用", async (t) => {
+  const browser = { close: t.mock.fn(async () => {}) };
+  const child = {
+    exitCode: null,
+    signalCode: null,
+    killed: false,
+    kill: t.mock.fn(function () {
+      this.killed = true;
+    }),
+  };
+  const context = {};
+  installInteractiveContextClose(context, browser, child);
+
+  await Promise.all([context.close(), context.close()]);
+  assert.equal(browser.close.mock.callCount(), 1);
+  assert.equal(child.kill.mock.callCount(), 1);
+});
+
+test("交互式 Context 的 close 等待原生 Chrome 进程退出", async (t) => {
+  const browser = { close: t.mock.fn(async () => {}) };
+  const child = new EventEmitter();
+  child.exitCode = null;
+  child.signalCode = null;
+  child.killed = false;
+  child.kill = t.mock.fn(function (signal = "SIGTERM") {
+    this.killed = true;
+    setTimeout(() => {
+      this.signalCode = signal;
+      this.emit("exit", null, signal);
+    }, 10);
+    return true;
+  });
+  const context = {};
+  installInteractiveContextClose(context, browser, child);
+
+  await context.close();
+  assert.equal(child.signalCode, "SIGTERM");
+  assert.equal(child.kill.mock.callCount(), 1);
+});
+
+test("原生交互启动返回既有 API 形状并保留关闭约定", async (t) => {
+  const page = { url: () => "about:blank" };
+  const context = {
+    pages: () => [page],
+    addInitScript: t.mock.fn(async () => {}),
+  };
+  const browser = {
+    contexts: () => [context],
+    close: t.mock.fn(async () => {}),
+  };
+  const child = {
+    exitCode: null,
+    signalCode: null,
+    killed: false,
+    on: t.mock.fn(),
+    kill: t.mock.fn(function () {
+      this.killed = true;
+    }),
+  };
+  const spawnProcess = t.mock.fn(() => child);
+  const applyTimezone = t.mock.fn(async () => {});
+
+  const launched = await launchInteractivePersistentContext(
+    "profiles/a1",
+    baseLaunchArgs(false),
+    {
+      executable: "C:\\Chrome\\chrome.exe",
+      port: 32123,
+      spawnProcess,
+      waitForCdp: async () => {},
+      connectOverCDP: async () => browser,
+      applyTimezone,
+    }
+  );
+  assert.equal(launched.context, context);
+  assert.equal(launched.page, page);
+  assert.equal(spawnProcess.mock.callCount(), 1);
+  assert.equal(applyTimezone.mock.callCount(), 1);
+  assert.equal(
+    context.addInitScript.mock.callCount(),
+    0,
+    "原生有头路径不得注入 navigator/WebRTC 页面脚本"
+  );
+  await launched.context.close();
+  assert.equal(browser.close.mock.callCount(), 1);
+});
+
+test("原生交互启动在地区设置失败时关闭浏览器并清理进程", async (t) => {
+  const page = { url: () => "about:blank" };
+  const context = { pages: () => [page] };
+  const browser = {
+    contexts: () => [context],
+    close: t.mock.fn(async () => {}),
+  };
+  const child = {
+    exitCode: null,
+    signalCode: null,
+    killed: false,
+    on: t.mock.fn(),
+    kill: t.mock.fn(function () {
+      this.killed = true;
+    }),
+  };
+
+  await assert.rejects(
+    () =>
+      launchInteractivePersistentContext(
+        "profiles/a1",
+        baseLaunchArgs(false),
+        {
+          executable: "C:\\Chrome\\chrome.exe",
+          port: 32123,
+          spawnProcess: () => child,
+          waitForCdp: async () => {},
+          connectOverCDP: async () => browser,
+          applyTimezone: async () => {
+            throw new Error("timezone failed");
+          },
+        }
+      ),
+    /timezone failed/
+  );
+  assert.equal(browser.close.mock.callCount(), 1);
+  assert.equal(child.kill.mock.callCount(), 1);
+});
+
+test("交互时区 CDP Session 保持到页面关闭，避免覆盖立即失效", async (t) => {
+  const page = new EventEmitter();
+  const context = new EventEmitter();
+  context.pages = () => [page];
+  const session = {
+    send: t.mock.fn(async () => {}),
+    detach: t.mock.fn(async () => {}),
+  };
+  context.newCDPSession = t.mock.fn(async () => session);
+
+  await applyInteractiveTimezone(context, page, "Europe/London");
+  assert.equal(session.send.mock.callCount(), 1);
+  assert.deepEqual(session.send.mock.calls[0].arguments, [
+    "Emulation.setTimezoneOverride",
+    { timezoneId: "Europe/London" },
+  ]);
+  assert.equal(
+    session.detach.mock.callCount(),
+    0,
+    "设置后立即 detach 会让 Chrome 恢复系统时区"
+  );
+
+  page.emit("close");
+  await Promise.resolve();
+  assert.equal(session.detach.mock.callCount(), 1);
+});
+
+test("交互时区会覆盖 Profile 启动时已恢复的所有标签页", async (t) => {
+  const selected = new EventEmitter();
+  const restored = new EventEmitter();
+  const context = new EventEmitter();
+  context.pages = () => [restored, selected];
+  const sessions = new Map(
+    [selected, restored].map((targetPage) => [
+      targetPage,
+      {
+        send: t.mock.fn(async () => {}),
+        detach: t.mock.fn(async () => {}),
+      },
+    ])
+  );
+  context.newCDPSession = t.mock.fn(async (targetPage) => sessions.get(targetPage));
+
+  await applyInteractiveTimezone(context, selected, "Australia/Eucla");
+  assert.equal(context.newCDPSession.mock.callCount(), 2);
+  for (const session of sessions.values()) {
+    assert.deepEqual(session.send.mock.calls[0].arguments, [
+      "Emulation.setTimezoneOverride",
+      { timezoneId: "Australia/Eucla" },
+    ]);
+  }
 });
 
 test("浏览器启动参数限制磁盘与媒体缓存", () => {
@@ -218,30 +527,6 @@ test("浏览器启动后的初始化失败会关闭 Context 且保留原始错�
   assert.equal(close.mock.callCount(), 1);
 });
 
-test("WebRTC 防护清空 iceServers 但保留原生外观", () => {
-  // 在最小的 window/RTCPeerConnection 替身上跑守卫脚本
-  let seenConfig = null;
-  class FakeNative {
-    constructor(cfg) {
-      seenConfig = cfg;
-    }
-    static toString() {
-      return "function RTCPeerConnection() { [native code] }";
-    }
-  }
-  // 脚本在页面里以 window 为全局对象，这里用 globalThis.window 模拟
-  const win = { RTCPeerConnection: FakeNative };
-  globalThis.window = win;
-  webrtcGuardScript();
-
-  const Patched = win.RTCPeerConnection;
-  new Patched({ iceServers: [{ urls: "stun:example.com" }] });
-  assert.deepEqual(seenConfig.iceServers, [], "STUN 服务器必须被清空");
-  assert.equal(Patched.name, "RTCPeerConnection", "name 需与原生一致");
-  assert.match(Patched.toString(), /native code/, "toString 需伪装成原生");
-  delete globalThis.window;
-});
-
 test("识别缺少系统 Chrome 的启动错误", () => {
   assert.equal(
     isMissingChannelError(new Error("Chromium distribution 'chrome' is not found")),
@@ -250,6 +535,24 @@ test("识别缺少系统 Chrome 的启动错误", () => {
   assert.equal(
     isMissingChannelError(
       new Error("browserType.launch: Executable doesn't exist at C:\\Program Files\\Google\\Chrome\\chrome.exe")
+    ),
+    true
+  );
+  assert.equal(
+    isMissingChannelError(
+      Object.assign(new Error("spawn chrome ENOENT"), {
+        code: "ENOENT",
+        path: "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+      })
+    ),
+    true
+  );
+  assert.equal(
+    isMissingChannelError(
+      Object.assign(new Error("spawn chrome ENOENT"), {
+        code: "ENOENT",
+        path: "/usr/bin/google-chrome-stable",
+      })
     ),
     true
   );

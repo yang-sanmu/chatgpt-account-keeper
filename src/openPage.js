@@ -53,13 +53,16 @@ function notifyOpenPages(change) {
 }
 
 /**
- * GCash 的授权页把 Alipay IWP Tracker 当作启动期硬依赖。部分境外节点会直接重置
- * 该静态资源域名的连接，页面随后因 initiTracker 未定义而永远停在加载文案；同一台
- * 机器直连则可正常访问。只让这个脚本 CDN 直连，GCash、Alipay 风控上报、Adyen、
- * ChatGPT 和其它页面流量仍继续使用账号所属节点。
+ * 少数付款流程依赖只在本机系统网络可达的中国域名：
+ * - GCash 的授权页把 Alipay IWP Tracker 当作启动期硬依赖；
+ * - 中信银行 3DS ACS 会主动关闭部分境外节点的 TLS 连接。
+ *
+ * 只让已确认失败的精确主机直连；Stripe、商户页面和其它风控流量仍继续使用账号
+ * 所属节点，避免为了一个验证页切换整个浏览器出口。
  */
 export const OPEN_PAGE_PROXY_BYPASS = [
   "gw.alipayobjects.com",
+  "sv.creditcard.ecitic.com",
 ];
 
 export function getOpenPages() {

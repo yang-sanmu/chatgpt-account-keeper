@@ -36,8 +36,11 @@ async function waitUntil(predicate, timeoutMs = 500) {
   }
 }
 
-test("打开网页只直连 GCash 必需的静态脚本域名", () => {
-  assert.deepEqual(OPEN_PAGE_PROXY_BYPASS, ["gw.alipayobjects.com"]);
+test("打开网页只直连已确认受境外节点阻断的付款依赖域名", () => {
+  assert.deepEqual(OPEN_PAGE_PROXY_BYPASS, [
+    "gw.alipayobjects.com",
+    "sv.creditcard.ecitic.com",
+  ]);
 });
 
 test("手动关窗后立即清除打开状态并释放账号占用", async (t) => {

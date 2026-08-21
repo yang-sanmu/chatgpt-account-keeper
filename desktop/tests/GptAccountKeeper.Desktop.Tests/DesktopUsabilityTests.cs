@@ -519,6 +519,41 @@ public sealed class DesktopUsabilityTests
     }
 
     [Fact]
+    public void SelectorCheckCommandDispatchesItsOwnActionName()
+    {
+        // 选择器自检必须是独立动作。之前排查"找不到输入框"只能靠反复点立即运行，
+        // 从失败信息里猜是账号问题还是官网改版。
+        var dispatched = new List<string>();
+        var row = new AccountRowViewModel(
+            Account("one"),
+            [new RouteChoiceViewModel(null, "不分组")],
+            (_, _) => Task.FromResult(true),
+            (_, _) => Task.FromResult(true),
+            (_, command) =>
+            {
+                dispatched.Add(command);
+                return Task.CompletedTask;
+            });
+
+        Assert.True(row.CheckSelectorsCommand.CanExecute(null));
+        row.CheckSelectorsCommand.Execute(null);
+        row.RunNowCommand.Execute(null);
+
+        Assert.Equal(["check-selectors", "run-now"], dispatched);
+    }
+
+    [Fact]
+    public void SelectorCheckParamsDefaultToTheReadOnlyProbe()
+    {
+        // deep=true 会在用户账号里真发一条消息，绝不能是默认行为。
+        var shallow = new SelectorCheckParams("acc_1", false);
+        var json = JsonSerializer.Serialize(shallow, AppJsonContext.Default.SelectorCheckParams);
+
+        Assert.Contains("\"deep\":false", json, StringComparison.Ordinal);
+        Assert.Contains("\"id\":\"acc_1\"", json, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void RouteChoiceStringValueUsesVisibleTitleForAutoCompleteFiltering()
     {
         var choice = new RouteChoiceViewModel("europe", "Europe Stable");
@@ -717,7 +752,9 @@ public sealed class DesktopUsabilityTests
             ],
         };
         Assert.Equal("成功", entry.ResultText);
+        // 旧记录没有 targetRounds，摘要保持原来的单一轮数形式。
         Assert.Equal("C# 架构 · 2 轮", entry.SummaryText);
+        Assert.Null(entry.StopReasonText);
         Assert.True(entry.HasRounds);
         // 取不到内容时给明确占位，而不是把原始 JSON 铺给用户。
         Assert.Equal("（无提问内容）", entry.Rounds[1].QuestionText);
@@ -760,6 +797,62 @@ public sealed class DesktopUsabilityTests
         Assert.Empty(history.FilteredAccounts);
         Assert.Equal("暂无匹配账号", history.AccountEmptyTitle);
         Assert.Contains("搜索条件", history.AccountEmptyText);
+    }
+
+    [Fact]
+    public void HistoryEntryDistinguishesEarlyStopFromPlannedRoundCount()
+    {
+        // 提前结束的记录必须能和"计划就这么多轮"区分开，否则界面上都是"2 轮"。
+        var earlyStop = new HistoryEntryDto
+        {
+            Ok = true,
+            SetName = "缓存",
+            TotalRounds = 2,
+            TargetRounds = 8,
+            StopReason = "no-next-question",
+        };
+        Assert.Equal("缓存 · 2/8 轮", earlyStop.SummaryText);
+        Assert.Equal("模型未给出下一个问题，对话提前结束", earlyStop.StopReasonText);
+        Assert.Equal("模型未给出下一个问题，对话提前结束", earlyStop.DetailText);
+
+        var completed = new HistoryEntryDto
+        {
+            Ok = true,
+            SetName = "缓存",
+            Topic = "缓存穿透",
+            TotalRounds = 8,
+            TargetRounds = 8,
+            StopReason = "completed",
+        };
+        Assert.Equal("缓存 · 8 轮", completed.SummaryText);
+        Assert.Null(completed.StopReasonText);
+        Assert.Equal("缓存穿透", completed.DetailText);
+
+        var sendFailed = new HistoryEntryDto
+        {
+            Ok = false,
+            TotalRounds = 1,
+            TargetRounds = 5,
+            StopReason = "send-failed",
+        };
+        Assert.Equal("1/5 轮", sendFailed.SummaryText);
+        Assert.Equal("发送失败，对话中断", sendFailed.StopReasonText);
+
+        // error 比 stopReason 更具体，优先显示。
+        var withError = new HistoryEntryDto
+        {
+            Ok = false,
+            TotalRounds = 0,
+            TargetRounds = 3,
+            StopReason = "send-failed",
+            Error = "第 1 轮发送失败：网络中断",
+        };
+        Assert.Equal("第 1 轮发送失败：网络中断", withError.DetailText);
+
+        // 未知的 stopReason（新 Agent 配旧 Desktop）不该显示成空白提示。
+        var unknown = new HistoryEntryDto { TotalRounds = 1, StopReason = "something-new" };
+        Assert.Null(unknown.StopReasonText);
+        Assert.Equal("1 轮", unknown.SummaryText);
     }
 
     [Fact]
@@ -875,10 +968,12 @@ public sealed class DesktopUsabilityTests
                 Operation("op2", "proxy-test-all", "failed", DateTimeOffset.Parse("2026-01-01T11:00:00Z"),
                     new AgentErrorDto("PROXY_UNAVAILABLE", "没有可测试的启用节点", false, default)),
                 Operation("op3", "profile-scan", "running", DateTimeOffset.Parse("2026-01-01T12:00:00Z")),
+                Operation("op4", "account-selector-check", "succeeded", DateTimeOffset.Parse("2026-01-01T13:00:00Z")),
             ]);
 
-        Assert.Equal(["op3", "op2", "op1"], operations.Items.Select(item => item.Id));
+        Assert.Equal(["op4", "op3", "op2", "op1"], operations.Items.Select(item => item.Id));
         Assert.Equal("全部节点测速", operations.Items.Single(item => item.Id == "op2").KindText);
+        Assert.Equal("检查选择器", operations.Items.Single(item => item.Id == "op4").KindText);
 
         operations.Filter = operations.Filters.Single(option => option.Value == OperationFilter.Failed);
         Assert.Equal("op2", Assert.Single(operations.Items).Id);

@@ -577,6 +577,14 @@ internal sealed class HistoryEntryDto
     [JsonPropertyName("totalRounds")]
     public int TotalRounds { get; init; }
 
+    /// <summary>本次对话计划跑的轮数。早于此字段的历史行为 null。</summary>
+    [JsonPropertyName("targetRounds")]
+    public int? TargetRounds { get; init; }
+
+    /// <summary>结束原因：completed / no-next-question / send-failed / no-topic。</summary>
+    [JsonPropertyName("stopReason")]
+    public string? StopReason { get; init; }
+
     [JsonPropertyName("error")]
     public string? Error { get; init; }
 
@@ -607,13 +615,32 @@ internal sealed class HistoryEntryDto
         _ => Palette.Warning,
     };
 
+    /// <summary>
+    /// 轮数文本。提前结束时同时给出计划轮数，否则界面上"2 轮"看不出是计划就两轮
+    /// 还是计划八轮只跑了两轮。
+    /// </summary>
     [JsonIgnore]
-    public string SummaryText => string.IsNullOrWhiteSpace(SetName)
-        ? $"{TotalRounds} 轮"
-        : $"{SetName} · {TotalRounds} 轮";
+    public string RoundsText => TargetRounds is int target && target != TotalRounds
+        ? $"{TotalRounds}/{target} 轮"
+        : $"{TotalRounds} 轮";
 
     [JsonIgnore]
-    public string DetailText => Error ?? Topic ?? SummaryText;
+    public string SummaryText => string.IsNullOrWhiteSpace(SetName)
+        ? RoundsText
+        : $"{SetName} · {RoundsText}";
+
+    /// <summary>提前结束的原因说明。正常跑满和旧数据都返回 null。</summary>
+    [JsonIgnore]
+    public string? StopReasonText => StopReason switch
+    {
+        "no-next-question" => "模型未给出下一个问题，对话提前结束",
+        "send-failed" => "发送失败，对话中断",
+        "no-topic" => "会话集未设置主题",
+        _ => null,
+    };
+
+    [JsonIgnore]
+    public string DetailText => Error ?? StopReasonText ?? Topic ?? SummaryText;
 
     [JsonIgnore]
     public bool HasRounds => Rounds.Length > 0;
@@ -879,6 +906,7 @@ internal sealed class AgentOperationDto
     {
         "account-status-refresh" => "刷新登录状态",
         "account-run" => "立即运行对话",
+        "account-selector-check" => "检查选择器",
         "account-login" => "账号登录",
         "open-page-start" => "打开真实 Chrome",
         "proxy-import" => "导入代理订阅",
@@ -1002,6 +1030,14 @@ internal sealed class GroupPatchDto
 }
 
 internal sealed record IdParams([property: JsonPropertyName("id")] string Id);
+
+/// <summary>
+/// 选择器自检参数。Deep 为 true 时 Agent 会在账号里真发一条探测消息，用来验证
+/// 停止按钮和回复正文两组——这两组在只读探测下无法验证。
+/// </summary>
+internal sealed record SelectorCheckParams(
+    [property: JsonPropertyName("id")] string Id,
+    [property: JsonPropertyName("deep")] bool Deep);
 
 internal sealed record ProxySubscriptionParams(
     [property: JsonPropertyName("url")] string Url);

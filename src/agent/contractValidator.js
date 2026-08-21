@@ -41,6 +41,7 @@ const METHOD_CONTRACTS = Object.freeze({
   "accounts.getStatus": ["idParams", "accountStatusResult"],
   "accounts.refreshStatus": ["idParams", "operationResult"],
   "accounts.runNow": ["idParams", "operationResult"],
+  "accounts.checkSelectors": ["selectorCheckParams", "operationResult"],
   "browser.startLogin": ["loginParams", "operationResult"],
   "browser.openPage": ["accountIdParams", "operationResult"],
   "browser.closePage": ["accountIdParams", "okResult"],

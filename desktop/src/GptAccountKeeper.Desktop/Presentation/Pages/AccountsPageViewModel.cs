@@ -502,6 +502,7 @@ internal sealed class AccountsPageViewModel : PageViewModel
             "open-page" => ("browser.openPage", "打开真实 Chrome"),
             "refresh-status" => ("accounts.refreshStatus", "刷新登录状态"),
             "run-now" => ("accounts.runNow", "立即运行"),
+            "check-selectors" => ("accounts.checkSelectors", "检查选择器"),
             _ => (string.Empty, string.Empty),
         };
         if (method.Length == 0) return null;
@@ -515,6 +516,16 @@ internal sealed class AccountsPageViewModel : PageViewModel
                     method,
                     new AccountIdParams(row.Id),
                     AppJsonContext.Default.AccountIdParams,
+                    AppJsonContext.Default.AgentOperationDto,
+                    AgentSession.NewCommandId());
+            }
+            else if (method == "accounts.checkSelectors")
+            {
+                // 默认只读探测：不在用户账号里留下探测对话。
+                operation = await _session.CallAsync(
+                    method,
+                    new SelectorCheckParams(row.Id, false),
+                    AppJsonContext.Default.SelectorCheckParams,
                     AppJsonContext.Default.AgentOperationDto,
                     AgentSession.NewCommandId());
             }

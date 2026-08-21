@@ -1,4 +1,14 @@
+import { preSendPauseMs, typingDelayMs } from "./humanize.js";
 import * as log from "./logger.js";
+
+function selectorList(value) {
+  const candidates = Array.isArray(value) ? value : value == null ? [] : [value];
+  return candidates.filter((candidate) => typeof candidate === "string" && candidate.trim());
+}
+
+function combinedSelector(value) {
+  return selectorList(value).join(", ");
+}
 
 /**
  * 在一组候选选择器里返回第一个可见的元素句柄。
@@ -44,13 +54,15 @@ export async function sendPrompt(page, selectors, prompt) {
   const beforeCount = await countAssistant(page, selectors);
 
   await composer.click();
-  // contenteditable 需要用键盘输入，模拟真实打字。
-  await page.keyboard.type(prompt, { delay: 25 });
-  await page.waitForTimeout(300);
+  // contenteditable 需要用键盘输入，模拟真实打字。延迟每轮取一个区间内的值，
+  // 固定 25ms 是可测量的机器指纹。
+  await page.keyboard.type(prompt, { delay: typingDelayMs() });
+  // 输入完到点发送之间，真人总有一点间隔。
+  await page.waitForTimeout(preSendPauseMs());
 
   // 优先点发送按钮，找不到就回车。
   let sent = false;
-  for (const sel of selectors.sendButton) {
+  for (const sel of selectorList(selectors.sendButton)) {
     const btn = await page.$(sel);
     if (btn && (await btn.isEnabled().catch(() => false))) {
       await btn.click();
@@ -66,7 +78,7 @@ export async function sendPrompt(page, selectors, prompt) {
   try {
     await page.waitForFunction(
       ([sel, n]) => document.querySelectorAll(sel).length > n,
-      [selectors.assistantMessage[0], beforeCount],
+      [combinedSelector(selectors.assistantMessage), beforeCount],
       { timeout: 20000 }
     );
   } catch {
@@ -74,15 +86,23 @@ export async function sendPrompt(page, selectors, prompt) {
   }
 
   await waitForResponseComplete(page, selectors);
-  return extractLastAssistant(page, selectors);
+  const afterCount = await countAssistant(page, selectors);
+  if (afterCount <= beforeCount) {
+    // 等待超时后不能直接取“最后一条”：多轮对话里那会读到上一轮回复，把一次
+    // 实际发送失败伪装成成功，并继续沿着旧问题推进。
+    throw new Error("发送后未检测到新的回复");
+  }
+  const reply = await extractLastAssistant(page, selectors);
+  if (!reply) throw new Error("新的回复内容为空");
+  return reply;
 }
 
 async function countAssistant(page, selectors) {
-  return page.$$(selectors.assistantMessage[0]).then((n) => n.length);
+  return page.$$(combinedSelector(selectors.assistantMessage)).then((n) => n.length);
 }
 
 async function waitForResponseComplete(page, selectors) {
-  const stopSel = selectors.stopButton.join(", ");
+  const stopSel = combinedSelector(selectors.stopButton);
 
   // 等生成开始（stop 按钮出现），最多 15s。若没等到，可能回复极快或结构变了。
   try {
@@ -118,7 +138,7 @@ async function waitForTextStable(page, selectors) {
 }
 
 async function extractLastAssistant(page, selectors) {
-  const sel = selectors.assistantMessage[0];
+  const sel = combinedSelector(selectors.assistantMessage);
   const nodes = await page.$$(sel);
   if (nodes.length === 0) return "";
   const lastNode = nodes[nodes.length - 1];
@@ -135,24 +155,73 @@ export async function startNewChat(page, selectors) {
   await page.waitForTimeout(500);
 }
 
+// 追问链条的问题长度上限。模型偶尔会把整段解释接在前缀后面，原样发出去既不像
+// 真人提问，也可能超出输入框承受范围。
+const NEXT_QUESTION_MAX_LENGTH = 500;
+
+// 讲解 Markdown 或 prompt 模板时，模型会把"下一个问题："写进代码块当占位符。
+// 照抄进去会让下一轮问出与主题无关的假问题，所以先把代码内容挖空——保留换行
+// 以维持行结构，这样后面的行号与匹配位置仍与原文一致。
+function stripCodeSpans(text) {
+  return text
+    .replace(/(```|~~~)[\s\S]*?(?:\1|$)/g, (block) => block.replace(/[^\n]/g, " "))
+    .replace(/(`+)[^\n]*?\1/g, (span) => " ".repeat(span.length));
+}
+
+// 剥掉包裹问题的 Markdown 强调与成对引号。模型给的前缀经常是 **下一个问题：**，
+// 星号既可能只跟着前缀，也可能把整行包起来。
+// 引号在外、强调在内（「**问题？**」）时单趟剥不干净：去掉引号后才露出星号。
+// 三趟足够覆盖实际见过的嵌套深度，且到达不动点后继续剥也不会改变结果。
+function unwrapQuestion(raw) {
+  let text = raw.trim();
+  for (let i = 0; i < 3; i++) {
+    text = text
+      .replace(/^\*{1,3}/, "")
+      .replace(/\*{1,3}$/, "")
+      .replace(/^_{1,3}/, "")
+      .replace(/_{1,3}$/, "")
+      .trim();
+    // 只在确实成对时剥引号，避免把问题里真正的引号吃掉。
+    const quotes = [
+      ['"', '"'],
+      ["'", "'"],
+      ["「", "」"],
+      ["『", "』"],
+      ["“", "”"],
+      ["‘", "’"],
+    ];
+    for (const [open, close] of quotes) {
+      if (text.length >= open.length + close.length && text.startsWith(open) && text.endsWith(close)) {
+        text = text.slice(open.length, -close.length).trim();
+      }
+    }
+  }
+  return text;
+}
+
 /**
  * 从 GPT 回答里抽取“下一个问题”。约定 GPT 在末尾输出：
  *   下一个问题：xxx   /   下一个问题: xxx   /   Next question: xxx
- * 抽不到时返回 null，由上层决定是否结束本轮对话。
+ *
+ * 前缀允许带 Markdown 标题、列表、引用和强调标记；代码块与行内代码里的同名
+ * 前缀会被忽略。多次出现时取最后一个——多轮对话里模型会复述上一轮的问题，
+ * 真正的追问在末尾。抽不到时返回 null，由上层决定是否结束本轮对话。
  */
 export function extractNextQuestion(replyText) {
-  if (!replyText) return null;
-  const patterns = [
-    /下一个问题[:：]\s*(.+?)\s*$/im,
-    /下一问[:：]\s*(.+?)\s*$/im,
-    /next question[:：]\s*(.+?)\s*$/im,
-  ];
-  for (const re of patterns) {
-    const m = replyText.match(re);
-    if (m && m[1]) {
-      // 去掉可能的引号/句尾标点
-      return m[1].replace(/^["'「『]|["'」』]$/g, "").trim();
-    }
+  if (typeof replyText !== "string" || !replyText.trim()) return null;
+
+  const searchable = stripCodeSpans(replyText);
+  // 前缀后到行尾为止：跨行的问题只取首行，后续解释不吞进来。
+  const pattern = /(?:下一个问题|下一问|next\s+question)\s*[:：]\s*([^\n]*)/gi;
+
+  let candidate = null;
+  for (const match of searchable.matchAll(pattern)) {
+    const question = unwrapQuestion(match[1] ?? "");
+    if (question) candidate = question;
   }
-  return null;
+  if (!candidate) return null;
+
+  return candidate.length > NEXT_QUESTION_MAX_LENGTH
+    ? candidate.slice(0, NEXT_QUESTION_MAX_LENGTH).trim()
+    : candidate;
 }

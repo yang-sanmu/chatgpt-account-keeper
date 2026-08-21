@@ -52,6 +52,7 @@ internal sealed class AccountRowViewModel : ObservableObject
         ClosePageCommand = new AsyncRelayCommand(() => runCommand(this, "close-page"));
         RefreshStatusCommand = new AsyncRelayCommand(() => runCommand(this, "refresh-status"));
         RunNowCommand = new AsyncRelayCommand(() => runCommand(this, "run-now"));
+        CheckSelectorsCommand = new AsyncRelayCommand(() => runCommand(this, "check-selectors"));
         HistoryCommand = new AsyncRelayCommand(() => runCommand(this, "history"));
         RemoveCommand = new AsyncRelayCommand(() => runCommand(this, "remove"));
     }
@@ -71,6 +72,9 @@ internal sealed class AccountRowViewModel : ObservableObject
     public ICommand ClosePageCommand { get; }
     public ICommand RefreshStatusCommand { get; }
     public ICommand RunNowCommand { get; }
+
+    /// <summary>选择器自检。自动对话以"找不到输入框"失败时，用它确认是否官网改版。</summary>
+    public ICommand CheckSelectorsCommand { get; }
     public ICommand HistoryCommand { get; }
     public ICommand RemoveCommand { get; }
 

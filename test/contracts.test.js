@@ -97,4 +97,12 @@ test("every advertised IPC method has runtime parameter and result contracts", (
     }),
     (error) => error.code === "INTERNAL"
   );
+  assert.doesNotThrow(() => assertMethodResultContract("history.query", [{
+    time: "2026-08-21T00:00:00.000Z",
+    ok: true,
+    totalRounds: 1,
+    targetRounds: 2,
+    stopReason: "future-reason",
+    rounds: [],
+  }]));
 });

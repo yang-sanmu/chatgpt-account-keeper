@@ -6,7 +6,7 @@ namespace GptAccountKeeper.Desktop.Models;
 internal static class AgentProtocol
 {
     public const int Major = 1;
-    public const int Minor = 1;
+    public const int Minor = 2;
     public const int MaxFrameBytes = 8 * 1024 * 1024;
 }
 

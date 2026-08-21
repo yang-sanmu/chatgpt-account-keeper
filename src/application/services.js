@@ -3,7 +3,11 @@ import path from "node:path";
 import { timingSafeEqual } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import * as storeModule from "../store.js";
-import { runOnce as defaultRunOnce, scheduler as defaultScheduler } from "../scheduler.js";
+import {
+  checkSelectors as defaultCheckSelectors,
+  runOnce as defaultRunOnce,
+  scheduler as defaultScheduler,
+} from "../scheduler.js";
 import {
   startLogin as defaultStartLogin,
   getLoginTask as defaultGetLoginTask,
@@ -46,7 +50,7 @@ import {
 import { OperationRegistry } from "./operations.js";
 import { InMemoryReceiptStore, ReceiptCoordinator } from "./receipts.js";
 
-export const PROTOCOL_VERSION = Object.freeze({ major: 1, minor: 1 });
+export const PROTOCOL_VERSION = Object.freeze({ major: 1, minor: 2 });
 
 export const MUTATING_METHODS = new Set([
   "system.prepareUpdate",
@@ -56,6 +60,7 @@ export const MUTATING_METHODS = new Set([
   "accounts.remove",
   "accounts.refreshStatus",
   "accounts.runNow",
+  "accounts.checkSelectors",
   "browser.startLogin",
   "browser.openPage",
   "browser.closePage",
@@ -117,6 +122,7 @@ export function createDefaultRuntime(overrides = {}) {
     proxies: proxyModule,
     profileManager: defaultProfileManager,
     runOnce: defaultRunOnce,
+    checkSelectors: defaultCheckSelectors,
     startLogin: defaultStartLogin,
     getLoginTask: defaultGetLoginTask,
     closeAllLoginTasks: defaultCloseAllLoginTasks,
@@ -278,7 +284,17 @@ function publicHistoryEntry(entry, conversations = {}) {
     ok: raw.ok == null ? null : !!raw.ok,
     setName,
     topic,
-    totalRounds: Number.isFinite(raw.totalRounds) ? raw.totalRounds : rounds.length,
+    totalRounds: Number.isInteger(raw.totalRounds) && raw.totalRounds >= 0
+      ? raw.totalRounds
+      : rounds.length,
+    targetRounds: Number.isInteger(raw.targetRounds) && raw.targetRounds >= 0
+      ? raw.targetRounds
+      : null,
+    // 保留未知值以便旧 Desktop 对未来 Agent 的新结束原因向前兼容；展示层会安全
+    // 回落，而不是让服务层提前丢掉信息。
+    stopReason: typeof raw.stopReason === "string" && raw.stopReason.trim()
+      ? raw.stopReason.trim()
+      : null,
     error: raw.reason ?? raw.error ?? null,
     needReauth: !!raw.needReauth,
     rounds: rounds
@@ -463,6 +479,7 @@ export class ApplicationServices {
     add("accounts.getStatus", this._accountsGetStatus);
     add("accounts.refreshStatus", this._accountsRefreshStatus);
     add("accounts.runNow", this._accountsRunNow);
+    add("accounts.checkSelectors", this._accountsCheckSelectors);
     add("accounts.history", this._historyQuery);
     add("history.query", this._historyQuery);
     add("history.listAccounts", this._historyListAccounts);
@@ -821,6 +838,50 @@ export class ApplicationServices {
           normalized.details = { ...(normalized.details ?? {}), result };
           throw normalized;
         }
+        return result;
+      },
+      { resourceId: id }
+    );
+  }
+
+  /**
+   * 选择器自检。ChatGPT 改版后自动对话会以"找不到输入框"失败，界面上和账号被限
+   * 制、代理故障长得一样。这个方法给出明确结论：哪一组选择器失效、影响什么。
+   *
+   * 默认只读探测，不在账号里留下对话；deep 为 true 时会真发一条短消息，才能
+   * 验证停止按钮和回复正文两组。
+   */
+  _accountsCheckSelectors(params) {
+    const id = requireId(params);
+    const account = this.runtime.store.getAccount(id);
+    if (!account) fail(ERROR_CODES.NOT_FOUND, "账号不存在");
+    if (Object.hasOwn(params ?? {}, "deep")) {
+      assertInput(typeof params.deep === "boolean", "deep 必须是布尔值");
+    }
+    if (this.runtime.isBusy(id) || this.runtime.isHeld(id)) {
+      fail(ERROR_CODES.RESOURCE_BUSY, "账号正在执行其他浏览器操作", { retryable: true });
+    }
+    const deep = params?.deep === true;
+    return this.operations.create(
+      "account-selector-check",
+      async ({ update }) => {
+        update({ stage: "browser", message: "正在启动 Chrome 并检查会话" });
+        const result = await this.runtime.checkSelectors(account, {
+          headless: this.runtime.store.getSettings().headless,
+          depth: deep ? "conversation" : "page",
+        });
+        if (!result?.ok) {
+          const normalized = normalizeApplicationError(
+            Object.assign(new Error(result?.summary || result?.reason || "选择器自检失败"), {
+              code: result?.code,
+            })
+          );
+          normalized.details = { ...(normalized.details ?? {}), result };
+          throw normalized;
+        }
+        // Operation 是 Desktop 查看自检结论的载体；只把摘要塞在 result 里，任务页
+        // 会一直停留在“正在检查”，用户看不到 fallback/degraded 等关键信号。
+        update({ stage: "complete", message: result.summary || "选择器自检完成" });
         return result;
       },
       { resourceId: id }

@@ -41,6 +41,7 @@ namespace GptAccountKeeper.Desktop.Serialization;
 [JsonSerializable(typeof(GroupCreateParams))]
 [JsonSerializable(typeof(GroupUpdateParams))]
 [JsonSerializable(typeof(IdParams))]
+[JsonSerializable(typeof(SelectorCheckParams))]
 [JsonSerializable(typeof(ProxySubscriptionParams))]
 [JsonSerializable(typeof(ProxyNodeEnabledParams))]
 [JsonSerializable(typeof(ProxyRuntimeDirectoryParams))]

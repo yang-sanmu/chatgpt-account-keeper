@@ -41,6 +41,10 @@
         "setName": { "type": ["string", "null"] },
         "topic": { "type": ["string", "null"] },
         "totalRounds": { "type": "integer", "minimum": 0 },
+        "targetRounds": { "type": ["integer", "null"], "minimum": 0 },
+        "stopReason": {
+          "type": ["string", "null"]
+        },
         "error": { "type": ["string", "null"] },
         "needReauth": { "type": "boolean" },
         "rounds": {
@@ -102,6 +106,13 @@
     "idParams": {
       "type": "object", "additionalProperties": false, "required": ["id"],
       "properties": { "id": { "type": "string", "minLength": 1 } }
+    },
+    "selectorCheckParams": {
+      "type": "object", "additionalProperties": false, "required": ["id"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "deep": { "type": "boolean" }
+      }
     },
     "taskIdParams": {
       "type": "object", "additionalProperties": false, "required": ["taskId"],

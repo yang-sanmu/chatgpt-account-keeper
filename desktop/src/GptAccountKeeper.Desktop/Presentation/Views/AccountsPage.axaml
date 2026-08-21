@@ -258,6 +258,9 @@
                         <Button Content="关闭窗口" Margin="0,0,6,0" Padding="10,5" FontSize="11" IsVisible="{Binding PageOpen}" Command="{Binding ClosePageCommand}" />
                         <Button Content="⚡ 立即跑" Margin="0,0,6,0" Padding="10,5" FontSize="11" Command="{Binding RunNowCommand}" />
                         <Button Content="🔄 刷新状态" Margin="0,0,6,0" Padding="10,5" FontSize="11" Command="{Binding RefreshStatusCommand}" />
+                        <Button Content="🔍 检查选择器" Margin="0,0,6,0" Padding="10,5" FontSize="11"
+                                ToolTip.Tip="自动对话总是失败时用它确认 ChatGPT 网页端是否已改版。只读检查，不会发送消息。"
+                                Command="{Binding CheckSelectorsCommand}" />
                         <Button Content="📜 历史" Margin="0,0,6,0" Padding="10,5" FontSize="11" Command="{Binding HistoryCommand}" />
                         <Button Content="🗑 删除" Classes="danger" Padding="10,5" FontSize="11" Command="{Binding RemoveCommand}" />
                       </WrapPanel>

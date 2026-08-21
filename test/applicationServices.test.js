@@ -156,6 +156,15 @@ function fakeRuntime(overrides = {}) {
     getLoginTask: () => ({ taskId: "login_1", status: "success", email: "one@example.com" }),
     closeAllLoginTasks: async () => {},
     runOnce: async () => ({ ok: true, totalRounds: 2 }),
+    checkSelectors: async () => ({
+      ok: true,
+      depth: "page",
+      groups: [],
+      failedKeys: [],
+      degradedKeys: [],
+      fallbackKeys: [],
+      summary: "全部选择器可用",
+    }),
     recordConversation: () => {},
     readHistory: (_id, limit) => [
       {
@@ -193,7 +202,7 @@ test("hello negotiates major version and bootstrap contains a consistent managem
     clientVersion: "test",
     capabilities: [],
   });
-  assert.deepEqual(hello.protocol, { major: 1, minMinor: 0, maxMinor: 1 });
+  assert.deepEqual(hello.protocol, { major: 1, minMinor: 0, maxMinor: 2 });
   assert.equal(hello.agentVersion, "test");
   assert.ok(hello.capabilities.includes("operations"));
 
@@ -236,7 +245,7 @@ test("hello reports and rejects a mismatched data directory", async () => {
   const dataRoot = path.join(os.tmpdir(), "keeper-root-one");
   const services = new ApplicationServices({ runtime: fakeRuntime({ dataRoot }) });
   const hello = await services.invoke("system.hello", {
-    protocol: { major: 1, minor: 1 },
+    protocol: { major: 1, minor: 2 },
     clientVersion: "test",
     capabilities: [],
     dataRoot,
@@ -245,7 +254,7 @@ test("hello reports and rejects a mismatched data directory", async () => {
 
   await assert.rejects(
     services.invoke("system.hello", {
-      protocol: { major: 1, minor: 1 },
+      protocol: { major: 1, minor: 2 },
       clientVersion: "test",
       capabilities: [],
       dataRoot: path.join(os.tmpdir(), "keeper-root-two"),
@@ -398,6 +407,88 @@ test("long work returns an operation immediately and publishes lifecycle events"
   assert.equal(finished.result.totalRounds, 3);
   assert.ok(events.filter((event) => event.event === "operation.changed").length >= 3);
   assert.ok(events.every((event, index) => index === 0 || event.seq > events[index - 1].seq));
+});
+
+test("选择器自检默认只读，deep 为 true 时才允许真发消息", async () => {
+  const calls = [];
+  const runtime = fakeRuntime({
+    checkSelectors: async (account, opts) => {
+      calls.push([account.id, opts.depth]);
+      return { ok: true, depth: opts.depth, groups: [], failedKeys: [], degradedKeys: [], fallbackKeys: [], summary: "全部选择器可用" };
+    },
+  });
+  const services = new ApplicationServices({ runtime });
+
+  const shallow = await services.execute(request("accounts.checkSelectors", { id: "acc_1" }));
+  const shallowDone = await services.operations.waitForTerminal(shallow.id);
+  assert.equal(shallowDone.state, "succeeded");
+  assert.equal(shallowDone.result.depth, "page");
+  assert.equal(shallowDone.stage, "complete");
+  assert.equal(shallowDone.message, "全部选择器可用");
+
+  const deep = await services.execute(
+    request("accounts.checkSelectors", { id: "acc_1", deep: true })
+  );
+  const deepDone = await services.operations.waitForTerminal(deep.id);
+  assert.equal(deepDone.state, "succeeded");
+  assert.equal(deepDone.result.depth, "conversation");
+
+  assert.deepEqual(calls, [
+    ["acc_1", "page"],
+    ["acc_1", "conversation"],
+  ]);
+});
+
+test("选择器失效让自检操作失败，并把逐组报告带在错误详情里", async () => {
+  const report = {
+    ok: false,
+    depth: "page",
+    groups: [
+      { key: "composer", label: "输入框", status: "failed", matched: null, candidates: ["#a"], impact: "无法输入问题" },
+    ],
+    failedKeys: ["composer"],
+    degradedKeys: [],
+    fallbackKeys: [],
+    summary: "选择器已失效：输入框。ChatGPT 网页端可能已改版",
+  };
+  const runtime = fakeRuntime({ checkSelectors: async () => report });
+  const services = new ApplicationServices({ runtime });
+
+  const operation = await services.execute(request("accounts.checkSelectors", { id: "acc_1" }));
+  const finished = await services.operations.waitForTerminal(operation.id);
+
+  assert.equal(finished.state, "failed");
+  // 摘要必须成为错误消息，否则界面上又是一条看不出原因的失败。
+  assert.match(finished.error.message, /选择器已失效/);
+  assert.deepEqual(finished.error.details.result.failedKeys, ["composer"]);
+});
+
+test("自检拒绝未知账号、非法 deep 和被占用的账号", async () => {
+  const runtime = fakeRuntime();
+  const services = new ApplicationServices({ runtime });
+
+  await assert.rejects(
+    services.execute(request("accounts.checkSelectors", { id: "missing" })),
+    (error) => error.code === ERROR_CODES.NOT_FOUND
+  );
+  await assert.rejects(
+    services.execute(request("accounts.checkSelectors", { id: "acc_1", deep: "yes" })),
+    (error) => error.code === ERROR_CODES.VALIDATION_FAILED
+  );
+
+  // 账号已经被别的浏览器操作占住时不能再起一个 Chrome：同一个 Profile 被两个
+  // Chromium 打开会锁冲突。
+  const busy = new ApplicationServices({ runtime: fakeRuntime({ isBusy: () => true }) });
+  await assert.rejects(
+    busy.execute(request("accounts.checkSelectors", { id: "acc_1" })),
+    (error) => error.code === ERROR_CODES.RESOURCE_BUSY
+  );
+
+  const held = new ApplicationServices({ runtime: fakeRuntime({ isHeld: () => true }) });
+  await assert.rejects(
+    held.execute(request("accounts.checkSelectors", { id: "acc_1" })),
+    (error) => error.code === ERROR_CODES.RESOURCE_BUSY
+  );
 });
 
 test("Chrome missing keeps its stable code through run, open-page, and login operations", async () => {
@@ -588,6 +679,24 @@ test("history entries expose structured question/answer rounds", async () => {
   assert.equal(entry.ok, true);
   assert.equal(entry.totalRounds, 1);
   assert.deepEqual(entry.rounds, [{ question: "问题", answer: "回答", at: null }]);
+});
+
+test("history preserves planned rounds and forward-compatible stop reasons", async () => {
+  const runtime = fakeRuntime({
+    readHistory: () => [{
+      ok: true,
+      time: "2026-01-01T00:00:00.000Z",
+      totalRounds: 2,
+      targetRounds: 8,
+      stopReason: "future-reason",
+      rounds: [],
+    }],
+  });
+  const services = new ApplicationServices({ runtime });
+
+  const [entry] = await services.invoke("history.query", { accountId: "acc", limit: 10 });
+  assert.equal(entry.targetRounds, 8);
+  assert.equal(entry.stopReason, "future-reason");
 });
 
 test("history resolves legacy topics from the configured context or prompt", async () => {

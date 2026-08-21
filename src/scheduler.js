@@ -7,6 +7,13 @@ import { withAccountLock } from "./locks.js";
 import { recordConversation } from "./logger.js";
 import { checkSession, SESSION_OK, SESSION_REAUTH, SESSION_UNKNOWN } from "./health.js";
 import { setCachedStatus } from "./statusMonitor.js";
+import {
+  PROBE_DEPTH_CONVERSATION,
+  PROBE_DEPTH_PAGE,
+  probeSelectors,
+  summarizeSelectorReport,
+  validateSelectorConfig,
+} from "./selectorCheck.js";
 import * as log from "./logger.js";
 
 function secureRandom() {
@@ -122,6 +129,81 @@ export async function runOnce(account, opts = {}) {
         return { ...result, setName };
       },
       { label: `「${name}」浏览器` }
+    );
+  });
+}
+
+/**
+ * 用某个账号跑一次选择器自检。
+ *
+ * 复用 runOnce 的全套前置条件（账号锁、浏览器生命周期、会话健康检查），因为
+ * 选择器只有在已登录的新对话页上才能验证——未登录页面上一切都"找不到"，那样的
+ * 报告会把登录问题误报成官网改版。
+ *
+ * depth 为 "conversation" 时会在账号里真发一条 "hello"，用来验证停止按钮和回复
+ * 正文两组；默认的 "page" 深度只读探测，不留下任何对话。
+ */
+export async function checkSelectors(account, opts = {}) {
+  const selectors = readResourceJson("config/selectors.json");
+  const name = displayName(account);
+  const depth = opts.depth === PROBE_DEPTH_CONVERSATION
+    ? PROBE_DEPTH_CONVERSATION
+    : PROBE_DEPTH_PAGE;
+  const config = validateSelectorConfig(selectors);
+  // 选择器组自身的问题由 probeSelectors 按“致命/可降级”分级；只有页面地址或
+  // 整份配置的结构坏掉时才不能启动浏览器，需在导航前直接返回。
+  const criticalConfigProblems = config.problems.filter(
+    (problem) => problem.key == null || problem.key === "url" || problem.key === "newChatUrl"
+  );
+  if (criticalConfigProblems.length > 0) {
+    const report = {
+      ok: false,
+      depth,
+      groups: [],
+      failedKeys: [],
+      degradedKeys: [],
+      fallbackKeys: [],
+      configProblems: criticalConfigProblems,
+    };
+    return {
+      ...report,
+      summary: summarizeSelectorReport(report),
+      accountId: account.id,
+    };
+  }
+  return withAccountLock(account.id, async () => {
+    const fresh = getAccount(account.id) ?? account;
+    return runWithBrowserLifecycle(
+      () => launchForAccount(fresh, { headless: opts.headless ?? true }),
+      async ({ page }) => {
+        await page.goto(selectors.newChatUrl || selectors.url, {
+          waitUntil: "domcontentloaded",
+        });
+        // 未登录时页面上什么都找不到，报告会把登录问题说成选择器失效。
+        const health = await checkSession(page);
+        setCachedStatus(fresh.id, health.state, health.email, health.detail);
+        if (health.state === SESSION_REAUTH) {
+          return {
+            ok: false,
+            reason: `会话已失效（${health.detail ?? "需重新登录"}），无法检查选择器`,
+            needReauth: true,
+          };
+        }
+        if (health.state !== SESSION_OK && health.state !== SESSION_UNKNOWN) {
+          return { ok: false, reason: "未登录，请先登录该账号后再检查选择器" };
+        }
+        if (health.state === SESSION_UNKNOWN) {
+          return {
+            ok: false,
+            reason: `会话状态无法确认（${health.detail ?? "网络或验证页面异常"}），为避免误报选择器漂移，本次未执行自检`,
+          };
+        }
+        const report = await probeSelectors(page, selectors, { depth });
+        const summary = summarizeSelectorReport(report);
+        log[report.ok ? "info" : "warn"](`「${name}」选择器自检：${summary}`);
+        return { ...report, summary, accountId: fresh.id };
+      },
+      { label: `「${name}」选择器自检` }
     );
   });
 }

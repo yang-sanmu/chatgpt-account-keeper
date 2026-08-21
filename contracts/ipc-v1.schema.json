@@ -24,7 +24,7 @@
       "type": "string",
       "enum": [
         "system.hello", "system.bootstrap", "system.getActivity", "system.prepareUpdate", "system.shutdown",
-        "accounts.list", "accounts.create", "accounts.update", "accounts.remove", "accounts.getStatus", "accounts.refreshStatus", "accounts.runNow",
+        "accounts.list", "accounts.create", "accounts.update", "accounts.remove", "accounts.getStatus", "accounts.refreshStatus", "accounts.runNow", "accounts.checkSelectors",
         "browser.startLogin", "browser.getTask", "browser.openPage", "browser.closePage", "browser.listOpenPages",
         "accounts.history", "history.query", "history.listAccounts",
         "groups.list", "groups.create", "groups.update", "groups.remove",

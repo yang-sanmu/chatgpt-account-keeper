@@ -143,9 +143,12 @@ test("启动失败的所有权分叉：不确定保留 token，明确未创建�
   // 第二次：明确未创建。隔离会挡住同一账号，所以换一个。
   resetLocksForTest();
   background.enqueue({ accountId: "acc-2", workKind: "account-run", kind: "account-run" });
-  for (let i = 0; i < 100 && background.queue.activeCount() > 0; i++) {
-    await new Promise((resolve) => setTimeout(resolve, 5));
+  const deadline = Date.now() + 2_000;
+  while ((attempt < 2 || background.queue.activeCount() > 0) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
   }
+  assert.equal(attempt, 2, "第二次 launch 应在 2 秒内发生");
+  assert.equal(background.queue.activeCount(), 0, "第二次任务应在断言前结束");
   assert.equal(
     tokensDuringLaunch[1].registered,
     tokensDuringLaunch[1].used,

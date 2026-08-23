@@ -28,13 +28,25 @@ jobs:
       - name: Install Node dependencies
         run: npm ci --ignore-scripts --no-audit --no-fund
 
+      - name: Publish chrome-launcher broker
+        run: >-
+          dotnet publish
+          tools/chrome-launcher/ChromeLauncher.csproj
+          -c Release
+          -r win-x64
+          -o artifacts/chrome-launcher
+
       - name: Node tests
+        env:
+          GPT_ACCOUNT_KEEPER_CHROME_LAUNCHER: ${{ github.workspace }}/artifacts/chrome-launcher/chrome-launcher.exe
         run: npm test
 
       - name: Avalonia build (warnings are errors)
         run: dotnet build desktop/GptAccountKeeper.Desktop.sln -c Release
 
       - name: Native desktop tests
+        env:
+          GPT_ACCOUNT_KEEPER_CHROME_LAUNCHER: ${{ github.workspace }}/artifacts/chrome-launcher/chrome-launcher.exe
         run: dotnet test desktop/tests/GptAccountKeeper.Desktop.Tests/GptAccountKeeper.Desktop.Tests.csproj -c Release --no-build
 
       - name: NativeAOT publish gate

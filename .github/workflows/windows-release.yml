@@ -65,6 +65,14 @@ jobs:
       - name: Verify committed release versions agree
         run: node scripts/verify-release-version.mjs ${{ steps.version.outputs.version }}
 
+      - name: Publish chrome-launcher broker
+        run: >-
+          dotnet publish
+          tools/chrome-launcher/ChromeLauncher.csproj
+          -c Release
+          -r win-x64
+          -o artifacts/chrome-launcher
+
       # Missing signing material still produces an internal inspection artifact,
       # but the aggregate job refuses to create a GitHub draft from it.
       - name: Report signing mode
@@ -82,6 +90,8 @@ jobs:
         id: signing
 
       - name: Install dependencies and test
+        env:
+          GPT_ACCOUNT_KEEPER_CHROME_LAUNCHER: ${{ github.workspace }}/artifacts/chrome-launcher/chrome-launcher.exe
         run: |
           npm ci --ignore-scripts --no-audit --no-fund
           npm test
@@ -111,6 +121,7 @@ jobs:
             -NodeDirectory artifacts/runtimes/node `
             -MihomoExecutable artifacts/runtimes/mihomo/mihomo.exe `
             -MihomoLicense artifacts/runtimes/mihomo/LICENSE `
+            -ChromeLauncherExecutable artifacts/chrome-launcher/chrome-launcher.exe `
             -OutputDirectory artifacts/stage
           npm sbom --prefix artifacts/stage/agent --omit=dev --package-lock-only --sbom-format cyclonedx | Out-File artifacts/stage/licenses/agent.cdx.json -Encoding utf8
           if ($LASTEXITCODE -ne 0) { throw 'Agent SBOM generation failed' }

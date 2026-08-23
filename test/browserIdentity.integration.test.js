@@ -251,6 +251,15 @@ test(
             /HeadlessChrome/i,
             `${url} 首个请求不得暴露 HeadlessChrome`
           );
+          // 计划 §9.3.1 第 1 层：低熵 Sec-CH-UA 与 legacy UA 同等重要。首个 document
+          // 请求在收到 Accept-CH 之前不会带高熵 hints（那是协议行为，不断言），但
+          // 低熵 brands 一旦泄漏 HeadlessChrome，Raw CDP 屏障建立在 DevToolsActivePort
+          // 之后，对这个请求没有任何补救手段。此前只采集不断言，等于放着一个未知。
+          assert.doesNotMatch(
+            request.brands,
+            /HeadlessChrome/i,
+            `${url} 首个请求的低熵 Sec-CH-UA 不得暴露 HeadlessChrome`
+          );
         }
 
         // 首个 document 请求由 Chrome 在 Target 暂停前发起，启动参数保证其中

@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using System.Windows.Input;
 using Avalonia.Media;
 using GptAccountKeeper.Desktop.Infrastructure.Settings;
@@ -5,6 +6,57 @@ using GptAccountKeeper.Desktop.Models;
 using GptAccountKeeper.Desktop.Serialization;
 
 namespace GptAccountKeeper.Desktop.Presentation.Pages;
+
+/// <summary>
+/// 活动 Chrome 明细的一行。DTO 本身是不可变快照，所以「按 run 精确关闭」的命令挂在
+/// 这个包装上，而不是给 DTO 加行为——按钮要传的是 browserRunId，不是列表索引。
+/// </summary>
+internal sealed class BrowserRunRowViewModel : ObservableObject
+{
+    private BrowserRunDto _run;
+
+    public BrowserRunRowViewModel(BrowserRunDto run, Func<string, Task> close)
+    {
+        _run = run;
+        CloseCommand = new AsyncRelayCommand(() => close(run.BrowserRunId));
+    }
+
+    public ICommand CloseCommand { get; }
+
+    public BrowserRunDto Run
+    {
+        get => _run;
+        set
+        {
+            if (!SetProperty(ref _run, value)) return;
+            OnPropertyChanged(nameof(AccountId));
+            OnPropertyChanged(nameof(PurposeText));
+            OnPropertyChanged(nameof(SourceText));
+            OnPropertyChanged(nameof(StateText));
+            OnPropertyChanged(nameof(StateColor));
+            OnPropertyChanged(nameof(NeedsAttention));
+            OnPropertyChanged(nameof(RuntimeText));
+            OnPropertyChanged(nameof(DetailText));
+            OnPropertyChanged(nameof(RootPidText));
+            OnPropertyChanged(nameof(CloseButtonText));
+        }
+    }
+
+    public string BrowserRunId => _run.BrowserRunId;
+    public string AccountId => _run.AccountId;
+    public string PurposeText => _run.PurposeText;
+    public string SourceText => _run.SourceText;
+    public string StateText => _run.StateText;
+    public IBrush StateColor => _run.StateColor;
+    public bool NeedsAttention => _run.NeedsAttention;
+    public string RuntimeText => _run.RuntimeText;
+    public string DetailText => _run.DetailText;
+
+    public string RootPidText => _run.RootPid is { } pid ? $"PID {pid}" : "PID —";
+
+    /// <summary>close_failed 的语义是复验，不是「从列表里删掉」。</summary>
+    public string CloseButtonText => _run.NeedsAttention ? "重试回收" : "关闭";
+}
 
 internal sealed class OverviewPageViewModel : PageViewModel
 {
@@ -38,6 +90,8 @@ internal sealed class OverviewPageViewModel : PageViewModel
         _behavior = behavior;
         StartSchedulerCommand = new AsyncRelayCommand(StartSchedulerAsync);
         StopSchedulerCommand = new AsyncRelayCommand(() => ChangeSchedulerAsync(false));
+        RefreshRunsCommand = new AsyncRelayCommand(
+            () => RefreshRunsRequested?.Invoke() ?? Task.CompletedTask);
     }
 
     public ICommand StartSchedulerCommand { get; }
@@ -156,6 +210,175 @@ internal sealed class OverviewPageViewModel : PageViewModel
         get => _activeOperationCount;
         private set => SetProperty(ref _activeOperationCount, value);
     }
+
+    // ---- 队列与 Chrome 可观察状态（计划 §15）----
+    // 目的很具体：当后台活动任务显示为 0 时，仍存在的项目 Chrome 必须能在明细里
+    // 找到对应记录，用户才能定位卡顿而不是面对一个自相矛盾的界面。
+
+    private int _queuedCount;
+    private int _runningCount;
+    private int _closingCount;
+    private string _chromeUsage = "0 / 4";
+    private string _workSlotUsage = "0 / 4";
+    private int _waitingWorkSlot;
+    private int _waitingAccount;
+    private int _waitingChrome;
+    private int _quarantinedCount;
+    private int _longLivedPageCount;
+    private bool _brokerRunning = true;
+
+    public int QueuedCount
+    {
+        get => _queuedCount;
+        private set => SetProperty(ref _queuedCount, value);
+    }
+
+    public int RunningCount
+    {
+        get => _runningCount;
+        private set => SetProperty(ref _runningCount, value);
+    }
+
+    public int ClosingCount
+    {
+        get => _closingCount;
+        private set => SetProperty(ref _closingCount, value);
+    }
+
+    /// <summary>形如 “3 / 4”。分母占用含长期页面与未回收的僵尸。</summary>
+    public string ChromeUsage
+    {
+        get => _chromeUsage;
+        private set => SetProperty(ref _chromeUsage, value);
+    }
+
+    public string WorkSlotUsage
+    {
+        get => _workSlotUsage;
+        private set => SetProperty(ref _workSlotUsage, value);
+    }
+
+    public int WaitingWorkSlotCount
+    {
+        get => _waitingWorkSlot;
+        private set => SetProperty(ref _waitingWorkSlot, value);
+    }
+
+    public int WaitingAccountCount
+    {
+        get => _waitingAccount;
+        private set => SetProperty(ref _waitingAccount, value);
+    }
+
+    public int WaitingChromeCount
+    {
+        get => _waitingChrome;
+        private set => SetProperty(ref _waitingChrome, value);
+    }
+
+    /// <summary>Chrome 未能回收而被隔离的账号数；非 0 时必须显眼。</summary>
+    public int QuarantinedCount
+    {
+        get => _quarantinedCount;
+        private set
+        {
+            if (SetProperty(ref _quarantinedCount, value)) OnPropertyChanged(nameof(HasQuarantined));
+        }
+    }
+
+    public bool HasQuarantined => QuarantinedCount > 0;
+
+    public bool BrokerRunning
+    {
+        get => _brokerRunning;
+        private set
+        {
+            if (SetProperty(ref _brokerRunning, value)) OnPropertyChanged(nameof(BrokerStatusText));
+        }
+    }
+
+    public string BrokerStatusText => BrokerRunning
+        ? "Chrome 启动器正常（Agent 级基础设施，恒为 1 个进程）"
+        : "Chrome 启动器不可用，无法启动新的 Chrome";
+
+    /// <summary>活动 Chrome 明细。close_failed 也在这里，它仍占用容量。</summary>
+    public ObservableCollection<BrowserRunRowViewModel> ActiveRuns { get; } = [];
+
+    public ObservableCollection<QuarantinedAccountDto> QuarantinedAccounts { get; } = [];
+
+    /// <summary>由 Shell 注入：按 run 精确关闭 / 复验，以及只读刷新。</summary>
+    public Func<string, Task>? CloseBrowserRunRequested { get; set; }
+    public Func<Task>? RefreshRunsRequested { get; set; }
+
+    public ICommand RefreshRunsCommand { get; }
+
+    public bool HasActiveRuns => ActiveRuns.Count > 0;
+
+    /// <summary>长期页面单列，避免与后台任务数量混淆——它计入 Chrome 分母但不是任务。</summary>
+    public int LongLivedPageCount
+    {
+        get => _longLivedPageCount;
+        private set => SetProperty(ref _longLivedPageCount, value);
+    }
+
+    public string ChromeDetailEmptyText => QueuedCount + RunningCount + ClosingCount > 0
+        ? "任务正在等待资源，尚未启动 Chrome"
+        : "当前没有运行中的 Chrome";
+
+    public void ApplyQueueSnapshot(QueueSnapshotDto snapshot)
+    {
+        QueuedCount = snapshot.QueuedTotal;
+        RunningCount = snapshot.Running;
+        ClosingCount = snapshot.Closing;
+        WorkSlotUsage = snapshot.WorkSlots.Text;
+        ChromeUsage = snapshot.ChromeSlots.Text;
+        WaitingWorkSlotCount = snapshot.Waiting.WorkSlot;
+        WaitingAccountCount = snapshot.Waiting.Account;
+        WaitingChromeCount = snapshot.Waiting.Chrome;
+        // broker 缺失时 Windows Agent 会 fail-closed，所以运行中的 Agent 报告 null
+        // 只可能是非 Windows 开发路径，按正常处理。
+        BrokerRunning = snapshot.Broker?.Running ?? true;
+        OnPropertyChanged(nameof(ChromeDetailEmptyText));
+    }
+
+    public void ApplyBrowserRuns(BrowserRunListDto runs)
+    {
+        QuarantinedCount = runs.Quarantined.Length;
+        LongLivedPageCount = runs.Active.Count(run => run.Purpose == "open-page");
+
+        // 未能回收的排在最前：它是用户唯一需要动手的一类。
+        var ordered = runs.Active
+            .OrderByDescending(run => run.NeedsAttention)
+            .ThenBy(run => run.StartedAt ?? DateTimeOffset.MaxValue)
+            .ToList();
+        // 增量同步：明细每次 browserRun.changed 都会刷新，整表重建会让滚动位置回顶。
+        var existing = ActiveRuns.ToDictionary(row => row.BrowserRunId, StringComparer.Ordinal);
+        var rows = ordered
+            .Select(run =>
+            {
+                if (!existing.TryGetValue(run.BrowserRunId, out var row))
+                {
+                    return new BrowserRunRowViewModel(run, CloseRunAsync);
+                }
+                row.Run = run;
+                return row;
+            })
+            .ToList();
+        CollectionSync.Apply(
+            ActiveRuns,
+            rows,
+            row => row.BrowserRunId,
+            static (left, right) => ReferenceEquals(left, right));
+        CollectionSync.Apply(
+            QuarantinedAccounts,
+            runs.Quarantined,
+            item => item.AccountId,
+            static (left, right) => left.Reason == right.Reason);
+        OnPropertyChanged(nameof(HasActiveRuns));
+    }
+
+    private Task CloseRunAsync(string browserRunId) =>
+        CloseBrowserRunRequested?.Invoke(browserRunId) ?? Task.CompletedTask;
 
     public string DataDirectory => _paths.DataDirectory;
 

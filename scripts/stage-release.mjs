@@ -25,6 +25,9 @@ export function stageRelease({
   nodeLicense,
   mihomoExecutable,
   mihomoLicense,
+  // Windows 专属：创建时纳管 Chrome 的 broker。它是 per-run Job 的唯一持有者，
+  // 缺了它 Windows Agent 会在接受 IPC 前 fail-closed，所以必须随包发布。
+  chromeLauncherExecutable,
   outputDirectory,
   installDependencies = true,
   verify = true,
@@ -39,6 +42,11 @@ export function stageRelease({
   const nodeLicenseFile = requireFile(nodeLicense, "Node license");
   const mihomoFile = requireFile(mihomoExecutable, "mihomo executable");
   const mihomoLicenseFile = requireFile(mihomoLicense, "mihomo license");
+  const windowsRid = rid === "win-x64";
+  // POSIX 用进程组，不需要 broker；Windows 上它是硬依赖。
+  const chromeLauncherFile = windowsRid
+    ? requireFile(chromeLauncherExecutable, "chrome-launcher executable")
+    : null;
   const outputRoot = path.resolve(outputDirectory ?? "");
   if (!outputDirectory) throw new Error("Output directory is required");
   assertNoPathOverlap(outputRoot, desktopRoot, "release stage", "Desktop publish directory");
@@ -97,6 +105,10 @@ export function stageRelease({
   const stagedMihomo = path.join(agentBin, windows ? "mihomo.exe" : "mihomo");
   copyFile(nodeFile, stagedNode);
   copyFile(mihomoFile, stagedMihomo);
+  // broker 与 mihomo 同层：Agent 按 fromInstallRoot("bin", ...) 解析它。
+  if (chromeLauncherFile) {
+    copyFile(chromeLauncherFile, path.join(agentBin, "chrome-launcher.exe"));
+  }
   if (!windows) {
     fs.chmodSync(stagedNode, 0o755);
     fs.chmodSync(stagedMihomo, 0o755);
@@ -246,6 +258,7 @@ function main() {
       "node-license": { type: "string" },
       mihomo: { type: "string" },
       "mihomo-license": { type: "string" },
+      "chrome-launcher": { type: "string" },
       output: { type: "string" },
     },
   });
@@ -257,6 +270,7 @@ function main() {
     nodeLicense: values["node-license"],
     mihomoExecutable: values.mihomo,
     mihomoLicense: values["mihomo-license"],
+    chromeLauncherExecutable: values["chrome-launcher"],
     outputDirectory: values.output,
   });
 }

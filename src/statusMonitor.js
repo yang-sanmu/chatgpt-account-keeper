@@ -285,7 +285,26 @@ function busyCachedStatus(accountId) {
 }
 
 // 检查单个账号并更新缓存（经账号锁，避免与登录/跑任务撞车）。
-export async function refreshAccount(account) {
+export async function refreshAccount(account, opts = {}) {
+  // 队列路径：账号锁已由队列持有，Chrome 与页面由 BrowserRun 提供。此时 isBusy
+  // 必然为真（正是我们自己），若按忙碌早退，巡检就永远不会真的启动 Chrome。
+  if (opts.page) {
+    const liveAccount = getAccount(account.id);
+    if (!liveAccount) {
+      deleteCachedStatus(account.id);
+      return {
+        state: null,
+        loggedIn: false,
+        email: null,
+        detail: "账号已删除，已跳过状态检查",
+        skipped: true,
+        deleted: true,
+      };
+    }
+    const live = await checkLoggedIn(liveAccount, { page: opts.page });
+    if (live.skipped) return live;
+    return setCachedStatus(account.id, live.state, live.email, live.detail ?? null);
+  }
   if (isHeld(account.id)) {
     return heldCachedStatus(account.id);
   }
@@ -332,37 +351,10 @@ export async function refreshAccount(account) {
   );
 }
 
-let timer = null;
-
 export function shouldRunImmediateCheck(settings, isStartup) {
   if (!isStartup) return false;
   if (settings?.statusCheckOnStartup === undefined) return true;
   return settings.statusCheckOnStartup === true;
-}
-
-// 巡检并发上限：既别把机器压垮，也别像原来那样纯串行——
-// 纯串行时只要有一个账号被占用（比如用户开着“打开网页”的窗口），
-// 后面所有账号的状态检查都会一直排在它后面。
-const CHECK_CONCURRENCY = 3;
-
-async function performTick() {
-  // 正在被用户手动使用（打开网页）的账号直接跳过：
-  // 它的锁被长期持有，排队等它毫无意义；而且那个循环本身就在采样状态。
-  const accounts = getAccounts().filter((a) => !isHeld(a.id) && !isBusy(a.id));
-
-  const queue = [...accounts];
-  const workers = Array.from({ length: Math.min(CHECK_CONCURRENCY, queue.length) }, async () => {
-    while (queue.length) {
-      const acc = queue.shift();
-      if (!acc) break;
-      try {
-        await refreshAccount(acc);
-      } catch (e) {
-        log.warn(`状态检查失败 ${acc.id}: ${e.message}`);
-      }
-    }
-  });
-  await Promise.all(workers);
 }
 
 export function createSingleFlight(task) {
@@ -378,38 +370,122 @@ export function createSingleFlight(task) {
   };
 }
 
-const tick = createSingleFlight(performTick);
+/**
+ * 状态巡检服务（计划 §2）。
+ *
+ * 私有并发限流已删除：不能与统一队列叠加。原实现有自己的 3 路 worker 池 +
+ * single-flight，会和队列的工作槽、去重各算一套。现在 tick 只负责「把到期账号入队
+ * 后立即返回」，重入保护由队列去重承担。
+ *
+ * 由组合根注入 enqueue，避免 statusMonitor → 队列 → statusMonitor 的循环依赖。
+ */
+export class StatusMonitorService {
+  constructor(runtime = {}) {
+    this._getAccounts = runtime.getAccounts ?? getAccounts;
+    this._getSettings = runtime.getSettings ?? getSettings;
+    this._isHeld = runtime.isHeld ?? isHeld;
+    this._isBusy = runtime.isBusy ?? isBusy;
+    this._log = runtime.log ?? log;
+    this._setInterval = runtime.setInterval ?? ((fn, ms) => {
+      const timer = setInterval(fn, ms);
+      timer.unref?.();
+      return timer;
+    });
+    this._clearInterval = runtime.clearInterval ?? clearInterval;
+    // 注入的入队函数。未注入时退回直接刷新（CLI / 旧 Express 入口）。
+    this._enqueue = runtime.enqueue ?? null;
+    this._refreshAccount = runtime.refreshAccount ?? refreshAccount;
+    this._timer = null;
+  }
 
-function triggerTick() {
-  tick().catch((error) => {
-    log.warn(`状态巡检失败：${String(error?.message || error)}`);
-  });
+  configureEnqueue(enqueue) {
+    this._enqueue = enqueue;
+    return this;
+  }
+
+  /**
+   * 一次巡检：把到期账号交给队列后立即返回，不等待任何账号跑完。
+   *
+   * 仍然跳过被长期持有或正忙的账号：它们的锁被占着，入队只会堆积等待条目；
+   * 打开的窗口本身就在采样状态。
+   */
+  tick() {
+    const accounts = this._getAccounts().filter(
+      (account) => !this._isHeld(account.id) && !this._isBusy(account.id)
+    );
+    if (!this._enqueue) {
+      // 无队列的退化路径：串行刷新，保持旧入口可用。
+      return Promise.all(
+        accounts.map((account) =>
+          Promise.resolve()
+            .then(() => this._refreshAccount(account))
+            .catch((error) => {
+              this._log.warn(`状态检查失败 ${account.id}: ${String(error?.message || error)}`);
+            })
+        )
+      ).then(() => accounts.length);
+    }
+    let enqueued = 0;
+    for (const account of accounts) {
+      try {
+        this._enqueue(account.id);
+        enqueued++;
+      } catch (error) {
+        this._log.warn(`账号 ${account.id} 状态巡检入队失败：${String(error?.message || error)}`);
+      }
+    }
+    return Promise.resolve(enqueued);
+  }
+
+  _reset(runStartupCheck) {
+    const settings = this._getSettings();
+    const minutes = safeStatusCheckMinutes(settings.statusCheckMinutes);
+    const runImmediately = shouldRunImmediateCheck(settings, runStartupCheck);
+    if (this._timer) this._clearInterval(this._timer);
+    if (runImmediately) this._trigger();
+    this._timer = this._setInterval(
+      () => this._trigger(),
+      Math.max(1, minutes) * 60 * 1000
+    );
+    const startupText = runImmediately ? "，启动后立即检查" : "，首次检查等待一个间隔";
+    this._log.info(`状态监控已启动，每 ${minutes} 分钟检查一次登录状态${startupText}`);
+  }
+
+  _trigger() {
+    Promise.resolve()
+      .then(() => this.tick())
+      .catch((error) => {
+        this._log.warn(`状态巡检失败：${String(error?.message || error)}`);
+      });
+  }
+
+  start() {
+    this._reset(true);
+  }
+
+  /** 保存设置不算「项目启动」：只从此刻重新计算下一次巡检时间，不立即触发一次。 */
+  restart() {
+    this._reset(false);
+  }
+
+  stop() {
+    if (!this._timer) return false;
+    this._clearInterval(this._timer);
+    this._timer = null;
+    return true;
+  }
 }
 
-function resetStatusMonitor(runStartupCheck) {
-  const settings = getSettings();
-  const min = safeStatusCheckMinutes(settings.statusCheckMinutes);
-  const runImmediately = shouldRunImmediateCheck(settings, runStartupCheck);
-  if (timer) clearInterval(timer);
-  if (runImmediately) triggerTick();
-  timer = setInterval(triggerTick, Math.max(1, min) * 60 * 1000);
-  const startupText = runImmediately ? "，启动后立即检查" : "，首次检查等待一个间隔";
-  log.info(`状态监控已启动，每 ${min} 分钟检查一次登录状态${startupText}`);
-}
+export const statusMonitor = new StatusMonitorService();
 
 export function startStatusMonitor() {
-  resetStatusMonitor(true);
+  return statusMonitor.start();
 }
 
-// 设置里改了间隔后调用，重置定时器。
 export function restartStatusMonitor() {
-  // 保存设置不算“项目启动”，只从此刻重新计算下一次巡检时间。
-  resetStatusMonitor(false);
+  return statusMonitor.restart();
 }
 
 export function stopStatusMonitor() {
-  if (!timer) return false;
-  clearInterval(timer);
-  timer = null;
-  return true;
+  return statusMonitor.stop();
 }

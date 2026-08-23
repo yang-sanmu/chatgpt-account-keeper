@@ -97,6 +97,8 @@ if (expectedRid) {
     windows ? "GptAccountKeeper.Desktop.exe" : "GptAccountKeeper.Desktop",
     windows ? "agent/runtime/node.exe" : "agent/runtime/node",
     windows ? "agent/bin/mihomo.exe" : "agent/bin/mihomo",
+    // Windows 上 broker 缺失会让 Agent 在接受 IPC 前 fail-closed，等于整个安装不可用。
+    ...(windows ? ["agent/bin/chrome-launcher.exe"] : []),
   ];
   const missingPlatformFiles = platformFiles.filter((file) => !relativeFiles.includes(file));
   if (missingPlatformFiles.length) {

@@ -75,7 +75,10 @@ const METHOD_CONTRACTS = Object.freeze({
   "settings.update": ["settingsUpdateParams", "settingsResult"],
   "operations.get": ["idParams", "operationResult"],
   "operations.listActive": ["emptyParams", "operationArray"],
-  "operations.list": ["operationListParams", "operationArray"]
+  "operations.list": ["operationListParams", "operationArray"],
+  "queue.getSnapshot": ["emptyParams", "queueSnapshotResult"],
+  "browserRuns.list": ["emptyParams", "browserRunListResult"],
+  "browserRuns.close": ["browserRunCloseParams", "browserRunCloseResult"]
 });
 
 const methodValidators = Object.fromEntries(

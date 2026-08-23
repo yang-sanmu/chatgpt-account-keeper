@@ -85,4 +85,72 @@ test("cross-platform stage uses RID-specific executable names and immutable Agen
     "2.3.4"
   );
   assert.equal(fs.existsSync(path.join(output, "SHA256SUMS")), true);
+  // POSIX 用进程组，不需要 broker，也不该凭空出现一个。
+  assert.equal(fs.existsSync(path.join(output, "agent", "bin", "chrome-launcher.exe")), false);
+});
+
+test("Windows staging 把 chrome-launcher broker 放在 agent/bin，与 mihomo 同层", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "stage-broker-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const desktop = path.join(root, "desktop");
+  const inputs = path.join(root, "inputs");
+  const output = path.join(root, "stage");
+  fs.mkdirSync(desktop, { recursive: true });
+  fs.mkdirSync(inputs, { recursive: true });
+  fs.writeFileSync(path.join(desktop, "GptAccountKeeper.Desktop.exe"), "desktop");
+  for (const name of ["node.exe", "mihomo.exe", "node-license", "mihomo-license", "chrome-launcher.exe"]) {
+    fs.writeFileSync(path.join(inputs, name), name);
+  }
+
+  stageRelease({
+    version: "2.3.4",
+    rid: "win-x64",
+    desktopDirectory: desktop,
+    nodeExecutable: path.join(inputs, "node.exe"),
+    nodeLicense: path.join(inputs, "node-license"),
+    mihomoExecutable: path.join(inputs, "mihomo.exe"),
+    mihomoLicense: path.join(inputs, "mihomo-license"),
+    chromeLauncherExecutable: path.join(inputs, "chrome-launcher.exe"),
+    outputDirectory: output,
+    installDependencies: false,
+    verify: true,
+  });
+
+  // Agent 按 fromInstallRoot("bin", ...) 解析 broker，所以必须与 mihomo 同层。
+  assert.equal(
+    fs.readFileSync(path.join(output, "agent", "bin", "chrome-launcher.exe"), "utf8"),
+    "chrome-launcher.exe"
+  );
+  assert.equal(fs.existsSync(path.join(output, "agent", "bin", "mihomo.exe")), true);
+});
+
+test("Windows staging 缺少 broker 时必须直接失败，不产出半个包", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "stage-nobroker-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const desktop = path.join(root, "desktop");
+  const inputs = path.join(root, "inputs");
+  fs.mkdirSync(desktop, { recursive: true });
+  fs.mkdirSync(inputs, { recursive: true });
+  fs.writeFileSync(path.join(desktop, "GptAccountKeeper.Desktop.exe"), "desktop");
+  for (const name of ["node.exe", "mihomo.exe", "node-license", "mihomo-license"]) {
+    fs.writeFileSync(path.join(inputs, name), name);
+  }
+
+  // broker 缺失会让安装版的 Windows Agent 在接受 IPC 前 fail-closed，等于整个安装
+  // 不可用。这必须在打包阶段就暴露，而不是留给用户。
+  assert.throws(
+    () => stageRelease({
+      version: "2.3.4",
+      rid: "win-x64",
+      desktopDirectory: desktop,
+      nodeExecutable: path.join(inputs, "node.exe"),
+      nodeLicense: path.join(inputs, "node-license"),
+      mihomoExecutable: path.join(inputs, "mihomo.exe"),
+      mihomoLicense: path.join(inputs, "mihomo-license"),
+      outputDirectory: path.join(root, "stage"),
+      installDependencies: false,
+      verify: false,
+    }),
+    /chrome-launcher/i
+  );
 });

@@ -5,6 +5,8 @@ node_modules/
 desktop/**/bin/
 desktop/**/obj/
 desktop/**/TestResults/
+tools/**/bin/
+tools/**/obj/
 artifacts/
 Releases/
 *.AppImage

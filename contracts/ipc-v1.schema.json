@@ -33,7 +33,8 @@
         "conversations.list", "conversations.upsert", "conversations.remove",
         "scheduler.getState", "scheduler.start", "scheduler.stop",
         "settings.get", "settings.update",
-        "operations.get", "operations.listActive", "operations.list"
+        "operations.get", "operations.listActive", "operations.list",
+        "queue.getSnapshot", "browserRuns.list", "browserRuns.close"
       ]
     },
     "request": {
@@ -91,7 +92,8 @@
         "operation.changed", "group.changed", "proxyState.changed", "proxyNode.tested",
         "profile.changed", "conversation.changed", "scheduler.changed",
         "scheduler.accountChanged", "history.appended", "settings.changed",
-        "agent.draining", "agent.readyForUpdate"
+        "agent.draining", "agent.readyForUpdate",
+        "queue.changed", "browserRun.changed"
       ]
     },
     "event": {
@@ -152,6 +154,7 @@
         "resourceId": { "type": ["string", "null"] },
         "state": { "enum": ["queued", "running", "waiting_user", "succeeded", "failed", "timed_out", "cancelled"] },
         "stage": { "type": ["string", "null"] },
+        "effectiveSource": { "type": ["string", "null"], "enum": ["manual", "scheduled", "background", null] },
         "message": { "type": ["string", "null"] },
         "progress": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
         "startedAt": { "type": "string", "format": "date-time" },

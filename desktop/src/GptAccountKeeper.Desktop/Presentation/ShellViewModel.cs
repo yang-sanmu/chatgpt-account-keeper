@@ -101,6 +101,14 @@ internal sealed class ShellViewModel : ObservableObject
         Overview.ImportLegacyCommand = ImportLegacyCommand;
         Overview.CreateFreshDataCommand = StartAgentCommand;
         Overview.ChooseDataDirectoryCommand = ChooseDataDirectoryCommand;
+        Overview.CloseBrowserRunRequested = CloseBrowserRunAsync;
+        // 手动刷新同时拉两段：队列快照与 BrowserRun 明细必须一起看才解释得通
+        // 「后台任务 0 但 Chrome 非 0」。
+        Overview.RefreshRunsRequested = async () =>
+        {
+            await RefreshQueueSnapshotAsync();
+            await RefreshBrowserRunsAsync();
+        };
         Accounts.HistoryRequested = ShowHistoryForAccountAsync;
 
         Overview.PropertyChanged += (_, e) =>
@@ -275,6 +283,64 @@ internal sealed class ShellViewModel : ObservableObject
         bool enabled,
         bool agentConnected,
         bool schedulerRunning) => enabled && agentConnected && !schedulerRunning;
+
+    /// <summary>
+    /// 拉取活动与最近的 BrowserRun。close_failed 的记录不会自己消失，UI 必须能持续
+    /// 显示它们，否则会出现“后台任务 0 但 Chrome 非 0”的自相矛盾界面。
+    /// </summary>
+    /// 这是**只读诊断刷新**，不是用户命令：故意不走 AgentSession，避免每次
+    /// browserRun.changed 都产生一次带 toast / commandId 的“操作”——50 轮压测下会刷屏。
+    /// 用户显式的回收操作仍走 _session（见 CloseBrowserRunAsync）。
+    public async Task<BrowserRunListDto?> RefreshBrowserRunsAsync()
+    {
+        if (!_connection.IsConnected) return null;
+        try
+        {
+            var runs = await _connection.CallAsync(
+                "browserRuns.list",
+                new EmptyParams(),
+                AppJsonContext.Default.EmptyParams,
+                AppJsonContext.Default.BrowserRunListDto,
+                _lifetime.Token);
+            if (runs is not null)
+            {
+                await Dispatcher.UIThread.InvokeAsync(() => Overview.ApplyBrowserRuns(runs));
+            }
+            return runs;
+        }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
+        {
+            // 由 fire-and-forget 触发，关闭时的取消是预期结果。必须在这里吞掉，
+            // 否则会留下 faulted/unobserved Task。非 _lifetime 取消仍按异常处理。
+            return null;
+        }
+        catch (Exception exception)
+        {
+            // 诊断视图刷新失败不应打断主流程。
+            System.Diagnostics.Debug.WriteLine($"刷新 BrowserRun 失败：{exception.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>对某个 BrowserRun 精确重试关闭 / 复验；不是“从列表里删掉”。</summary>
+    public Task CloseBrowserRunAsync(string browserRunId) => _session.RunAsync(
+        "回收 Chrome",
+        async () =>
+        {
+            var result = await _session.CallAsync(
+                "browserRuns.close",
+                new BrowserRunCloseParams(browserRunId),
+                AppJsonContext.Default.BrowserRunCloseParams,
+                AppJsonContext.Default.BrowserRunCloseResultDto,
+                AgentSession.NewCommandId());
+            await RefreshBrowserRunsAsync();
+            if (result?.Ok != true)
+            {
+                // 复验未通过仍是 close_failed：不能让 UI 显示成已回收。
+                Toasts.Info("Chrome 仍未确认退出，已保持隔离并继续自动复验");
+            }
+        },
+        "Chrome 已确认回收");
 
     public async Task<AgentActivityResult?> GetActivityAsync()
     {
@@ -622,10 +688,43 @@ internal sealed class ShellViewModel : ObservableObject
         Operations.ApplySnapshot(bootstrap.Operations);
         Settings.ApplyAgentSettings(bootstrap.Settings);
         Overview.ApplyBootstrap(bootstrap);
+        // bootstrap 不含队列与 BrowserRun（它们是 minor 3 才有的独立查询）。连上后
+        // 立刻各拉一次，否则重连后界面会显示陈旧的 0 直到下一个事件到来。
+        _ = RefreshQueueSnapshotAsync();
+        _ = RefreshBrowserRunsAsync();
 
         if (bootstrap.Draining)
         {
             Toasts.Info("Agent 正在安全排空，暂不接受新的写操作");
+        }
+    }
+
+    /// <summary>只读诊断刷新，与 RefreshBrowserRunsAsync 同样不经 AgentSession。</summary>
+    public async Task<QueueSnapshotDto?> RefreshQueueSnapshotAsync()
+    {
+        if (!_connection.IsConnected) return null;
+        try
+        {
+            var snapshot = await _connection.CallAsync(
+                "queue.getSnapshot",
+                new EmptyParams(),
+                AppJsonContext.Default.EmptyParams,
+                AppJsonContext.Default.QueueSnapshotDto,
+                _lifetime.Token);
+            if (snapshot is not null)
+            {
+                await Dispatcher.UIThread.InvokeAsync(() => Overview.ApplyQueueSnapshot(snapshot));
+            }
+            return snapshot;
+        }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
+        {
+            return null;
+        }
+        catch (Exception exception)
+        {
+            System.Diagnostics.Debug.WriteLine($"刷新队列快照失败：{exception.Message}");
+            return null;
         }
     }
 
@@ -734,6 +833,22 @@ internal sealed class ShellViewModel : ObservableObject
                     {
                         Profiles.ScanCommand.Execute(null);
                     }
+                    return true;
+                }
+
+            case "queue.changed":
+                {
+                    var snapshot = agentEvent.Payload.Deserialize(AppJsonContext.Default.QueueSnapshotDto);
+                    if (snapshot is null) return false;
+                    Overview.ApplyQueueSnapshot(snapshot);
+                    return true;
+                }
+
+            case "browserRun.changed":
+                {
+                    // 单条 run 变化不带全量隔离列表，所以拉一次列表来同步“未能回收”的
+                    // 计数与明细；close_failed 会长期留在 active 并继续占用容量。
+                    _ = RefreshBrowserRunsAsync();
                     return true;
                 }
 

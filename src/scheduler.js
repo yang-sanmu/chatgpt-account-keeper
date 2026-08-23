@@ -82,23 +82,8 @@ export async function runOnce(account, opts = {}) {
   // 否则用安装目录里随版本分发的默认值。
   const selectors = readResourceJson("config/selectors.json");
   const name = displayName(account);
-  // 套账号锁：同一 profile 不能被两个浏览器实例同时打开。
-  // 主题选择与窗口计数都放在锁内，避免并发触发时轮换状态读-改-写竞态。
-  return withAccountLock(account.id, async () => {
-    // 用锁内最新账号数据选主题（切换时已持久化新状态）。
-    const fresh = getAccount(account.id) ?? account;
-    const picked = selectSetForAccount(fresh);
-    if (!picked) {
-      return { ok: false, reason: "没有可用的会话集主题，请先在“会话内容”里配置" };
-    }
-    const { setName, set } = picked;
 
-    return runWithBrowserLifecycle(
-      () =>
-        launchForAccount(fresh, {
-          headless: opts.headless ?? true,
-        }),
-      async ({ page }) => {
+  const runWithPage = async ({ page, set, setName }) => {
         await page.goto(selectors.url, { waitUntil: "domcontentloaded" });
         // 会话健康检查：只看 email 会把“令牌已失效”的账号误判为已登录，
         // 结果白跑一轮浏览器最后死在“找不到输入框”。这里直接快速失败并说清原因。
@@ -127,7 +112,35 @@ export async function runOnce(account, opts = {}) {
           commitWindow(account.id, latest?.rotation);
         }
         return { ...result, setName };
-      },
+  };
+
+  const pickSet = (fresh) => selectSetForAccount(fresh);
+  const noSet = { ok: false, reason: "没有可用的会话集主题，请先在“会话内容”里配置" };
+
+  // 队列路径：账号锁、Chrome 与关闭都由 BrowserRun 持有，这里只跑业务。自己再套一层
+  // withAccountLock 会与队列已持有的同一把锁自锁，再 launch 则绕过登记的 runToken。
+  if (opts.page) {
+    const fresh = getAccount(account.id) ?? account;
+    const picked = pickSet(fresh);
+    if (!picked) return noSet;
+    return runWithPage({ page: opts.page, set: picked.set, setName: picked.setName });
+  }
+
+  // 套账号锁：同一 profile 不能被两个浏览器实例同时打开。
+  // 主题选择与窗口计数都放在锁内，避免并发触发时轮换状态读-改-写竞态。
+  return withAccountLock(account.id, async () => {
+    // 用锁内最新账号数据选主题（切换时已持久化新状态）。
+    const fresh = getAccount(account.id) ?? account;
+    const picked = pickSet(fresh);
+    if (!picked) return noSet;
+
+    return runWithBrowserLifecycle(
+      () =>
+        launchForAccount(fresh, {
+          headless: opts.headless ?? true,
+          runToken: opts.runToken,
+        }),
+      ({ page }) => runWithPage({ page, set: picked.set, setName: picked.setName }),
       { label: `「${name}」浏览器` }
     );
   });
@@ -171,11 +184,7 @@ export async function checkSelectors(account, opts = {}) {
       accountId: account.id,
     };
   }
-  return withAccountLock(account.id, async () => {
-    const fresh = getAccount(account.id) ?? account;
-    return runWithBrowserLifecycle(
-      () => launchForAccount(fresh, { headless: opts.headless ?? true }),
-      async ({ page }) => {
+  const probeWithPage = async ({ page, fresh }) => {
         await page.goto(selectors.newChatUrl || selectors.url, {
           waitUntil: "domcontentloaded",
         });
@@ -202,7 +211,21 @@ export async function checkSelectors(account, opts = {}) {
         const summary = summarizeSelectorReport(report);
         log[report.ok ? "info" : "warn"](`「${name}」选择器自检：${summary}`);
         return { ...report, summary, accountId: fresh.id };
-      },
+  };
+
+  // 队列路径：锁与 Chrome 归 BrowserRun，这里只探测。
+  if (opts.page) {
+    return probeWithPage({ page: opts.page, fresh: getAccount(account.id) ?? account });
+  }
+
+  return withAccountLock(account.id, async () => {
+    const fresh = getAccount(account.id) ?? account;
+    return runWithBrowserLifecycle(
+      () => launchForAccount(fresh, {
+        headless: opts.headless ?? true,
+        runToken: opts.runToken,
+      }),
+      ({ page }) => probeWithPage({ page, fresh }),
       { label: `「${name}」选择器自检` }
     );
   });
@@ -224,6 +247,9 @@ export class SchedulerService {
     this._secureRandom = runtime.secureRandom ?? secureRandom;
     this._log = runtime.log ?? log;
     this._persistence = runtime.persistence ?? null;
+    // 配置后由 ScheduleClock 承担计时；本类不再自己跑账号循环。
+    this._clock = runtime.clock ?? null;
+    this._onSchedulerEpoch = null;
     // 每账号一条独立循环：accountId -> { nextAt, lastAt, busy, promise }
     this._accountLoops = new Map();
     this.lastResults = {}; // accountId -> { ok, reason, time }
@@ -235,6 +261,22 @@ export class SchedulerService {
       throw new TypeError("scheduler persistence must be an object or null");
     }
     this._persistence = persistence;
+    return this;
+  }
+
+  /**
+   * 交出计时职责给统一队列的 ScheduleClock。
+   *
+   * 配置后 start/stop 只驱动这一个时钟，不再拉起每账号循环——两套计时器同时跑会让
+   * 每个启用账号在一个间隔内被触发两次，真跑两轮对话。IPC 的 start/stop/getState
+   * 与 running/enabled 持久化语义完全不变，本类仍是它们的载体。
+   */
+  configureClock(clock, onSchedulerEpoch = null) {
+    if (clock != null && typeof clock !== "object") {
+      throw new TypeError("scheduler clock must be an object or null");
+    }
+    this._clock = clock;
+    this._onSchedulerEpoch = onSchedulerEpoch;
     return this;
   }
 
@@ -370,6 +412,14 @@ export class SchedulerService {
         s.jitterMinutes ?? 30
       })，headless=${s.headless ?? true}`
     );
+    // 接入统一队列后计时只剩 ScheduleClock 一套；绝不能同时再拉起账号循环。
+    if (this._clock) {
+      this._clock.start();
+      // 排队条目按入队时的 schedulerEpoch 快照运行：不 bump 的话 stop 之后再 start
+      // 期间入队的 scheduled 条目无法被区分与复验。
+      this._onSchedulerEpoch?.();
+      return { running: true, message: "调度器已启动" };
+    }
     // 管理循环：定期检查启用账号，为新账号拉起独立循环
     // 后台 manager 也必须有最终拒绝处理；否则配置文件被外部改坏或未来
     // 依赖抛错时，会留下 running=true 的假状态并触发 unhandled rejection。
@@ -398,6 +448,9 @@ export class SchedulerService {
     this._stopRequested = true;
     this._setRunning(false);
     this._log.info("已请求停止调度，各账号本次对话结束后停止…");
+    // 时钟只停止后续触发；已排队的 scheduled 条目由 epoch 复验负责取消。
+    this._clock?.stop?.();
+    this._onSchedulerEpoch?.();
     // running 已置 false，但账号循环还在收尾；status() 用 running 反映用户意图。
     return { running: false, message: "已请求停止" };
   }

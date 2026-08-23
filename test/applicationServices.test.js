@@ -202,7 +202,9 @@ test("hello negotiates major version and bootstrap contains a consistent managem
     clientVersion: "test",
     capabilities: [],
   });
-  assert.deepEqual(hello.protocol, { major: 1, minMinor: 0, maxMinor: 2 });
+  // minor 3 新增 queue.getSnapshot / browserRuns.* 与 queue.changed /
+  // browserRun.changed；minMinor 仍为 0，旧客户端不受影响。
+  assert.deepEqual(hello.protocol, { major: 1, minMinor: 0, maxMinor: 3 });
   assert.equal(hello.agentVersion, "test");
   assert.ok(hello.capabilities.includes("operations"));
 
@@ -286,6 +288,25 @@ test("account updates use a strict allowlist and validate window ranges", async 
     ),
     (error) => error.code === ERROR_CODES.VALIDATION_FAILED
   );
+});
+
+test("配置相关服务 handler 完整触发 configEpoch", async () => {
+  const runtime = fakeRuntime();
+  let bumps = 0;
+  runtime.bumpConfigEpoch = () => { bumps++; };
+  runtime.proxies.nodes.push({ id: "proxy_1", enabled: true, missing: false });
+  runtime.proxies.setNodeEnabled = async (id, enabled) => ({ id, enabled });
+  const services = new ApplicationServices({ runtime });
+
+  await services.invoke("accounts.create", { note: "new" });
+  await services.invoke("accounts.update", { id: "acc_1", patch: { note: "changed" } });
+  await services.invoke("groups.update", { id: "grp_direct", patch: { name: "renamed" } });
+  const operation = await services.invoke("proxies.setNodeEnabled", {
+    id: "proxy_1",
+    enabled: false,
+  });
+  await services.operations.waitForTerminal(operation.id);
+  assert.equal(bumps, 4);
 });
 
 test("proxy-bound account creation starts mihomo and rechecks the group after await", async () => {

@@ -135,6 +135,8 @@ export async function openPageForAccount(account, url, runtime = {}) {
     launched,
     cancelled: false,
     notifiedOpen: false,
+    // 注入 BrowserRun 时的收口函数；持有到用户关窗。
+    releaseRun: null,
     cancel() {
       if (this.cancelled) return;
       this.cancelled = true;
@@ -168,14 +170,27 @@ export async function openPageForAccount(account, url, runtime = {}) {
       await withAccountLock(account.id, async () => {
         if (session.cancelled) return;
         const liveAccount = getAccount(account.id) ?? account;
+        // 注入后走 BrowserRun：占 Chrome 槽（计入用量分母）、登记 open-page 用途、
+        // 用登记的 runToken 启动。这个 run 一直持有到用户关窗才收口。
+        const acquireChrome = runtime.acquireInteractiveChrome ?? null;
         const launch = runtime.launchForAccount ?? launchForAccount;
-        const res = await launch(liveAccount, {
-          headless: false,
-          proxyBypass: OPEN_PAGE_PROXY_BYPASS,
-        });
+        const res = acquireChrome
+          ? await acquireChrome({
+              accountId: liveAccount.id,
+              account: liveAccount,
+              purpose: "open-page",
+              headless: false,
+              launchOptions: { proxyBypass: OPEN_PAGE_PROXY_BYPASS },
+            })
+          : await launch(liveAccount, {
+              headless: false,
+              proxyBypass: OPEN_PAGE_PROXY_BYPASS,
+            });
+        // 关闭必须与获取配对：BrowserRun 路径下 context.close() 不会 dispose Job。
+        if (acquireChrome) session.releaseRun = res.release;
         context = res.context;
         if (session.cancelled) {
-          await context.close().catch(() => {});
+          await closeSessionChrome(session, context, "open-page-cancelled");
           return;
         }
         session.context = context;
@@ -237,7 +252,8 @@ export async function openPageForAccount(account, url, runtime = {}) {
       const ownsSession = openSessions.get(account.id) === session;
       if (ownsSession) openSessions.delete(account.id);
       releaseHeld(account.id);
-      if (context) await context.close().catch(() => {});
+      // 窗口已由用户关闭时 release 仍要跑：Chrome 槽与 Job 的回收由它确认。
+      if (context) await closeSessionChrome(session, context, "user-closed");
       // 万一在 settle 之前就抛错/退出，兜一下避免调用方悬着
       settle({ ok: false, message: "窗口已结束" });
       if (ownsSession && session.notifiedOpen) {
@@ -253,11 +269,25 @@ export async function openPageForAccount(account, url, runtime = {}) {
 /**
  * 从面板主动关闭某账号打开的窗口。
  */
+/**
+ * 收口一个打开网页的 Chrome。有 BrowserRun 时必须经它：直接 context.close() 只断开
+ * 控制连接，Job 无人 dispose，Chrome 槽也不会释放。
+ */
+async function closeSessionChrome(session, context, reason) {
+  if (session.releaseRun) {
+    const release = session.releaseRun;
+    session.releaseRun = null;
+    await release(reason).catch(() => {});
+    return;
+  }
+  if (context) await context.close().catch(() => {});
+}
+
 export async function closePageForAccount(accountId) {
   const s = openSessions.get(accountId);
   if (!s) return false;
   s.cancel();
-  if (s.context) await s.context.close().catch(() => {});
+  if (s.context || s.releaseRun) await closeSessionChrome(s, s.context, "user-requested");
   // 后台看守循环的 finally 也会删除并通知；这里先删是为了让调用方立刻看到关闭结果，
   // 重复通知由 wasOpen 判断挡掉。
   if (openSessions.delete(accountId)) {

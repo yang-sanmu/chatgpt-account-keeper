@@ -2,6 +2,7 @@
     x:Class="GptAccountKeeper.Desktop.Presentation.Views.OverviewPage"
     xmlns="https://github.com/avaloniaui"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:models="using:GptAccountKeeper.Desktop.Models"
     xmlns:pages="using:GptAccountKeeper.Desktop.Presentation.Pages"
     x:DataType="pages:OverviewPageViewModel">
 
@@ -105,6 +106,145 @@
           </Grid>
         </Border>
       </Grid>
+
+      <!-- 队列与 Chrome 诊断：定位卡顿所必需的最小状态 (计划 §15) -->
+      <Border Classes="card" Padding="22">
+        <StackPanel Spacing="14">
+          <Grid ColumnDefinitions="*,Auto">
+            <StackPanel Spacing="3">
+              <TextBlock Text="后台队列与 Chrome 用量" FontSize="16" FontWeight="SemiBold" Foreground="{DynamicResource BrushTextPrimary}" />
+              <TextBlock Text="进行中的任务为 0 时，仍存在的 Chrome 一定能在下面的明细里找到对应记录"
+                         FontSize="11" Foreground="{DynamicResource BrushTextSecondary}" />
+            </StackPanel>
+            <Button Grid.Column="1" Content="🔄 刷新" Padding="10,5" FontSize="11" Command="{Binding RefreshRunsCommand}" />
+          </Grid>
+
+          <!-- 队列计数与槽位用量 -->
+          <Grid ColumnDefinitions="*,*,*,*,*" ColumnSpacing="12">
+            <StackPanel Spacing="3">
+              <TextBlock Text="排队中" FontSize="10" Foreground="{DynamicResource BrushTextMuted}" />
+              <TextBlock Text="{Binding QueuedCount}" FontSize="20" FontWeight="Bold" Foreground="{DynamicResource BrushTextPrimary}" />
+            </StackPanel>
+            <StackPanel Grid.Column="1" Spacing="3">
+              <TextBlock Text="运行中" FontSize="10" Foreground="{DynamicResource BrushTextMuted}" />
+              <TextBlock Text="{Binding RunningCount}" FontSize="20" FontWeight="Bold" Foreground="{DynamicResource BrushPrimary}" />
+            </StackPanel>
+            <StackPanel Grid.Column="2" Spacing="3">
+              <TextBlock Text="关闭中" FontSize="10" Foreground="{DynamicResource BrushTextMuted}" />
+              <TextBlock Text="{Binding ClosingCount}" FontSize="20" FontWeight="Bold" Foreground="{DynamicResource BrushWarning}" />
+            </StackPanel>
+            <StackPanel Grid.Column="3" Spacing="3">
+              <TextBlock Text="工作槽" FontSize="10" Foreground="{DynamicResource BrushTextMuted}" />
+              <TextBlock Text="{Binding WorkSlotUsage}" FontSize="20" FontWeight="Bold" Foreground="{DynamicResource BrushTextPrimary}" />
+            </StackPanel>
+            <StackPanel Grid.Column="4" Spacing="3">
+              <TextBlock Text="Chrome 用量" FontSize="10" Foreground="{DynamicResource BrushTextMuted}" />
+              <TextBlock Text="{Binding ChromeUsage}" FontSize="20" FontWeight="Bold" Foreground="{DynamicResource BrushIndigo}" />
+              <!-- 长期页面单列：它计入 Chrome 分母，但不是后台任务。 -->
+              <TextBlock FontSize="10" Foreground="{DynamicResource BrushTextMuted}">
+                <Run Text="含长期页面 " /><Run Text="{Binding LongLivedPageCount}" /><Run Text=" 个" />
+              </TextBlock>
+            </StackPanel>
+          </Grid>
+
+          <!-- 等待阶段：等工作槽 / 等账号锁 / 等 Chrome 槽 -->
+          <Border Padding="12,10" CornerRadius="8"
+                  Background="{DynamicResource BrushSubtleBg}"
+                  BorderBrush="{DynamicResource BrushBorderSubtle}" BorderThickness="1">
+            <Grid ColumnDefinitions="*,*,*" ColumnSpacing="12">
+              <TextBlock FontSize="11" Foreground="{DynamicResource BrushTextSecondary}">
+                <Run Text="等工作槽 " /><Run Text="{Binding WaitingWorkSlotCount}" />
+              </TextBlock>
+              <TextBlock Grid.Column="1" FontSize="11" Foreground="{DynamicResource BrushTextSecondary}">
+                <Run Text="等账号锁 " /><Run Text="{Binding WaitingAccountCount}" />
+              </TextBlock>
+              <TextBlock Grid.Column="2" FontSize="11" Foreground="{DynamicResource BrushTextSecondary}">
+                <Run Text="等 Chrome 槽 " /><Run Text="{Binding WaitingChromeCount}" />
+              </TextBlock>
+            </Grid>
+          </Border>
+
+          <!-- broker 健康：Agent 级基础设施，不按 BrowserRun 重复列进程 -->
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <Ellipse Width="8" Height="8" VerticalAlignment="Center"
+                     Fill="{DynamicResource BrushSuccess}" IsVisible="{Binding BrokerRunning}" />
+            <Ellipse Width="8" Height="8" VerticalAlignment="Center"
+                     Fill="{DynamicResource BrushDanger}" IsVisible="{Binding !BrokerRunning}" />
+            <TextBlock Text="{Binding BrokerStatusText}" FontSize="11" VerticalAlignment="Center"
+                       Foreground="{DynamicResource BrushTextSecondary}" TextWrapping="Wrap" />
+          </StackPanel>
+
+          <!-- 账号隔离：解除隔离前不接受新操作 -->
+          <Border IsVisible="{Binding HasQuarantined}" Padding="14,12" CornerRadius="8" Classes="danger-card">
+            <StackPanel Spacing="6">
+              <StackPanel Orientation="Horizontal" Spacing="6">
+                <Path Data="{StaticResource IconAlertTriangle}" Width="14" Height="14" Classes="vector-icon"
+                      Stroke="{DynamicResource BrushDanger}" />
+                <TextBlock FontSize="12" FontWeight="Bold" Foreground="{DynamicResource BrushDangerText}">
+                  <Run Text="{Binding QuarantinedCount}" /><Run Text=" 个账号已隔离：Chrome 未能回收" />
+                </TextBlock>
+              </StackPanel>
+              <TextBlock TextWrapping="Wrap" FontSize="11" LineHeight="17"
+                         Foreground="{DynamicResource BrushDangerTextMuted}"
+                         Text="这些账号在解除隔离前不接受新操作，对应的 Chrome 仍计入用量分母。可在下面的明细中对具体 run 重试回收。" />
+              <ItemsControl ItemsSource="{Binding QuarantinedAccounts}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="models:QuarantinedAccountDto">
+                    <TextBlock FontSize="11" Foreground="{DynamicResource BrushDangerTextMuted}" FontFamily="Consolas, monospace">
+                      <Run Text="{Binding AccountId}" /><Run Text=" · " /><Run Text="{Binding Reason}" />
+                    </TextBlock>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </StackPanel>
+          </Border>
+
+          <!-- 活动 Chrome 明细 -->
+          <StackPanel Spacing="6">
+            <TextBlock Text="活动 Chrome 明细" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource BrushTextSecondary}" />
+            <ItemsControl ItemsSource="{Binding ActiveRuns}" IsVisible="{Binding HasActiveRuns}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="pages:BrowserRunRowViewModel">
+                  <Border Margin="0,2" Padding="12,10" CornerRadius="8"
+                          Background="{DynamicResource BrushCardInner}"
+                          BorderBrush="{DynamicResource BrushBorderSubtle}" BorderThickness="1">
+                    <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="12" VerticalAlignment="Center">
+                      <StackPanel Spacing="3">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                          <TextBlock Text="{Binding AccountId}" FontSize="12" FontWeight="SemiBold"
+                                     Foreground="{DynamicResource BrushTextPrimary}" />
+                          <TextBlock Text="{Binding PurposeText}" FontSize="11" VerticalAlignment="Center"
+                                     Foreground="{DynamicResource BrushPrimary}" />
+                          <TextBlock Text="{Binding SourceText}" FontSize="10" VerticalAlignment="Center"
+                                     Foreground="{DynamicResource BrushTextMuted}" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                          <TextBlock Text="{Binding RootPidText}" FontSize="10" Foreground="{DynamicResource BrushTextMuted}"
+                                     FontFamily="Consolas, monospace" />
+                          <TextBlock Text="{Binding RuntimeText}" FontSize="10" Foreground="{DynamicResource BrushTextMuted}" />
+                        </StackPanel>
+                        <TextBlock Text="{Binding DetailText}" FontSize="10" TextTrimming="CharacterEllipsis"
+                                   Foreground="{DynamicResource BrushTextSecondary}" />
+                      </StackPanel>
+                      <Border Grid.Column="1" Padding="9,4" CornerRadius="6" VerticalAlignment="Center"
+                              Background="{DynamicResource BrushSubtleBg}"
+                              BorderBrush="{DynamicResource BrushBorderSubtle}" BorderThickness="1">
+                        <TextBlock Text="{Binding StateText}" FontSize="11" FontWeight="SemiBold"
+                                   Foreground="{Binding StateColor}" />
+                      </Border>
+                      <!-- 按 run 精确关闭；close_failed 时语义是复验，不是从列表删掉 -->
+                      <Button Grid.Column="2" Content="{Binding CloseButtonText}" Padding="10,5" FontSize="11"
+                              VerticalAlignment="Center" Command="{Binding CloseCommand}" />
+                    </Grid>
+                  </Border>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+            <TextBlock IsVisible="{Binding !HasActiveRuns}" Text="{Binding ChromeDetailEmptyText}"
+                       FontSize="11" Foreground="{DynamicResource BrushTextMuted}" />
+          </StackPanel>
+        </StackPanel>
+      </Border>
 
       <!-- 双栏控制区 -->
       <Grid ColumnDefinitions="1*,1*" ColumnSpacing="16">

@@ -43,6 +43,7 @@ $repositoryRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $artifactRoot = Join-Path $repositoryRoot 'artifacts'
 $downloadRoot = Join-Path $artifactRoot 'downloads'
 $desktopRoot = Join-Path $artifactRoot 'desktop'
+$chromeLauncherRoot = Join-Path $artifactRoot 'chrome-launcher'
 $stageRoot = Join-Path $artifactRoot 'stage'
 $releaseRoot = Join-Path $artifactRoot 'Releases'
 $complianceRoot = Join-Path $artifactRoot 'compliance'
@@ -270,6 +271,24 @@ try {
         ) `
         -ErrorMessage 'NativeAOT publish failed'
 
+    # The broker owns every per-run Job handle, so the Windows Agent fail-closes
+    # before it accepts IPC when it is missing. It ships in the package rather
+    # than being resolved from a dev tree, so it has to be built here.
+    Write-Step 'Publishing the chrome-launcher broker (NativeAOT)'
+    if (Test-Path -LiteralPath $chromeLauncherRoot) { Remove-Item -LiteralPath $chromeLauncherRoot -Recurse -Force }
+    Invoke-Native `
+        -FilePath $dotnet `
+        -ArgumentList @(
+            'publish', 'tools/chrome-launcher/ChromeLauncher.csproj',
+            '-c', 'Release', '-r', 'win-x64', '-o', $chromeLauncherRoot, '--nologo'
+        ) `
+        -ErrorMessage 'chrome-launcher NativeAOT publish failed'
+
+    $chromeLauncherExecutable = Join-Path $chromeLauncherRoot 'chrome-launcher.exe'
+    if (-not (Test-Path -LiteralPath $chromeLauncherExecutable)) {
+        throw "The chrome-launcher publish did not produce ${chromeLauncherExecutable}."
+    }
+
     Write-Step 'Staging the private Agent'
     if (Test-Path -LiteralPath $stageRoot) { Remove-Item -LiteralPath $stageRoot -Recurse -Force }
     & (Join-Path $PSScriptRoot 'stage-windows-release.ps1') `
@@ -278,6 +297,7 @@ try {
         -NodeDirectory $nodeDirectory `
         -MihomoExecutable $mihomoExecutable `
         -MihomoLicense $mihomoLicense `
+        -ChromeLauncherExecutable $chromeLauncherExecutable `
         -OutputDirectory $stageRoot
 
     Write-Step 'Generating the Agent SBOM and verifying package contents'

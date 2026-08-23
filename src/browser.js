@@ -296,7 +296,7 @@ function configureHeadlessLaunchArgs(launchArgs, identity) {
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function waitForDevToolsEndpoint(userDataDir, notBefore) {
+export async function waitForDevToolsEndpoint(userDataDir, notBefore) {
   const endpointFile = path.join(userDataDir, "DevToolsActivePort");
   const deadline = Date.now() + DEVTOOLS_ENDPOINT_TIMEOUT_MS;
   let lastError = null;
@@ -640,6 +640,144 @@ async function installHeadlessTargetIdentity(
     connection.close();
     throw error;
   }
+}
+
+/**
+ * 在 Playwright 接管**之前**安装身份屏障（计划 §9.1 步骤 3 早于步骤 4）。
+ *
+ * 与 installHeadlessTargetIdentity 的区别：那个版本先有 Context 再装屏障，只适用于
+ * launchPersistentContext。broker 路径下 Chrome 由创建时纳管方式启动，必须在
+ * connectOverCDP 之前就把 auto-attach 屏障装好并处理完既有 Target，否则 Playwright
+ * 自己的 attach 可能让 Target 先跑起来，页面脚本会在完整 UA-CH 恢复前执行。
+ *
+ * 返回 barrier：attachContext(context) 用于接上 fail-closed 关闭路径，close() 释放连接。
+ */
+export async function installIdentityBarrierOnEndpoint({ endpoint, identity, accountId }) {
+  const connection = await RawCdpConnection.connect(endpoint);
+  const activeJobs = new Set();
+  let installing = true;
+  let installError = null;
+  let closed = false;
+  let shutdownTimer = null;
+  let context = null;
+
+  const closeBrowser = () => {
+    if (context) context.close().catch(() => {});
+  };
+
+  const scheduleIdentityShutdown = (message) => {
+    if (closed || shutdownTimer) return;
+    // 正常关闭时原始 CDP socket 往往先于 context 的 close 事件断开；短暂等待事件
+    // 归位，避免把正常退出误报成保护失效。
+    shutdownTimer = setTimeout(() => {
+      shutdownTimer = null;
+      if (closed) return;
+      log.error(message);
+      closeBrowser();
+    }, 500);
+    shutdownTimer.unref?.();
+  };
+
+  const autoAttach = { autoAttach: true, waitForDebuggerOnStart: true, flatten: true };
+  const override = {
+    userAgent: identity.userAgent,
+    platform: identity.platform,
+    ...(identity.metadata ? { userAgentMetadata: identity.metadata } : {}),
+  };
+
+  const prepareTarget = async ({ sessionId, targetInfo }) => {
+    const nestedAutoAttachCommand =
+      targetInfo.type === "page" || targetInfo.type === "iframe"
+        ? connection.send("Target.setAutoAttach", autoAttach, sessionId)
+        : Promise.resolve();
+    const identityCommand = IDENTITY_TARGET_TYPES.has(targetInfo.type)
+      ? connection.send("Emulation.setUserAgentOverride", override, sessionId)
+      : Promise.resolve();
+    const resumeCommand = connection.send("Runtime.runIfWaitingForDebugger", {}, sessionId);
+    const [nested, identityResult, resumeResult] = await Promise.allSettled([
+      nestedAutoAttachCommand,
+      identityCommand,
+      resumeCommand,
+    ]);
+    for (const [result, label] of [
+      [nested, "子层身份屏障安装"],
+      [identityResult, "UA-CH 初始化"],
+      [resumeResult, "恢复运行"],
+    ]) {
+      if (result.status === "rejected" && !isMissingCdpSessionError(result.reason)) {
+        throw new Error(
+          `Target ${targetInfo.type} ${label}失败：${String(result.reason?.message || result.reason)}`
+        );
+      }
+    }
+  };
+
+  const startJob = (event) => {
+    const job = prepareTarget(event);
+    activeJobs.add(job);
+    job
+      .catch((error) => {
+        installError ??= error;
+        if (!installing && !closed) {
+          const message = `账号 ${accountId} 浏览器身份保护失效，关闭本次浏览器：${error.message}`;
+          if (/CDP WebSocket (?:已关闭|当前不可用)/.test(error.message)) {
+            scheduleIdentityShutdown(message);
+          } else {
+            log.error(message);
+            closeBrowser();
+          }
+        }
+      })
+      .finally(() => activeJobs.delete(job));
+  };
+
+  connection.onEvent((message) => {
+    if (message.method === "Target.attachedToTarget") startJob(message.params);
+  });
+  connection.onUnexpectedClose((error) => {
+    scheduleIdentityShutdown(
+      `账号 ${accountId} 浏览器身份保护连接中断，关闭本次浏览器：${error.message}`
+    );
+  });
+
+  try {
+    await connection.send("Target.setAutoAttach", autoAttach);
+    // getTargets 是安装屏障：其响应返回前，已有 Target 的 attached 事件已进入队列。
+    await connection.send("Target.getTargets");
+    do {
+      const snapshot = [...activeJobs];
+      if (!snapshot.length) {
+        await Promise.resolve();
+        if (!activeJobs.size) break;
+      } else {
+        await Promise.allSettled(snapshot);
+      }
+    } while (activeJobs.size);
+    if (installError) throw installError;
+    installing = false;
+  } catch (error) {
+    if (shutdownTimer) clearTimeout(shutdownTimer);
+    connection.close();
+    throw error;
+  }
+
+  return {
+    attachContext(target) {
+      context = target;
+      target.once("close", () => {
+        closed = true;
+        if (shutdownTimer) clearTimeout(shutdownTimer);
+        shutdownTimer = null;
+        connection.close();
+      });
+    },
+    close() {
+      closed = true;
+      if (shutdownTimer) clearTimeout(shutdownTimer);
+      shutdownTimer = null;
+      connection.close();
+    },
+  };
 }
 
 /**
@@ -1188,6 +1326,20 @@ export async function initializeLaunchedContext(context, options = {}) {
  * @param {object} opts { headless: boolean }
  * @returns {Promise<{context, page}>}
  */
+// 组合根注入的 Chrome 创建器。存在时所有账号启动都必须经它（broker 创建时纳管），
+// 不再走 launchPersistentContext / 自建 spawn。为 null 时保留旧路径，供 CLI 与
+// 现有单元测试使用；Windows Agent 在 broker 不可用时会 fail-closed，不会落到这里。
+let injectedLauncher = null;
+
+export function configureChromeLauncher(launcher) {
+  injectedLauncher = launcher ?? null;
+  return injectedLauncher;
+}
+
+export function getChromeLauncher() {
+  return injectedLauncher;
+}
+
 export async function launchForAccount(account, opts = {}) {
   if (browserShutdownRequested) throw new Error("Agent 正在退出，已取消启动 Chrome");
 
@@ -1236,6 +1388,42 @@ export async function launchForAccount(account, opts = {}) {
   let context;
   let interactiveLaunch = null;
   const debugPortNotBefore = Date.now();
+
+  // 注入了 broker 启动器时，有头与无头共用同一条创建时纳管路径，并在
+  // connectOverCDP 之前装好身份屏障。
+  if (injectedLauncher) {
+    // 调用方必须提供已登记到 BrowserRun 的 runToken。自造 token 会让这次启动的
+    // Job 无人 dispose，同时把 BrowserRun 关联到一个从未启动进程的 token 上——
+    // 关闭序列于是对着空 token 收敛，真实 Chrome 残留且不可见。fail-closed。
+    const runToken = opts.runToken;
+    if (!runToken) {
+      throw new Error(
+        "启动 Chrome 缺少已登记的 runToken：必须经 BrowserRun 登记后再启动，不能自行创建"
+      );
+    }
+    const launched = await injectedLauncher.launch({
+      userDataDir,
+      launchArgs,
+      headless,
+      accountId: liveAccount.id,
+      headlessIdentity,
+      runToken,
+      signal: opts.signal ?? null,
+    });
+    activeBrowserContexts.set(launched.context, {
+      accountId: liveAccount.id,
+      headless: !!headless,
+    });
+    launched.context.once("close", () => {
+      activeBrowserContexts.delete(launched.context);
+      if (!browserShutdownRequested) scheduleProfileCacheMaintenance(liveAccount.id);
+    });
+    if (!headless && launchArgs.timezoneId) {
+      await applyInteractiveTimezone(launched.context, launched.page, launchArgs.timezoneId);
+    }
+    return launched;
+  }
+
   try {
     if (headless) {
       context = await chromium.launchPersistentContext(userDataDir, launchArgs);

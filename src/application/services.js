@@ -37,7 +37,11 @@ import {
 } from "../logger.js";
 import { subscribeOpenPages as defaultSubscribeOpenPages } from "../openPage.js";
 import { profileManager as defaultProfileManager } from "../profileManager.js";
-import { isBusy as defaultIsBusy, isHeld as defaultIsHeld } from "../locks.js";
+import {
+  isBusy as defaultIsBusy,
+  isHeld as defaultIsHeld,
+  listQuarantined as defaultListQuarantined,
+} from "../locks.js";
 import { validateSettingsPatch as defaultValidateSettingsPatch } from "../statusSettings.js";
 import { ApplicationEventBus } from "./events.js";
 import {
@@ -50,7 +54,9 @@ import {
 import { OperationRegistry } from "./operations.js";
 import { InMemoryReceiptStore, ReceiptCoordinator } from "./receipts.js";
 
-export const PROTOCOL_VERSION = Object.freeze({ major: 1, minor: 2 });
+// minor 3 新增 queue.getSnapshot / browserRuns.list / browserRuns.close 与
+// queue.changed / browserRun.changed 事件。Desktop 侧 AgentProtocol.Minor 必须同步。
+export const PROTOCOL_VERSION = Object.freeze({ major: 1, minor: 3 });
 
 export const MUTATING_METHODS = new Set([
   "system.prepareUpdate",
@@ -144,6 +150,18 @@ export function createDefaultRuntime(overrides = {}) {
     subscribeOpenPages: defaultSubscribeOpenPages,
     isBusy: defaultIsBusy,
     isHeld: defaultIsHeld,
+    // 由组合根注入；没有后台队列的入口（旧 CLI / 测试替身）保持 null。
+    queueSnapshot: null,
+    browserRuns: null,
+    enqueue: null,
+    // 登录与打开网页据此占 Chrome 槽并登记 BrowserRun；null 时退回直接 launch。
+    acquireInteractiveChrome: null,
+    // 配置变更后触发排队条目的逐条语义复验（计划 §7.1：计数器只是触发器）。
+    bumpConfigEpoch: null,
+    // 账号启用/停用/删除时同步排期表，否则新账号永远等不到 onDue。
+    scheduleAccount: null,
+    unscheduleAccount: null,
+    listQuarantined: defaultListQuarantined,
     validateSettingsPatch: defaultValidateSettingsPatch,
     sleep,
     loginPollMs: 250,
@@ -194,7 +212,8 @@ function accountViewContext(runtime) {
   };
 }
 
-function publicAccount(account, runtime, context = accountViewContext(runtime)) {
+/** 导出给组合根：队列 handler 要发布与服务层完全相同的 account.changed payload。 */
+export function publicAccount(account, runtime, context = accountViewContext(runtime)) {
   const status = runtime.getCachedStatus(account.id);
   const openPages = context.openPages;
   const schedule = context.schedules[account.id] ?? null;
@@ -235,7 +254,8 @@ function publicAccount(account, runtime, context = accountViewContext(runtime)) 
   };
 }
 
-function publicStatus(account, status) {
+/** 同上：accountStatus.changed 的公开 payload。 */
+export function publicStatus(account, status) {
   return {
     id: account.id,
     state: status.state ?? null,
@@ -514,6 +534,9 @@ export class ApplicationServices {
     add("operations.get", this._operationsGet);
     add("operations.listActive", this._operationsListActive);
     add("operations.list", this._operationsList);
+    add("queue.getSnapshot", this._queueGetSnapshot);
+    add("browserRuns.list", this._browserRunsList);
+    add("browserRuns.close", this._browserRunsClose);
     return methods;
   }
 
@@ -611,9 +634,13 @@ export class ApplicationServices {
   _getActivity() {
     const openPages = this.runtime.getOpenPages();
     const operations = this.operations.listActive();
+    const quarantined = this.runtime.listQuarantined?.() ?? [];
+    const quarantinedIds = new Set(quarantined.map((entry) => entry.accountId));
     const resourceLocks = this.runtime.store.getAccounts()
       .filter((account) => this.runtime.isBusy(account.id) || this.runtime.isHeld(account.id))
       .filter((account) => !openPages[account.id])
+      // quarantine 单独作为 chrome-reclaim-failed 上报，不再重复计一个 account-busy。
+      .filter((account) => !quarantinedIds.has(account.id))
       .map((account) => ({
         kind: "account-busy",
         resourceId: account.id,
@@ -631,9 +658,17 @@ export class ApplicationServices {
           detail: page,
         })),
         ...operations
-          .filter((operation) => operation.blocksUpdate)
+          // 排队条目不持有任何资源，不能成为更新阻塞项：否则 50–100 个排队条目会让
+          // prepareUpdate 永久 ready:false，Desktop 的安全空闲安装永不触发。
+          .filter((operation) => operation.blocksUpdate && operation.state !== "queued")
           .map((operation) => ({ kind: "operation", resourceId: operation.id, detail: operation })),
         ...resourceLocks,
+        // 未回收的 Chrome 仍占容量与账号锁，必须持续可见并阻止更新。
+        ...quarantined.map((entry) => ({
+          kind: "chrome-reclaim-failed",
+          resourceId: entry.accountId,
+          detail: { reason: entry.reason },
+        })),
       ],
     };
   }
@@ -745,6 +780,10 @@ export class ApplicationServices {
       }
     }
     const account = await this.runtime.store.addAccount({ ...patch, groupId });
+    // 新账号必须立刻进排期表：调度的计时只有 ScheduleClock 一套，没人给它排
+    // nextAt 就永远不会被 onDue 触发。
+    if (account.enabled !== false) this.runtime.scheduleAccount?.(account.id);
+    this.runtime.bumpConfigEpoch?.();
     const result = publicAccount(account, this.runtime);
     this.events.publish("account.changed", result);
     return result;
@@ -758,6 +797,12 @@ export class ApplicationServices {
     delete patch.id;
     if (Object.hasOwn(patch, "groupId")) await this._validatedGroup(patch.groupId);
     const updated = this.runtime.store.updateAccount(id, patch);
+    if (Object.hasOwn(patch, "enabled")) {
+      // 启用即排期，停用即撤期，并复验已排队的条目（停用的账号不该继续等着跑）。
+      if (updated.enabled) this.runtime.scheduleAccount?.(id);
+      else this.runtime.unscheduleAccount?.(id);
+    }
+    this.runtime.bumpConfigEpoch?.();
     const result = publicAccount(updated, this.runtime);
     this.events.publish("account.changed", result);
     return result;
@@ -782,6 +827,8 @@ export class ApplicationServices {
       },
       this.runtime.store.getAccounts()
     );
+    this.runtime.unscheduleAccount?.(id);
+    this.runtime.bumpConfigEpoch?.();
     this.events.publish("account.removed", { id, profile });
     return { ok: true, profile };
   }
@@ -797,6 +844,15 @@ export class ApplicationServices {
     const id = requireId(params);
     const account = this.runtime.store.getAccount(id);
     if (!account) fail(ERROR_CODES.NOT_FOUND, "账号不存在");
+    if (this.runtime.enqueue) {
+      return this.runtime.enqueue({
+        accountId: id,
+        workKind: "status-check",
+        kind: "account-status-refresh",
+        message: "等待状态检查",
+      });
+    }
+    // 没有后台队列的入口（旧 CLI / 测试替身）保留直连路径。
     return this.operations.create(
       "account-status-refresh",
       async () => {
@@ -813,6 +869,16 @@ export class ApplicationServices {
     const id = requireId(params);
     const account = this.runtime.store.getAccount(id);
     if (!account) fail(ERROR_CODES.NOT_FOUND, "账号不存在");
+    if (this.runtime.enqueue) {
+      // 不再前置 RESOURCE_BUSY：队列的去重与意图提升负责这件事。连点同一个账号会
+      // 命中现有条目并把它提升为用户触发，而不是报"正在执行其他操作"。
+      return this.runtime.enqueue({
+        accountId: id,
+        workKind: "account-run",
+        kind: "account-run",
+        message: "等待立即运行",
+      });
+    }
     if (this.runtime.isBusy(id) || this.runtime.isHeld(id)) {
       fail(ERROR_CODES.RESOURCE_BUSY, "账号正在执行其他浏览器操作", { retryable: true });
     }
@@ -858,10 +924,20 @@ export class ApplicationServices {
     if (Object.hasOwn(params ?? {}, "deep")) {
       assertInput(typeof params.deep === "boolean", "deep 必须是布尔值");
     }
+    const deep = params?.deep === true;
+    if (this.runtime.enqueue) {
+      // depth 进 dedupeParams：page 与 conversation 是两件不同的事，不能互相合并。
+      return this.runtime.enqueue({
+        accountId: id,
+        workKind: "selector-check",
+        kind: "account-selector-check",
+        dedupeParams: { depth: deep ? "conversation" : "page" },
+        message: "等待选择器自检",
+      });
+    }
     if (this.runtime.isBusy(id) || this.runtime.isHeld(id)) {
       fail(ERROR_CODES.RESOURCE_BUSY, "账号正在执行其他浏览器操作", { retryable: true });
     }
-    const deep = params?.deep === true;
     return this.operations.create(
       "account-selector-check",
       async ({ update }) => {
@@ -908,7 +984,11 @@ export class ApplicationServices {
     return this.operations.create(
       "account-login",
       async ({ update }) => {
-        const started = await this.runtime.startLogin(account, { force: params.force === true });
+        const started = await this.runtime.startLogin(
+          account,
+          { force: params.force === true },
+          { acquireInteractiveChrome: this.runtime.acquireInteractiveChrome }
+        );
         if (started.status === "failed") throw loginFailure(started);
         let task = this.runtime.getLoginTask(started.taskId) ?? started;
         while (task && !TERMINAL_LOGIN_STATUSES.has(task.status)) {
@@ -956,7 +1036,9 @@ export class ApplicationServices {
           stage: "browser",
           message: "正在结束该账号的后台任务并打开可见 Chrome",
         });
-        const result = await this.runtime.openPageForAccount(account, params.url);
+        const result = await this.runtime.openPageForAccount(account, params.url, {
+          acquireInteractiveChrome: this.runtime.acquireInteractiveChrome,
+        });
         if (!result?.ok) {
           if (result?.alreadyOpen) {
             throw new ApplicationError(
@@ -1017,6 +1099,7 @@ export class ApplicationServices {
     if (Object.hasOwn(patch, "proxyId") && previous.proxyId !== group.proxyId) {
       await this.runtime.proxies.reconcile();
     }
+    this.runtime.bumpConfigEpoch?.();
     this.events.publish("group.changed", group);
     return group;
   }
@@ -1104,6 +1187,7 @@ export class ApplicationServices {
     return this._proxyOperation("proxy-node-toggle", id, async () => {
       const node = await this.runtime.proxies.setNodeEnabled(id, params.enabled);
       if (!node) fail(ERROR_CODES.NOT_FOUND, "代理节点不存在");
+      this.runtime.bumpConfigEpoch?.();
       return node;
     });
   }
@@ -1252,6 +1336,9 @@ export class ApplicationServices {
     if (validationError) fail(ERROR_CODES.VALIDATION_FAILED, validationError);
     const settings = this.runtime.store.saveSettings(patch);
     this.runtime.restartStatusMonitor();
+    // 排队条目按入队时的 configEpoch 快照运行；不 bump 就永远比不出差异，
+    // 停用的账号、失效的代理会带着旧配置继续跑。
+    this.runtime.bumpConfigEpoch?.();
     this.events.publish("settings.changed", settings);
     return settings;
   }
@@ -1273,6 +1360,56 @@ export class ApplicationServices {
       limit: safeLimit(params.limit, 200),
       includeTerminal: params.includeTerminal !== false,
     });
+  }
+
+  /** 队列快照：排队/等待阶段、运行、关闭中、槽位用量与来源分组。 */
+  _queueGetSnapshot() {
+    const snapshot = this.runtime.queueSnapshot?.();
+    if (snapshot) return snapshot;
+    // 没有后台队列的入口（旧 CLI / 测试替身）返回一个空但合法的快照。
+    return {
+      queuedTotal: 0,
+      waiting: { queued: 0, workSlot: 0, account: 0, chrome: 0 },
+      running: 0,
+      closing: 0,
+      workSlots: { used: 0, limit: 4 },
+      chromeSlots: { used: 0, limit: 4 },
+      bySource: {},
+      byWorkKind: {},
+      admissionPaused: false,
+      broker: null,
+    };
+  }
+
+  /**
+   * 活动与最近的 BrowserRun。close_failed 留在 active 并继续占 Chrome 容量，
+   * 所以两段必须一起返回，UI 才能解释「后台任务 0 但 Chrome 非 0」。
+   */
+  _browserRunsList() {
+    const registry = this.runtime.browserRuns;
+    if (!registry) return { active: [], recent: [], chromeOccupancy: 0, quarantined: [] };
+    return {
+      active: registry.listActive(),
+      recent: registry.listRecent(),
+      chromeOccupancy: registry.chromeOccupancy,
+      quarantined: this.runtime.listQuarantined?.() ?? [],
+    };
+  }
+
+  /**
+   * 对某个 BrowserRun 精确重试关闭 / 复验。语义不是「从列表里删掉」——禁止用户不经
+   * 复验手动清除一个未确认回收的记录。
+   */
+  async _browserRunsClose(params) {
+    const browserRunId = requireId(params, "browserRunId");
+    const registry = this.runtime.browserRuns;
+    if (!registry) fail(ERROR_CODES.NOT_FOUND, "BrowserRun 注册表不可用");
+    const existing = registry.get(browserRunId);
+    if (!existing) fail(ERROR_CODES.NOT_FOUND, "BrowserRun 不存在或已结束");
+    const run = existing.state === "close_failed"
+      ? await registry.recheck(browserRunId)
+      : await registry.close(browserRunId, "user-requested");
+    return { ok: !!run && run.state === "closed", run: run ?? null };
   }
 }
 

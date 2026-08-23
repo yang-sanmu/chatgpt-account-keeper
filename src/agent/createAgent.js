@@ -32,7 +32,9 @@ export function createAgent(options = {}) {
     operationStore: options.operationStore,
     protocol: options.protocol,
   });
-  const server = createAgentIpcServer({
+  // server 可注入：关闭顺序（stopAccepting 早于 lifecycle、destroy 晚于它）需要能在
+  // 不起真实 IPC 的情况下断言，否则这条接线只有集成测试能覆盖。
+  const server = options.server ?? createAgentIpcServer({
     services,
     endpoint,
     logger: options.logger,
@@ -67,17 +69,46 @@ export function createAgent(options = {}) {
       }
       return { endpoint, dataRoot: agent.dataRoot };
     },
+    /**
+     * 关闭链分两段（计划 §12.1 / §12.2）：
+     *
+     *   beforeStop → server.stopAccepting() → lifecycle.shutdown（真正的 16 步）
+     *   → services.dispose() → server.destroy() → afterStop
+     *
+     * 旧实现在这里先 `await server.close()`，那会在保留客户端连接的阶段自锁，
+     * 导致 lifecycle.shutdown 根本进不去；即使不自锁，它也会在任何 Chrome 关闭之前
+     * 就销毁全部客户端，Desktop 收不到关闭期间的事件——正是要修掉的行为。
+     *
+     * dispose/destroy 必须晚于第 10 步的最终事件推送，且在失败路径上也要执行，
+     * 否则修一个自锁又引入一个泄漏。
+     */
     async stop(context) {
       if (stopping) return stopping;
       stopping = (async () => {
+        let shutdownError = null;
         try {
           await options.beforeStop?.({ agent, dataRoot: agent.dataRoot, endpoint });
-          if (started) await server.close();
+          // 停止接受新连接，但保留已建连接用于推送最终事件。
+          if (started) await server.stopAccepting();
+          try {
+            await suppliedLifecycle.shutdown?.(context);
+          } catch (error) {
+            shutdownError = error;
+          }
+          // finally 语义：无论 lifecycle 是否失败，这三件事都必须做。
+          try {
+            services.dispose?.();
+          } catch (error) {
+            shutdownError ??= error;
+          }
+          try {
+            if (started) await server.destroy();
+          } catch (error) {
+            shutdownError ??= error;
+          }
           started = false;
-          // 先摘掉运行时事件订阅，再走 lifecycle.shutdown；否则关闭过程中
-          // 的调度/窗口变化还会往已经关掉的 IPC 广播。
-          services.dispose?.();
-          await suppliedLifecycle.shutdown?.(context);
+          if (shutdownError) throw shutdownError;
+          // afterStop 保持原兼容语义：只在前面全部成功后调用。
           await options.afterStop?.({ agent, dataRoot: agent.dataRoot, endpoint });
         } finally {
           stopping = null;

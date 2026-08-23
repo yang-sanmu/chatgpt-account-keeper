@@ -15,6 +15,10 @@ export class OperationRegistry {
     this._maxTerminal = options.maxTerminal ?? 200;
     this._operations = new Map();
     this._waiters = new Map();
+    this._log = options.log ?? null;
+    this._sealed = false;
+    this.persistFailures = 0;
+    this.sealViolations = 0;
     // 可选的持久化后端（SQLite）。有它时任务结果和错误详情能跨 Agent 重启查询，
     // 内存 Map 只作为热缓存。
     this._store = options.store ?? null;
@@ -36,12 +40,88 @@ export class OperationRegistry {
     return restored;
   }
 
+  /**
+   * 运行期：持久化失败记 warn 并保留内存态，绝不反向覆盖业务主结果——一次瞬时写
+   * 故障不应变成业务失败。但不再静默吞掉，否则最后一批任务的终态会无声丢失。
+   *
+   * seal 之后的任何写入是 invariant violation：记 error 并计数，生产不抛（抛出会把
+   * 记账问题升级成退出失败），测试断言 sealViolations === 0。
+   */
   _persist(operation) {
+    if (this._sealed) {
+      this.sealViolations++;
+      try {
+        this._log?.error?.(
+          `Operation ${operation.id} 在 seal 之后仍尝试写入（invariant violation）`
+        );
+      } catch {
+        // 日志失败不能再抛
+      }
+      return;
+    }
     try {
       this._store?.save?.(clone(operation));
-    } catch {
-      // 持久化失败不能让业务操作失败；内存态仍然正确。
+    } catch (error) {
+      this.persistFailures++;
+      try {
+        this._log?.warn?.(
+          `Operation ${operation.id} 持久化失败：${String(error?.message || error)}`
+        );
+      } catch {
+        // 日志失败不影响业务
+      }
     }
+  }
+
+  /** 关闭期：把全部非终态转终态并逐条落库。 */
+  flush(message = "Agent 关闭，任务已中断") {
+    let flushed = 0;
+    for (const operation of [...this._operations.values()]) {
+      if (TERMINAL_STATES.has(operation.state)) continue;
+      this.update(operation.id, { state: "cancelled", stage: null, message, blocksUpdate: false });
+      flushed++;
+    }
+    return flushed;
+  }
+
+  /** 关闭写入口。必须严格早于 repository.checkpoint()/close()。 */
+  seal() {
+    this._sealed = true;
+    return { sealViolations: this.sealViolations, persistFailures: this.persistFailures };
+  }
+
+  get sealed() {
+    return this._sealed;
+  }
+
+  /**
+   * 只登记一条 state=queued 的 Operation，**不启动 handler**；后续状态全部由统一
+   * 队列通过 update() 推进。create() 的语义是「立刻开跑」（现有代理 / Profile 调用方
+   * 依赖它），无法表达「入队时就有 Operation、但还没获准运行」。
+   */
+  declare(kind, options = {}) {
+    const now = this._clock().toISOString();
+    const operation = {
+      id: options.id ?? randomUUID(),
+      kind,
+      resourceId: options.resourceId ?? null,
+      state: "queued",
+      stage: options.stage ?? null,
+      message: options.message ?? null,
+      progress: options.progress ?? null,
+      startedAt: now,
+      updatedAt: now,
+      finishedAt: null,
+      result: null,
+      error: null,
+      // 排队条目默认不阻塞更新；取得工作槽时才由队列翻成 true。
+      blocksUpdate: options.blocksUpdate === true,
+      effectiveSource: options.effectiveSource ?? null,
+    };
+    this._operations.set(operation.id, operation);
+    this._persist(operation);
+    this._emit(operation);
+    return this.get(operation.id);
   }
 
   create(kind, handler, options = {}) {

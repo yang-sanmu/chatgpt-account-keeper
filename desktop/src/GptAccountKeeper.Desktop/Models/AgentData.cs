@@ -830,6 +830,202 @@ internal sealed class ProfileScanResultDto
     public ProfileTotalsDto Totals { get; init; } = new();
 }
 
+internal sealed class QueueSlotsDto
+{
+    [JsonPropertyName("used")]
+    public int Used { get; init; }
+
+    [JsonPropertyName("limit")]
+    public int Limit { get; init; }
+
+    [JsonIgnore]
+    public string Text => $"{Used} / {Limit}";
+}
+
+internal sealed class QueueWaitingDto
+{
+    [JsonPropertyName("queued")]
+    public int Queued { get; init; }
+
+    [JsonPropertyName("workSlot")]
+    public int WorkSlot { get; init; }
+
+    [JsonPropertyName("account")]
+    public int Account { get; init; }
+
+    [JsonPropertyName("chrome")]
+    public int Chrome { get; init; }
+}
+
+internal sealed class QueueSnapshotDto
+{
+    [JsonPropertyName("queuedTotal")]
+    public int QueuedTotal { get; init; }
+
+    [JsonPropertyName("waiting")]
+    public QueueWaitingDto Waiting { get; init; } = new();
+
+    [JsonPropertyName("running")]
+    public int Running { get; init; }
+
+    [JsonPropertyName("closing")]
+    public int Closing { get; init; }
+
+    [JsonPropertyName("workSlots")]
+    public QueueSlotsDto WorkSlots { get; init; } = new();
+
+    [JsonPropertyName("chromeSlots")]
+    public QueueSlotsDto ChromeSlots { get; init; } = new();
+
+    [JsonPropertyName("admissionPaused")]
+    public bool AdmissionPaused { get; init; }
+
+    [JsonPropertyName("broker")]
+    public BrokerStatusDto? Broker { get; init; }
+}
+
+internal sealed class BrokerStatusDto
+{
+    [JsonPropertyName("running")]
+    public bool Running { get; init; }
+
+    [JsonPropertyName("generationId")]
+    public string? GenerationId { get; init; }
+}
+
+internal sealed class BrowserRunDto
+{
+    [JsonPropertyName("browserRunId")]
+    public string BrowserRunId { get; init; } = string.Empty;
+
+    [JsonPropertyName("accountId")]
+    public string AccountId { get; init; } = string.Empty;
+
+    [JsonPropertyName("operationId")]
+    public string? OperationId { get; init; }
+
+    [JsonPropertyName("purpose")]
+    public string Purpose { get; init; } = string.Empty;
+
+    [JsonPropertyName("effectiveSource")]
+    public string? EffectiveSource { get; init; }
+
+    [JsonPropertyName("rootPid")]
+    public int? RootPid { get; init; }
+
+    [JsonPropertyName("startedAt")]
+    public DateTimeOffset? StartedAt { get; init; }
+
+    [JsonPropertyName("state")]
+    public string State { get; init; } = string.Empty;
+
+    [JsonPropertyName("closeReason")]
+    public string? CloseReason { get; init; }
+
+    [JsonPropertyName("closeError")]
+    public string? CloseError { get; init; }
+
+    /// <summary>用途按最终有效来源展示：被 runNow 提升的自动条目显示为“立即运行”。</summary>
+    [JsonIgnore]
+    public string PurposeText => Purpose switch
+    {
+        "login" => "登录",
+        "open-page" => "打开网页",
+        "manual-run" => "立即运行",
+        "scheduled-run" => "自动对话",
+        "status-check" => "状态检查",
+        "selector-check" => "选择器自检",
+        _ => Purpose,
+    };
+
+    [JsonIgnore]
+    public string SourceText => EffectiveSource switch
+    {
+        "manual" => "用户触发",
+        "scheduled" => "自动",
+        "background" => "后台巡检",
+        _ => "—",
+    };
+
+    [JsonIgnore]
+    public string StateText => State switch
+    {
+        "waiting" => "等待中",
+        "launching" => "启动中",
+        "running" => "运行中",
+        "closing" => "关闭中",
+        "closed" => "已关闭",
+        // 未能确认回收：仍占用 Chrome 容量与账号锁。
+        "close_failed" => "未能回收",
+        _ => State,
+    };
+
+    [JsonIgnore]
+    public IBrush StateColor => State switch
+    {
+        "close_failed" => Palette.Danger,
+        "closing" => Palette.Warning,
+        "closed" => Palette.Muted,
+        _ => Palette.Info,
+    };
+
+    /// <summary>close_failed 仍在 active 并继续占用容量，必须能被用户看见。</summary>
+    [JsonIgnore]
+    public bool NeedsAttention => State == "close_failed";
+
+    [JsonIgnore]
+    public string RuntimeText => StartedAt is { } started
+        ? FormatDuration(DateTimeOffset.Now - started)
+        : "—";
+
+    [JsonIgnore]
+    public string DetailText => CloseError ?? CloseReason ?? PurposeText;
+
+    private static string FormatDuration(TimeSpan span)
+    {
+        if (span < TimeSpan.Zero) span = TimeSpan.Zero;
+        if (span.TotalHours >= 1) return $"{(int)span.TotalHours} 小时 {span.Minutes} 分";
+        if (span.TotalMinutes >= 1) return $"{(int)span.TotalMinutes} 分 {span.Seconds} 秒";
+        return $"{span.Seconds} 秒";
+    }
+}
+
+internal sealed class QuarantinedAccountDto
+{
+    [JsonPropertyName("accountId")]
+    public string AccountId { get; init; } = string.Empty;
+
+    [JsonPropertyName("reason")]
+    public string? Reason { get; init; }
+}
+
+internal sealed class BrowserRunListDto
+{
+    [JsonPropertyName("active")]
+    public BrowserRunDto[] Active { get; init; } = [];
+
+    [JsonPropertyName("recent")]
+    public BrowserRunDto[] Recent { get; init; } = [];
+
+    [JsonPropertyName("chromeOccupancy")]
+    public int ChromeOccupancy { get; init; }
+
+    [JsonPropertyName("quarantined")]
+    public QuarantinedAccountDto[] Quarantined { get; init; } = [];
+}
+
+internal sealed record BrowserRunCloseParams(
+    [property: JsonPropertyName("browserRunId")] string BrowserRunId);
+
+internal sealed class BrowserRunCloseResultDto
+{
+    [JsonPropertyName("ok")]
+    public bool Ok { get; init; }
+
+    [JsonPropertyName("run")]
+    public BrowserRunDto? Run { get; init; }
+}
+
 internal sealed class AgentOperationDto
 {
     [JsonPropertyName("id")]
@@ -849,6 +1045,10 @@ internal sealed class AgentOperationDto
 
     [JsonPropertyName("stage")]
     public string? Stage { get; init; }
+
+    /// <summary>最终有效来源。被 runNow 命中并提升的自动条目会变成 manual。</summary>
+    [JsonPropertyName("effectiveSource")]
+    public string? EffectiveSource { get; init; }
 
     [JsonPropertyName("progress")]
     public double? Progress { get; init; }

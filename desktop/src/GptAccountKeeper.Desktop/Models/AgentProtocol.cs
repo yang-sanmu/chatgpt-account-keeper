@@ -6,7 +6,10 @@ namespace GptAccountKeeper.Desktop.Models;
 internal static class AgentProtocol
 {
     public const int Major = 1;
-    public const int Minor = 2;
+    // 3 新增 queue.getSnapshot / browserRuns.* 与 queue.changed / browserRun.changed。
+    // 必须与 Agent 侧 PROTOCOL_VERSION 同步：漏改事件名会在运行期被出站契约校验判为
+    // INTERNAL 并销毁 socket，而不是启动期失败。
+    public const int Minor = 3;
     public const int MaxFrameBytes = 8 * 1024 * 1024;
 }
 

@@ -125,6 +125,88 @@
         "includeTerminal": { "type": "boolean" }
       }
     },
+    "queueSnapshotResult": {
+      "type": "object",
+      "required": ["queuedTotal", "waiting", "running", "closing", "workSlots", "chromeSlots"],
+      "properties": {
+        "queuedTotal": { "type": "integer", "minimum": 0 },
+        "waiting": {
+          "type": "object",
+          "properties": {
+            "queued": { "type": "integer", "minimum": 0 },
+            "workSlot": { "type": "integer", "minimum": 0 },
+            "account": { "type": "integer", "minimum": 0 },
+            "chrome": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "running": { "type": "integer", "minimum": 0 },
+        "closing": { "type": "integer", "minimum": 0 },
+        "workSlots": {
+          "type": "object", "required": ["used", "limit"],
+          "properties": {
+            "used": { "type": "integer", "minimum": 0 },
+            "limit": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "chromeSlots": {
+          "type": "object", "required": ["used", "limit"],
+          "properties": {
+            "used": { "type": "integer", "minimum": 0 },
+            "limit": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "bySource": { "type": "object" },
+        "byWorkKind": { "type": "object" },
+        "admissionPaused": { "type": "boolean" },
+        "browserRuns": { "type": "object" },
+        "broker": { "type": ["object", "null"] }
+      }
+    },
+    "browserRun": {
+      "type": "object",
+      "required": ["browserRunId", "accountId", "purpose", "state", "startedAt"],
+      "properties": {
+        "browserRunId": { "type": "string", "minLength": 1 },
+        "accountId": { "type": "string", "minLength": 1 },
+        "operationId": { "type": ["string", "null"] },
+        "purpose": {
+          "enum": ["login", "open-page", "manual-run", "scheduled-run", "status-check", "selector-check"]
+        },
+        "effectiveSource": { "type": ["string", "null"] },
+        "profilePath": { "type": ["string", "null"] },
+        "rootPid": { "type": ["integer", "null"] },
+        "rootStartTime": { "type": ["integer", "null"] },
+        "debugEndpointFingerprint": { "type": ["string", "null"] },
+        "launcherRunToken": { "type": ["string", "null"] },
+        "brokerGenerationId": { "type": ["string", "null"] },
+        "startedAt": { "type": "string" },
+        "state": {
+          "enum": ["waiting", "launching", "running", "closing", "closed", "close_failed"]
+        },
+        "closeReason": { "type": ["string", "null"] },
+        "closeError": { "type": ["string", "null"] }
+      }
+    },
+    "browserRunListResult": {
+      "type": "object", "required": ["active", "recent"],
+      "properties": {
+        "active": { "type": "array", "items": { "$ref": "#/$defs/browserRun" } },
+        "recent": { "type": "array", "items": { "$ref": "#/$defs/browserRun" } },
+        "chromeOccupancy": { "type": "integer", "minimum": 0 },
+        "quarantined": { "type": "array" }
+      }
+    },
+    "browserRunCloseParams": {
+      "type": "object", "additionalProperties": false, "required": ["browserRunId"],
+      "properties": { "browserRunId": { "type": "string", "minLength": 1 } }
+    },
+    "browserRunCloseResult": {
+      "type": "object", "required": ["ok"],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "run": { "oneOf": [{ "$ref": "#/$defs/browserRun" }, { "type": "null" }] }
+      }
+    },
     "accountIdParams": {
       "type": "object", "additionalProperties": false, "required": ["accountId"],
       "properties": { "accountId": { "type": "string", "minLength": 1 }, "url": { "type": "string" } }

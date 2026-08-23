@@ -106,3 +106,92 @@ test("every advertised IPC method has runtime parameter and result contracts", (
     rounds: [],
   }]));
 });
+
+test("队列与 BrowserRun 的新方法、事件与 DTO 四处同步", () => {
+  const validate = validator();
+
+  // 事件名漏改不会在启动期失败，而会在运行期被出站契约校验判为 INTERNAL 并销毁
+  // socket——所以两个新事件必须在 enum 里。
+  for (const event of ["queue.changed", "browserRun.changed"]) {
+    assert.equal(
+      validate({
+        event,
+        seq: 1,
+        instanceId: "346d2d5d-2b90-4dce-9b07-3b68fcb6f935",
+        revision: 1,
+        occurredAt: "2026-08-22T00:00:00.000Z",
+        payload: {},
+      }),
+      true,
+      `${event} 必须被 eventName enum 接受`
+    );
+  }
+
+  assert.doesNotThrow(() => assertMethodResultContract("queue.getSnapshot", {
+    queuedTotal: 3,
+    waiting: { queued: 1, workSlot: 0, account: 2, chrome: 0 },
+    running: 1,
+    closing: 0,
+    workSlots: { used: 1, limit: 4 },
+    chromeSlots: { used: 2, limit: 4 },
+    bySource: { manual: 1, scheduled: 2 },
+    byWorkKind: { "account-run": 3 },
+    admissionPaused: false,
+    broker: { running: true, generationId: "abc" },
+  }));
+
+  const run = {
+    browserRunId: "run-1",
+    accountId: "acc-1",
+    operationId: "op-1",
+    purpose: "scheduled-run",
+    effectiveSource: "scheduled",
+    profilePath: null,
+    rootPid: 1234,
+    rootStartTime: 99,
+    debugEndpointFingerprint: null,
+    launcherRunToken: "run-token",
+    brokerGenerationId: "gen",
+    startedAt: "2026-08-22T00:00:00.000Z",
+    state: "close_failed",
+    closeReason: "close:job-not-empty",
+    closeError: null,
+  };
+  assert.doesNotThrow(() => assertMethodResultContract("browserRuns.list", {
+    active: [run],
+    recent: [],
+    chromeOccupancy: 1,
+    quarantined: [{ accountId: "acc-1", reason: "chromeReclaimFailed" }],
+  }));
+  assert.doesNotThrow(() => assertMethodResultContract("browserRuns.close", { ok: false, run }));
+
+  // purpose 是闭合集合：拼错会在运行期炸事件推送。
+  assert.throws(
+    () => assertMethodResultContract("browserRuns.list", {
+      active: [{ ...run, purpose: "not-a-purpose" }],
+      recent: [],
+    }),
+    (error) => error.code === "INTERNAL"
+  );
+  assert.throws(
+    () => assertRequestContract({ id: "x", method: "browserRuns.close", params: { id: "wrong-field" } }),
+    (error) => error.code === "VALIDATION_FAILED"
+  );
+
+  // Operation 的 effectiveSource 只允许三种意图。
+  assert.equal(
+    validate({
+      id: "r",
+      result: {
+        id: "346d2d5d-2b90-4dce-9b07-3b68fcb6f935",
+        kind: "account-run",
+        state: "queued",
+        startedAt: "2026-08-22T00:00:00.000Z",
+        updatedAt: "2026-08-22T00:00:00.000Z",
+        blocksUpdate: false,
+        effectiveSource: "manual",
+      },
+    }),
+    true
+  );
+});

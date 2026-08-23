@@ -209,12 +209,35 @@ export async function startLogin(account, opts = {}, runtime = {}) {
   activeTaskByAccount.set(account.id, taskId);
   pruneLoginTasks();
 
+  // 注入后走 BrowserRun：占 Chrome 槽、登记 run、用登记的 runToken 启动，关闭也经
+  // BrowserRun 的完整确认序列。没注入时（旧 CLI / 测试替身）保留直接 launch。
+  const acquireChrome = runtime.acquireInteractiveChrome ?? null;
+  // 关闭必须与获取配对：BrowserRun 路径下直接 context.close() 会留下无人 dispose 的 Job。
+  let releaseChrome = null;
+  const closeChrome = async () => {
+    if (releaseChrome) {
+      const release = releaseChrome;
+      releaseChrome = null;
+      await release("login-complete");
+      return;
+    }
+    if (task.context) await task.context.close();
+  };
+
   // 后台异步跑，不阻塞 API 响应。套账号锁：同一 profile 不能被两个浏览器同时打开。
   withAccountLock(account.id, async () => {
     let context;
     try {
       const liveAccount = getAccount(account.id) ?? account;
-      const launched = await launchBrowser(liveAccount, { headless: false });
+      const launched = acquireChrome
+        ? await acquireChrome({
+            accountId: liveAccount.id,
+            account: liveAccount,
+            purpose: "login",
+            headless: false,
+          })
+        : await launchBrowser(liveAccount, { headless: false });
+      if (acquireChrome) releaseChrome = launched.release;
       context = launched.context;
       const page = launched.page;
       task.context = context;
@@ -253,7 +276,7 @@ export async function startLogin(account, opts = {}, runtime = {}) {
         // 本来就是好的，直接完成，不折腾用户。
         task.status = "saving";
         task.message = "正在确认并保存登录状态…";
-        await context.close();
+        await closeChrome();
         context = null;
         finishSuccess(task, account, current, cacheStatus);
         return;
@@ -287,7 +310,7 @@ export async function startLogin(account, opts = {}, runtime = {}) {
         // 看起来就是“登录显示成功，但立即运行仍提示未登录”。
         task.status = "saving";
         task.message = "登录成功，正在保存 Session…";
-        await context.close();
+        await closeChrome();
         context = null;
         finishSuccess(task, account, health, cacheStatus);
       } else {
@@ -305,7 +328,7 @@ export async function startLogin(account, opts = {}, runtime = {}) {
       task.message = String(e.message || e);
       log.error(`账号 ${account.id} 登录出错: ${task.message}`);
     } finally {
-      if (context) await context.close().catch(() => {});
+      if (context) await closeChrome().catch(() => {});
       delete task.context;
       delete task.page;
       if (activeTaskByAccount.get(account.id) === taskId) {
@@ -355,9 +378,17 @@ export async function checkLoggedIn(account, runtime = {}) {
         deleted: true,
       };
     }
-    const launched = await launchBrowser(liveAccount, { headless: true });
-    context = launched.context;
-    const page = launched.page;
+    // 调用方给了页面（队列路径）：账号锁、Chrome 与关闭都归 BrowserRun，这里不再
+    // 自行 launch，也不在 finally 里关闭别人的 context。
+    let page = runtime.page ?? null;
+    if (!page) {
+      const launched = await launchBrowser(liveAccount, {
+        headless: true,
+        runToken: runtime.runToken,
+      });
+      context = launched.context;
+      page = launched.page;
+    }
     await page.goto(selectors.url, { waitUntil: "domcontentloaded" });
     const health = await inspectSession(page);
     // 只有 /me 已验证且邮箱与 session 一致的 SESSION_OK 才能写回账号资料。

@@ -1,7 +1,7 @@
 // Page 2: 账号管理页面
 // 严格遵循 UI_BRIEF：标签式卡片网格布局（禁止列表/表格行）、动态撑开卡片高度、固定底部批量操作栏
 
-import React, { useState } from "react";
+import React, { useCallback, useState } from "react";
 import { useApp } from "../../state/AppContext";
 import { getFilteredAccounts } from "../../state/accountsStore";
 import { AccountCard } from "./AccountCard";
@@ -58,14 +58,30 @@ export const AccountsPage: React.FC = () => {
     }
   };
 
-  const handleDeleteSingle = (id: string) => {
-    const acc = accountsState.accounts[id]?.effective;
-    setDeleteTarget({
-      id,
-      label: acc?.email || acc?.note || id,
-      isBulk: false,
-    });
-  };
+  // 这两个回调直接传给 28 张记忆化卡片。写成内联箭头函数的话每次渲染都是新引用，
+  // 卡片的 memo 会全部失效——那样加 memo 只是装饰。
+  const handleOpenHistory = useCallback(() => {
+    setActiveTab("history");
+  }, [setActiveTab]);
+
+  // 只存 id，标签留到渲染确认框时再查。
+  //
+  // 原来这里依赖 accountsState.accounts 去取一个显示用的标签，而那个对象在每条
+  // accountStatus.changed 之后都是新的——于是这个回调的引用每次都变，28 张卡片的 memo
+  // 全部失效。一个确认框的标题不值得让整页重渲染。
+  const handleDeleteSingle = useCallback((id: string) => {
+    setDeleteTarget({ id, isBulk: false });
+  }, []);
+
+  // 确认框的标签在渲染时从当前状态取，而不是点击时捕获。这样 handleDeleteSingle 不必
+  // 依赖账号数据，卡片的 memo 得以保住。
+  const deleteLabel =
+    deleteTarget?.id != null
+      ? (() => {
+          const acc = accountsState.accounts[deleteTarget.id]?.effective;
+          return acc?.email || acc?.note || deleteTarget.id;
+        })()
+      : undefined;
 
   const handleDeleteBulk = () => {
     if (selectedCount === 0) return;
@@ -218,9 +234,7 @@ export const AccountsPage: React.FC = () => {
                 isSelected={selectedIds.has(item.effective.id)}
                 onToggleSelect={toggleSelect}
                 onDeleteClick={handleDeleteSingle}
-                onOpenHistory={() => {
-                  setActiveTab("history");
-                }}
+                onOpenHistory={handleOpenHistory}
               />
             ))}
           </div>
@@ -342,7 +356,7 @@ export const AccountsPage: React.FC = () => {
         isOpen={deleteTarget !== null}
         onClose={() => setDeleteTarget(null)}
         accountId={deleteTarget?.id ?? null}
-        accountLabel={deleteTarget?.label}
+        accountLabel={deleteLabel}
         isBulk={deleteTarget?.isBulk ?? false}
         bulkCount={selectedCount}
         onConfirm={handleConfirmDelete}

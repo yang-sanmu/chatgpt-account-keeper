@@ -4,7 +4,7 @@
 import React, { useState } from "react";
 import type { AccountItemState } from "../../state/accountsStore";
 import type { Group, SwitchRule } from "../../ipc/types";
-import { useApp } from "../../state/AppContext";
+import { useAccountActions } from "../../state/AppContext";
 import { formatDateTime, formatRelativeTime, maskEmail } from "../../utils/format";
 import { StatusBadge, RotationBadge } from "../../components/Common/Badge";
 import {
@@ -30,7 +30,7 @@ export interface AccountCardProps {
   onOpenHistory: (id: string) => void;
 }
 
-export const AccountCard: React.FC<AccountCardProps> = ({
+const AccountCardView: React.FC<AccountCardProps> = ({
   item,
   groups,
   isSelected,
@@ -38,6 +38,8 @@ export const AccountCard: React.FC<AccountCardProps> = ({
   onDeleteClick,
   onOpenHistory,
 }) => {
+  // 用 useAccountActions 而不是 useApp：后者的 value 依赖 accountsState，任何账号变化都
+  // 会让全部 28 张卡片的 memo 失效。这个 context 的 value 是恒定引用。
   const {
     updateDraft,
     saveAccount,
@@ -46,7 +48,7 @@ export const AccountCard: React.FC<AccountCardProps> = ({
     runAccountNow,
     refreshAccountStatus,
     checkAccountSelectors,
-  } = useApp();
+  } = useAccountActions();
 
   const acc = item.effective;
   const isDirty = Object.keys(item.draft).length > 0;
@@ -92,6 +94,9 @@ export const AccountCard: React.FC<AccountCardProps> = ({
 
   return (
     <div
+      // 卡片的稳定锚点。测试用它按账号取 DOM 快照来判断「哪几张卡真的变了」，
+      // 这比统计渲染函数调用次数更接近用户能看到的东西。
+      data-account-id={acc.id}
       style={{
         backgroundColor: isSelected ? "var(--bg-card-selected)" : "var(--bg-card)",
         border: `1px solid ${
@@ -537,3 +542,13 @@ export const AccountCard: React.FC<AccountCardProps> = ({
     </div>
   );
 };
+
+/// 记忆化导出。
+///
+/// 28 个账号 + 每 15 分钟一轮巡检意味着每轮有 28 次单账号状态更新。没有 memo 时每次更新
+/// 都会重渲染全部 28 张卡片（784 次），有 memo 时只重渲染变化的那一张（28 次）。
+///
+/// 这个 memo 有效的前提是两件事都成立：AppContext 的 value 已记忆化，且 AccountsPage
+/// 传进来的回调是稳定引用。任一条不成立，浅比较就会次次失败。见
+/// __tests__/accountsRenderCost.test.tsx。
+export const AccountCard = React.memo(AccountCardView);

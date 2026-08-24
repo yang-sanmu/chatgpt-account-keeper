@@ -1,7 +1,7 @@
 // 全局应用状态上下文
 // 汇聚 IPC 事件流、全量快照同步、账号草稿合并与跨页面协同
 
-import React, { createContext, useContext, useEffect, useState, useCallback, useTransition } from "react";
+import React, { createContext, useContext, useEffect, useState, useCallback, useTransition, useMemo } from "react";
 import type {
   Account,
   AccountPatch,
@@ -154,6 +154,32 @@ const defaultSchedulerState: SchedulerState = {
 };
 
 const AppContext = createContext<AppContextValue | null>(null);
+
+/// 账号卡片用到的动作集合。
+///
+/// 单独一个 context 的原因是依赖粒度：AppContext 的 value 依赖 accountsState，任何账号
+/// 变化都会换掉它，于是 28 张卡片的 memo 同时失效。卡片其实只要这 7 个回调，而它们的
+/// 依赖是空的——拆出来之后这个 value 在整个进程生命周期里都是同一个引用。
+export type AccountActions = Pick<
+  AppContextValue,
+  | "updateDraft"
+  | "saveAccount"
+  | "startLogin"
+  | "toggleOpenPage"
+  | "runAccountNow"
+  | "refreshAccountStatus"
+  | "checkAccountSelectors"
+>;
+
+const AccountActionsContext = createContext<AccountActions | null>(null);
+
+export function useAccountActions(): AccountActions {
+  const context = useContext(AccountActionsContext);
+  if (!context) {
+    throw new Error("useAccountActions must be used within an AppProvider");
+  }
+  return context;
+}
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [startupInfo, setStartupInfo] = useState<StartupInfo | null>(null);
@@ -632,19 +658,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       try {
         const cid = await newCommandId();
         const op = await agentCall<Operation>("browser.startLogin", { accountId: id, force }, cid);
-        const acc = accountsState.accounts[id]?.effective;
-        setActiveLogin({
-          accountId: id,
-          accountEmail: acc?.email,
-          accountNote: acc?.note,
-          operation: op,
+        // 从 setter 里读账号名，而不是闭包捕获 accountsState。捕获会让这个回调的依赖
+        // 变成「任何账号的任何变化」，而它被 28 张记忆化卡片共同持有——依赖一变，全部
+        // 卡片的 memo 同时失效。这里只是要一个显示用的标签，不值得那个代价。
+        setAccountsState((prev) => {
+          const acc = prev.accounts[id]?.effective;
+          setActiveLogin({
+            accountId: id,
+            accountEmail: acc?.email,
+            accountNote: acc?.note,
+            operation: op,
+          });
+          return prev;
         });
         toast.info("已发起登录流程，正在启动浏览器...");
       } catch (err) {
         toast.error("发起登录失败", err);
       }
     },
-    [accountsState.accounts]
+    []
   );
 
   // 新增账号（UI_BRIEF：创建账号后直接拉起登录窗口）
@@ -816,47 +848,57 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     [updateDesktopSettings]
   );
 
-  const value: AppContextValue = {
-    startupInfo,
-    isInitializing,
-    connection,
-    bootstrap,
-    desktopSettings,
-    updateDesktopSettings,
-    agentSettings,
-    updateAgentSettings,
-    accountsState,
-    updateDraft,
-    discardDraft,
-    toggleSelect,
-    selectAll,
-    deselectAll,
-    setFilter,
-    saveAccount,
-    createAccount,
-    removeAccount,
-    refreshAccountStatus,
-    runAccountNow,
-    checkAccountSelectors,
-    startLogin,
-    toggleOpenPage,
-    bulkEnable,
-    bulkRefreshStatus,
-    bulkRunNow,
-    bulkDelete,
-    groups,
-    proxies,
-    conversations,
-    scheduler,
-    operations,
-    activeOperations,
-    historyAccounts,
-    browserRuns,
-    queueSnapshot,
-    draining,
-    activeLogin,
-    closeActiveLogin: () => setActiveLogin(null),
-    manualRefreshBootstrap,
+  // 这两个原本是 value 字面量里的内联箭头函数。留在那里的话，即使把 value 记忆化，
+  // 它们每次渲染仍是新引用，依赖数组会一直变。
+  const closeActiveLogin = useCallback(() => setActiveLogin(null), []);
+  const closeCloseModal = useCallback(() => setCloseModalOpen(false), []);
+
+  // 必须记忆化。AppContext 被 28 张账号卡片共同消费，而 value 只要是 render 期间新建的
+  // 对象，任何一次无关的状态变化（连接状态、任务列表、队列快照）都会让全部卡片重渲染，
+  // 下游的 React.memo 也就成了装饰。巡检每 15 分钟推 28 条事件，这个差别是 784 次
+  // 卡片渲染 vs 28 次。见 __tests__/accountsRenderCost.test.tsx。
+  const value: AppContextValue = useMemo(
+    () => ({
+      startupInfo,
+      isInitializing,
+      connection,
+      bootstrap,
+      desktopSettings,
+      updateDesktopSettings,
+      agentSettings,
+      updateAgentSettings,
+      accountsState,
+      updateDraft,
+      discardDraft,
+      toggleSelect,
+      selectAll,
+      deselectAll,
+      setFilter,
+      saveAccount,
+      createAccount,
+      removeAccount,
+      refreshAccountStatus,
+      runAccountNow,
+      checkAccountSelectors,
+      startLogin,
+      toggleOpenPage,
+      bulkEnable,
+      bulkRefreshStatus,
+      bulkRunNow,
+      bulkDelete,
+      groups,
+      proxies,
+      conversations,
+      scheduler,
+      operations,
+      activeOperations,
+      historyAccounts,
+      browserRuns,
+      queueSnapshot,
+      draining,
+      activeLogin,
+      closeActiveLogin,
+      manualRefreshBootstrap,
     startScheduler,
     stopScheduler,
     toggleScheduler,
@@ -867,12 +909,95 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     closeModalOpen,
     handleMinimizeToTray,
     handleExitAll,
-    closeCloseModal: () => setCloseModalOpen(false),
-    activeTab,
-    setActiveTab,
-  };
+      closeCloseModal,
+      activeTab,
+      setActiveTab,
+    }),
+    [
+      startupInfo,
+      isInitializing,
+      connection,
+      bootstrap,
+      desktopSettings,
+      updateDesktopSettings,
+      agentSettings,
+      updateAgentSettings,
+      accountsState,
+      updateDraft,
+      discardDraft,
+      toggleSelect,
+      selectAll,
+      deselectAll,
+      setFilter,
+      saveAccount,
+      createAccount,
+      removeAccount,
+      refreshAccountStatus,
+      runAccountNow,
+      checkAccountSelectors,
+      startLogin,
+      toggleOpenPage,
+      bulkEnable,
+      bulkRefreshStatus,
+      bulkRunNow,
+      bulkDelete,
+      groups,
+      proxies,
+      conversations,
+      scheduler,
+      operations,
+      activeOperations,
+      historyAccounts,
+      browserRuns,
+      queueSnapshot,
+      draining,
+      activeLogin,
+      closeActiveLogin,
+      manualRefreshBootstrap,
+      startScheduler,
+      stopScheduler,
+      toggleScheduler,
+      updateModalState,
+      checkAppUpdate,
+      installAppUpdate,
+      closeUpdateModal,
+      closeModalOpen,
+      handleMinimizeToTray,
+      handleExitAll,
+      closeCloseModal,
+      activeTab,
+    ]
+  );
 
-  return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
+  // 依赖全是 [] 的回调，所以这个对象只在首次渲染时创建一次。
+  const accountActions: AccountActions = useMemo(
+    () => ({
+      updateDraft,
+      saveAccount,
+      startLogin,
+      toggleOpenPage,
+      runAccountNow,
+      refreshAccountStatus,
+      checkAccountSelectors,
+    }),
+    [
+      updateDraft,
+      saveAccount,
+      startLogin,
+      toggleOpenPage,
+      runAccountNow,
+      refreshAccountStatus,
+      checkAccountSelectors,
+    ]
+  );
+
+  return (
+    <AppContext.Provider value={value}>
+      <AccountActionsContext.Provider value={accountActions}>
+        {children}
+      </AccountActionsContext.Provider>
+    </AppContext.Provider>
+  );
 };
 
 export const useApp = (): AppContextValue => {

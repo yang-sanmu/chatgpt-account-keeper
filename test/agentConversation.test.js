@@ -62,11 +62,18 @@ function createFakePage(replies, options = {}) {
       state.stopVisible = false;
       return;
     }
-    state.assistantMessages.push(replyFor(state.sends - 1));
+    state.assistantMessages.push({ innerText: replyFor(state.sends - 1) });
+    const virtualizeLimit = Number(options.virtualizeAssistantLimit);
+    if (Number.isFinite(virtualizeLimit) && virtualizeLimit > 0) {
+      while (state.assistantMessages.length > virtualizeLimit) {
+        state.assistantMessages.shift();
+      }
+    }
     state.stopVisible = stopButtonWorks;
   }
 
-  const handle = (kind) => ({
+  const handle = (kind, node = null) => ({
+    _node: node,
     click: async () => {
       if (kind === "send") {
         state.clickedSendButton += 1;
@@ -74,7 +81,8 @@ function createFakePage(replies, options = {}) {
       }
     },
     isEnabled: async () => true,
-    innerText: async () => state.assistantMessages.at(-1) ?? "",
+    innerText: async () => node?.innerText ?? state.assistantMessages.at(-1)?.innerText ?? "",
+    evaluate: async (fn, arg) => fn(node, arg?._node ?? arg),
   });
 
   const page = {
@@ -103,7 +111,9 @@ function createFakePage(replies, options = {}) {
       return null;
     },
     async $$(sel) {
-      if (isAssistant(sel)) return state.assistantMessages.map(() => handle("assistant"));
+      if (isAssistant(sel)) {
+        return state.assistantMessages.map((node) => handle("assistant", node));
+      }
       return [];
     },
     async waitForFunction(fn, args) {
@@ -112,10 +122,11 @@ function createFakePage(replies, options = {}) {
       const hadDocument = Object.hasOwn(globalThis, "document");
       const previous = globalThis.document;
       globalThis.document = {
-        querySelectorAll: () => state.assistantMessages.map(() => ({})),
+        querySelectorAll: (selector) => isAssistant(selector) ? state.assistantMessages : [],
       };
       try {
-        if (!fn(args)) throw new NotFound("waitForFunction 条件未满足");
+        const browserArgs = args.map((arg) => arg?._node ?? arg);
+        if (!fn(browserArgs)) throw new NotFound("waitForFunction 条件未满足");
         return true;
       } finally {
         if (hadDocument) globalThis.document = previous;
@@ -304,6 +315,25 @@ test("新回复未出现时不把上一轮回复重复当成本轮结果", async
   assert.equal(result.ok, false);
   assert.equal(result.stopReason, "send-failed");
   assert.match(result.reason ?? "", /未检测到新的回复/);
+});
+
+test("长会话 DOM 虚拟化时不要求回复节点总数增加", async () => {
+  const replies = Array.from({ length: 5 }, (_, index) =>
+    withNext(`第 ${index + 1} 轮正文。`, `追问 ${index + 1}？`)
+  );
+  const page = createFakePage(replies, {
+    virtualizeAssistantLimit: 3,
+  });
+
+  const result = await runAgent(page, selectors, {
+    topic: "虚拟列表",
+    minRounds: 5,
+    maxRounds: 5,
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.totalRounds, 5);
+  assert.equal(page._state.assistantMessages.length, 3, "页面应只保留最近三个回复节点");
 });
 
 test("第一轮就发送失败时整次运行判为失败", async () => {

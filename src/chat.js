@@ -50,8 +50,11 @@ export async function ensureLoggedIn(page, selectors) {
 export async function sendPrompt(page, selectors, prompt) {
   const composer = await firstVisible(page, selectors.composer, 15000);
 
-  // 多轮对话下，发送前记录已有回复数，用于确认新回复真正出现（避免抓到上一轮）。
-  const beforeCount = await countAssistant(page, selectors);
+  // ChatGPT 会虚拟化长会话：新增回复时可能同时移除旧节点，因此不能靠节点数
+  // 判断。直接记住最后一个回复节点，发送后确认页面末尾换成了新节点。
+  const assistantSel = combinedSelector(selectors.assistantMessage);
+  const beforeNodes = await page.$$(assistantSel);
+  const beforeLast = beforeNodes[beforeNodes.length - 1] ?? null;
 
   await composer.click();
   // contenteditable 需要用键盘输入，模拟真实打字。延迟每轮取一个区间内的值，
@@ -74,11 +77,14 @@ export async function sendPrompt(page, selectors, prompt) {
     await page.keyboard.press("Enter");
   }
 
-  // 等新的 assistant 消息节点出现（最多 20s），再等其生成完成。
+  // 等最后一条 assistant 消息变成新节点（最多 20s），再等其生成完成。
   try {
     await page.waitForFunction(
-      ([sel, n]) => document.querySelectorAll(sel).length > n,
-      [combinedSelector(selectors.assistantMessage), beforeCount],
+      ([sel, previous]) => {
+        const nodes = document.querySelectorAll(sel);
+        return nodes.length > 0 && nodes[nodes.length - 1] !== previous;
+      },
+      [assistantSel, beforeLast],
       { timeout: 20000 }
     );
   } catch {
@@ -86,19 +92,19 @@ export async function sendPrompt(page, selectors, prompt) {
   }
 
   await waitForResponseComplete(page, selectors);
-  const afterCount = await countAssistant(page, selectors);
-  if (afterCount <= beforeCount) {
+  const afterNodes = await page.$$(assistantSel);
+  const afterLast = afterNodes[afterNodes.length - 1] ?? null;
+  const sameNode = beforeLast && afterLast
+    ? await afterLast.evaluate((current, previous) => current === previous, beforeLast)
+    : false;
+  if (!afterLast || sameNode) {
     // 等待超时后不能直接取“最后一条”：多轮对话里那会读到上一轮回复，把一次
     // 实际发送失败伪装成成功，并继续沿着旧问题推进。
     throw new Error("发送后未检测到新的回复");
   }
-  const reply = await extractLastAssistant(page, selectors);
+  const reply = (await afterLast.innerText()).trim();
   if (!reply) throw new Error("新的回复内容为空");
   return reply;
-}
-
-async function countAssistant(page, selectors) {
-  return page.$$(combinedSelector(selectors.assistantMessage)).then((n) => n.length);
 }
 
 async function waitForResponseComplete(page, selectors) {

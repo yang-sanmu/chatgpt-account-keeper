@@ -1018,7 +1018,7 @@ export function buildInteractiveChromeArgs({
   return args;
 }
 
-async function reserveLocalDebugPort() {
+export async function reserveLocalDebugPort() {
   return new Promise((resolve, reject) => {
     const server = net.createServer();
     server.once("error", reject);
@@ -1034,13 +1034,17 @@ async function reserveLocalDebugPort() {
   });
 }
 
-async function waitForInteractiveCdp(port, child, getSpawnError = () => null) {
+export async function waitForInteractiveCdp(
+  port,
+  child = null,
+  getSpawnError = () => null
+) {
   const deadline = Date.now() + INTERACTIVE_CDP_TIMEOUT_MS;
   let lastError = null;
   while (Date.now() < deadline) {
     const spawnError = getSpawnError();
     if (spawnError) throw spawnError;
-    if (child.exitCode != null || child.signalCode != null) {
+    if (child && (child.exitCode != null || child.signalCode != null)) {
       throw new Error(
         `Chrome 在调试端口就绪前退出（exit=${child.exitCode}, signal=${child.signalCode}）`
       );

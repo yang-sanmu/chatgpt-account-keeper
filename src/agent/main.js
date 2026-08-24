@@ -284,7 +284,10 @@ async function main() {
     refreshAccount,
     statusMonitor,
     scheduler,
-    schedulerPersistence: adapters.scheduler,
+    // 语义复验唯一的节点来源。包一层而不是直接传 proxies.getNodes：后者接
+    // {safe} 选项，裸引用会把它的形参变成这里的契约。safe 投影已含
+    // id / enabled / missing，复验不需要凭证字段。
+    getProxyNodes: () => proxies.getNodes(),
     // 原服务层后处理：写历史，以及构造与 IPC 完全一致的账号/状态事件 payload。
     recordConversation: (accountId, result) =>
       agent.services.runtime.recordConversation(accountId, result),
@@ -313,7 +316,10 @@ async function main() {
     const settings = store.getSettings();
     const interval = Math.max(1, settings.intervalMinutes ?? 180) * 60_000;
     // 新启用的账号错峰进入，不让一批账号同时到期。
-    background.clock.schedule(accountId, Date.now() + Math.floor(Math.random() * interval));
+    const nextAt = Date.now() + Math.floor(Math.random() * interval);
+    background.clock.schedule(accountId, nextAt);
+    // 只进内存的话，账号页立刻查不到「下次运行时间」，重启后这次排期也不存在。
+    scheduler.noteScheduled(accountId, { nextAt });
   };
   agent.services.runtime.unscheduleAccount = (accountId) =>
     background.clock.unschedule(accountId);
@@ -342,17 +348,26 @@ function restoreSchedule(schedulerPersistence) {
   for (const entry of plan.overdue) {
     if (!enabled.has(entry.accountId)) continue;
     // 同一时刻恢复的任务按 FIFO 入队；不集中塞进一个 5 分钟窗口。
-    background.clock.schedule(entry.accountId, now + offset);
+    const nextAt = now + offset;
+    background.clock.schedule(entry.accountId, nextAt);
+    // 补跑时刻要立刻落盘：否则这一批在表里仍是旧的逾期时间，下次重启再补一遍。
+    scheduler.noteScheduled(entry.accountId, { nextAt });
     offset += 1;
   }
   for (const entry of plan.future) {
     if (!enabled.has(entry.accountId)) continue;
+    // future 的 nextAt 是持久化里的原值，保持不变，只是重新装进时钟。
     background.clock.schedule(entry.accountId, entry.nextAt);
+    // 值没变也要通知：桌面端此刻才拿到这一批账号的「下次运行时间」。
+    scheduler.noteScheduled(entry.accountId, { nextAt: entry.nextAt });
   }
   for (const account of store.getAccounts()) {
     if (!account.enabled) continue;
     if (background.clock.dueAt(account.id) == null) {
-      background.clock.schedule(account.id, now + Math.floor(Math.random() * interval));
+      // 表里没有记录的启用账号：这是一次新排期，必须落盘。
+      const nextAt = now + Math.floor(Math.random() * interval);
+      background.clock.schedule(account.id, nextAt);
+      scheduler.noteScheduled(account.id, { nextAt });
     }
   }
   // 时钟由 scheduler.start() 启动：它是唯一的启停入口，这里启动会变成两处控制。

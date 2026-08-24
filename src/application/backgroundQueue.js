@@ -73,6 +73,32 @@ export class BackgroundQueue {
     this._draining = false;
     this._revalidate = options.revalidate ?? (() => ({ ok: true }));
     this._schedulerRunning = options.schedulerRunning ?? (() => true);
+    this._onSettled = null;
+  }
+
+  /**
+   * 终态回调。调度状态（lastAt / lastResult）只能在这里落盘：ScheduleClock 只管
+   * 「什么时候入队」，跑完是什么结果只有队列知道。
+   */
+  onSettled(callback) {
+    this._onSettled = callback;
+    return this;
+  }
+
+  /** 终态通知不得影响 Operation 的终态本身。 */
+  _notifySettled(entry, outcome) {
+    if (!this._onSettled) return;
+    try {
+      this._onSettled(entry, outcome);
+    } catch (error) {
+      try {
+        this._log.warn?.(
+          `任务终态回调失败：${String(error?.message || error)}`
+        );
+      } catch {
+        // 日志失败不能让终态处理再抛
+      }
+    }
   }
 
   registerHandler(workKind, handler) {
@@ -223,7 +249,9 @@ export class BackgroundQueue {
   _revalidateQueued() {
     for (const entry of [...this._pendingQueue]) {
       const verdict = this._checkEntry(entry);
-      if (!verdict.ok) this._cancelEntry(entry, verdict.reason);
+      if (!verdict.ok) {
+        this._cancelEntry(entry, verdict.reason, { settlesRun: verdict.settlesRun === true });
+      }
     }
   }
 
@@ -238,13 +266,21 @@ export class BackgroundQueue {
     // 条目不因 scheduler.stop 取消，即使它最初是自动入队的。
     if (entry.effectiveSource === SOURCES.scheduled) {
       if (entry.snapshot.schedulerEpoch !== this._schedulerEpoch || !this._schedulerRunning()) {
+        // 生命周期事件，不带 settlesRun：不能写成一条自动运行失败。
         return { ok: false, reason: "调度已停止" };
       }
     }
     return { ok: true };
   }
 
-  _cancelEntry(entry, reason) {
+  /**
+   * 排队期取消。
+   *
+   * settlesRun 区分两类取消：语义健康校验失败（代理节点缺失、账号被隔离）是这一轮
+   * 自动运行的真实结果，要落进调度状态；而 scheduler.stop、账号停用/删除、Agent
+   * 退出属于生命周期，不得污染「上次运行」。默认 false——生命周期路径全部走默认值。
+   */
+  _cancelEntry(entry, reason, { settlesRun = false } = {}) {
     if (entry.terminal) return;
     entry.terminal = true;
     this._removeEntry(entry);
@@ -256,6 +292,13 @@ export class BackgroundQueue {
       blocksUpdate: false,
     });
     this._emitQueue();
+    // terminal 已置位，_execute 不会再对同一条目结算第二次。
+    this._notifySettled(entry, {
+      state: "cancelled",
+      ok: false,
+      reason,
+      settlesRun,
+    });
   }
 
   cancelQueuedBySource(sources, reason) {
@@ -314,7 +357,7 @@ export class BackgroundQueue {
       if (entry.stage === STAGES.waitingAccount && entry._awaitingRelease) continue;
       const verdict = this._checkEntry(entry);
       if (!verdict.ok) {
-        this._cancelEntry(entry, verdict.reason);
+        this._cancelEntry(entry, verdict.reason, { settlesRun: verdict.settlesRun === true });
         continue;
       }
       const workSlot = this._slots.tryAcquireWorkSlot();
@@ -437,6 +480,14 @@ export class BackgroundQueue {
           ? { result: { ...(details?.result ? { ...details.result } : {}), ...closeResult } }
           : {}),
       });
+      this._notifySettled(entry, {
+        state: cancelled ? "cancelled" : "failed",
+        ok: false,
+        reason: String(failure?.message || failure),
+        // 真跑过才算结果。取消来自 abort（stop / 停用 / Agent 退出）：那是生命周期，
+        // 不写 lastResult。
+        settlesRun: !cancelled,
+      });
       return;
     }
     const closeFailed = entry.closeOutcome?.ok === false;
@@ -450,6 +501,12 @@ export class BackgroundQueue {
       progress: 1,
       result: result ?? closeResult ?? null,
       blocksUpdate: false,
+    });
+    this._notifySettled(entry, {
+      state: closeFailed ? "failed" : "succeeded",
+      ok: !closeFailed,
+      reason: closeFailed ? entry.closeOutcome?.reason ?? null : null,
+      settlesRun: true,
     });
   }
 

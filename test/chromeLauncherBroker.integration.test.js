@@ -159,9 +159,15 @@ test(
       assert.ok(launched.rootPid > 0);
       assert.ok(launched.rootStartTime > 0);
 
-      // Give Chrome time to spawn its helper processes.
+      // 全量套件会并行启动多个真实 Chrome；固定睡眠在高负载下会早于 helper
+      // 进程创建。保留原 6 秒等待，再在有限窗口内按真实 Job 状态收敛。
       await new Promise((resolve) => setTimeout(resolve, 6_000));
-      const listed = await broker.enumerate(runToken);
+      let listed = await broker.enumerate(runToken);
+      const helpersDeadline = Date.now() + 9_000;
+      while (listed.count <= 1 && Date.now() < helpersDeadline) {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        listed = await broker.enumerate(runToken);
+      }
       assert.ok(listed.count > 1, `Job 应包含 root 与后代，实际 ${listed.count}`);
       assert.equal(listed.disposed, false);
       assert.ok(listed.pids.includes(launched.rootPid));

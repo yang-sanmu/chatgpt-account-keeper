@@ -201,6 +201,41 @@ test(
   }
 );
 
+test(
+  "broker 交互路径不向网页暴露 webdriver",
+  { timeout: 120_000 },
+  async (t) => {
+    if (!skipUnlessReady(t)) return;
+
+    const broker = new ChromeLauncherBroker();
+    const relativeProfile = path.join("tmp", `launcher-interactive-${Date.now()}`);
+    const absoluteProfile = fromRoot(relativeProfile);
+    fs.mkdirSync(absoluteProfile, { recursive: true });
+    let context;
+    try {
+      await broker.start();
+      const launcher = new ChromeProcessLauncher({ broker });
+      const launched = await launcher.launch({
+        userDataDir: absoluteProfile,
+        launchArgs: baseLaunchArgs(false),
+        headless: false,
+        accountId: "interactive-probe",
+        runToken: launcher.newRunToken(),
+      });
+      context = launched.context;
+      assert.equal(await launched.page.evaluate(() => navigator.webdriver), false);
+    } finally {
+      if (context) await context.close().catch(() => {});
+      await broker.dispose();
+      try {
+        fs.rmSync(absoluteProfile, { recursive: true, force: true });
+      } catch {
+        // Chrome 可能仍在释放 Profile 文件锁
+      }
+    }
+  }
+);
+
 test("broker 启动参数唯一初始页是 about:blank 且抑制会话恢复", () => {
   const args = buildLaunchArgs({
     userDataDir: "C:/profiles/acc",
@@ -215,4 +250,24 @@ test("broker 启动参数唯一初始页是 about:blank 且抑制会话恢复", 
   // 抑制恢复走命令行，不改 Preferences；若将来改为写 Preferences，禁止写 1
   // （那是"恢复上次会话"），只能写 5（新标签页）。
   assert.equal(args.some((arg) => arg.includes("restore_on_startup")), false);
+});
+
+test("broker 交互窗口使用非零调试端口，避免暴露 webdriver", () => {
+  const args = buildLaunchArgs({
+    userDataDir: "C:/profiles/acc",
+    launchArgs: baseLaunchArgs(false),
+    headless: false,
+    debugPort: 32123,
+  });
+  assert.ok(args.includes("--remote-debugging-port=32123"));
+  assert.equal(args.includes("--remote-debugging-port=0"), false);
+  assert.throws(
+    () =>
+      buildLaunchArgs({
+        userDataDir: "C:/profiles/acc",
+        launchArgs: baseLaunchArgs(false),
+        headless: false,
+      }),
+    /有效的非零本地调试端口/
+  );
 });

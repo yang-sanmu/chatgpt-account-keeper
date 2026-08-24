@@ -5,7 +5,9 @@ import {
   findChromeExecutable,
   installIdentityBarrierOnEndpoint,
   normalizeChromeLaunchError,
+  reserveLocalDebugPort,
   waitForDevToolsEndpoint,
+  waitForInteractiveCdp,
 } from "./browser.js";
 import * as defaultLog from "./logger.js";
 
@@ -30,6 +32,9 @@ export class ChromeProcessLauncher {
     this._log = options.log ?? defaultLog;
     this._connectOverCDP = options.connectOverCDP ?? ((endpoint) => chromium.connectOverCDP(endpoint));
     this._waitForDevTools = options.waitForDevToolsEndpoint ?? waitForDevToolsEndpoint;
+    this._reserveDebugPort = options.reserveLocalDebugPort ?? reserveLocalDebugPort;
+    this._waitForInteractiveCdp =
+      options.waitForInteractiveCdp ?? waitForInteractiveCdp;
     this._findChrome = options.findChromeExecutable ?? findChromeExecutable;
     this._installBarrier = options.installIdentityBarrier ?? installIdentityBarrierOnEndpoint;
   }
@@ -74,7 +79,16 @@ export class ChromeProcessLauncher {
     if (!executable) throw new ChromeNotFoundError(new Error("Google Chrome executable not found"));
 
     const resolvedUserDataDir = path.resolve(userDataDir);
-    const args = buildLaunchArgs({ userDataDir: resolvedUserDataDir, launchArgs, headless });
+    // Chrome 会把 --remote-debugging-port=0 视为自动化信号并暴露
+    // navigator.webdriver=true。交互窗口必须恢复旧路径的随机非零端口；Headless
+    // 仍用 0，让 Chrome 通过 DevToolsActivePort 回报实际端口。
+    const debugPort = headless ? 0 : await this._reserveDebugPort();
+    const args = buildLaunchArgs({
+      userDataDir: resolvedUserDataDir,
+      launchArgs,
+      headless,
+      debugPort,
+    });
     const notBefore = Date.now();
 
     const launched = await this._broker.launch(runToken, executable, args);
@@ -82,9 +96,15 @@ export class ChromeProcessLauncher {
     let browser = null;
     let barrier = null;
     try {
-      // 2) 读端口。复用现成实现，含旧端口文件的 mtime 陈旧防护；这同时消掉了
-      //    「预留端口 → 关闭 → spawn」的抢占窗口。
-      const endpoint = await this._waitForDevTools(resolvedUserDataDir, notBefore);
+      // 2) Headless 从 DevToolsActivePort 读取 Chrome 分配的端口；交互窗口则等待
+      //    预先分配的非零端口就绪，避免 port=0 暴露 webdriver。
+      let endpoint;
+      if (headless) {
+        endpoint = await this._waitForDevTools(resolvedUserDataDir, notBefore);
+      } else {
+        await this._waitForInteractiveCdp(debugPort);
+        endpoint = `http://127.0.0.1:${debugPort}`;
+      }
 
       // 3) 先装身份屏障并处理完既有 Target，之后才允许 Playwright attach。
       if (headless) {
@@ -97,7 +117,7 @@ export class ChromeProcessLauncher {
       }
 
       // 4) 现在才接管。
-      const httpEndpoint = toHttpEndpoint(endpoint);
+      const httpEndpoint = headless ? toHttpEndpoint(endpoint) : endpoint;
       browser = await this._connectOverCDP(httpEndpoint);
       const context = browser.contexts()[0];
       if (!context) throw new Error("Chrome 没有默认浏览器上下文");
@@ -146,13 +166,16 @@ function toHttpEndpoint(wsEndpoint) {
  * 构造启动参数。唯一初始页固定 about:blank：屏障建立在 DevToolsActivePort 可读
  * 之后，若启动时就导航到业务 URL，首个 document 请求会赶在屏障之前发出。
  */
-export function buildLaunchArgs({ userDataDir, launchArgs, headless }) {
+export function buildLaunchArgs({ userDataDir, launchArgs, headless, debugPort = 0 }) {
+  if (!headless && (!Number.isInteger(debugPort) || debugPort <= 0 || debugPort > 65_535)) {
+    throw new Error("交互式 Chrome 必须使用有效的非零本地调试端口");
+  }
   const args = [
     `--user-data-dir=${userDataDir}`,
     "--no-first-run",
     "--no-default-browser-check",
     "--remote-debugging-address=127.0.0.1",
-    "--remote-debugging-port=0",
+    `--remote-debugging-port=${headless ? 0 : debugPort}`,
     // 抑制既有 Profile 的会话恢复。禁止写 session.restore_on_startup=1（那是"恢复
     // 上次会话"）；这里走命令行，不改 Preferences。
     "--no-startup-window=false",

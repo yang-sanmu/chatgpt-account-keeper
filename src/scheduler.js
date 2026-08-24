@@ -358,6 +358,60 @@ export class SchedulerService {
     });
   }
 
+  /**
+   * 下一次到期时刻。ScheduleClock 排期必须走这里，而不是自己按固定 interval 算：
+   * interval±jitter 的作用是让一批账号不在同一时刻集体启动 Chrome，复制一份或退化成
+   * 固定间隔都会把这个性质丢掉。随机算法只有 _nextDelayMs 一处实现。
+   */
+  nextAtFromNow(now = Date.now()) {
+    return now + this._nextDelayMs();
+  }
+
+  /**
+   * ScheduleClock 排下一次时用。
+   *
+   * 接入统一队列后 _runAccountLoop 不再运行，而它是原先**唯一**写 nextAt / lastAt /
+   * lastResult 的地方。不补这两个入口，排期表就再也不更新：账号页的「下次运行时间」
+   * 永久停在旧值，而 restoreSchedule 每次重启都会拿同一张过期表判所有账号逾期，
+   * 于是反复补跑。
+   */
+  noteScheduled(accountId, { nextAt } = {}) {
+    const persisted = this._persistentSnapshot().accounts?.[accountId] ?? null;
+    if (persisted?.lastResult && typeof persisted.lastResult === "object") {
+      this.lastResults[accountId] ??= { ...persisted.lastResult };
+    }
+    // lastAt 属于上一轮，排下一次时必须原样带上，否则会被覆盖成 null。
+    this._persistAccount(accountId, {
+      nextAt: nextAt ?? null,
+      lastAt: persisted?.lastAt ? Date.parse(persisted.lastAt) || null : null,
+      busy: false,
+    });
+    return this;
+  }
+
+  /**
+   * 队列终态回调用：写下这一轮真实跑完的时间与结果。
+   *
+   * nextAt 可选：给了就和结果一次写完（§6.5 的"跑完后只算一个新的未来时间"），
+   * 不给则保持持久化里的原值不动。
+   */
+  noteCompleted(accountId, { lastAt, result, nextAt } = {}) {
+    const persisted = this._persistentSnapshot().accounts?.[accountId] ?? null;
+    if (result && typeof result === "object") {
+      this.lastResults[accountId] = {
+        ok: !!result.ok,
+        reason: result.reason ?? null,
+        time: new Date(lastAt ?? Date.now()).toISOString(),
+      };
+    }
+    this._persistAccount(accountId, {
+      nextAt: nextAt ?? (persisted?.nextAt ? Date.parse(persisted.nextAt) || null : null),
+      lastAt: lastAt ?? Date.now(),
+      busy: false,
+    });
+    return this;
+  }
+
   // 计算一次间隔：interval ± jitter（分钟）转毫秒，下限 1 分钟。
   _nextDelayMs() {
     const s = this._getSettings();

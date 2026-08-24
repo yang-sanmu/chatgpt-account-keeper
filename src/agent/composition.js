@@ -30,7 +30,9 @@ export async function composeBackground({
   refreshAccount,
   statusMonitor,
   scheduler,
-  schedulerPersistence,
+  // 代理节点表由组合根注入。这里不能 import proxyManager：它 import store，而
+  // composition 位于两者之下，直连会把依赖拧成环（见文件头）。
+  getProxyNodes,
   onFatal,
   requireBroker = process.platform === "win32",
   brokerFactory = (options) => new ChromeLauncherBroker(options),
@@ -41,6 +43,33 @@ export async function composeBackground({
   recordConversation = null,
   accountViewRuntime = null,
 }) {
+  // 缺省不给 []：那正是「所有绑定了分组代理的账号一律被判为节点不可用」的成因，
+  // 而且它静默——每个账号各自失败，没有任何一处报错。必须在启动时就炸。
+  if (typeof getProxyNodes !== "function") {
+    throw new TypeError("getProxyNodes provider is required");
+  }
+  // 调度状态的读写都经 scheduler。缺任何一个就退回固定间隔或静默丢弃写入，
+  // 那正是这两轮修的东西——宁可在 Agent 接受 IPC 之前就失败。
+  for (const method of ["nextAtFromNow", "noteScheduled", "noteCompleted"]) {
+    if (typeof scheduler?.[method] !== "function") {
+      throw new TypeError(`scheduler.${method} is required`);
+    }
+  }
+
+  /**
+   * 节点表的唯一读取口。返回值每次都验：provider 是动态的，第一次对不代表之后对。
+   */
+  const readProxyNodes = () => {
+    const nodes = getProxyNodes();
+    if (!Array.isArray(nodes)) {
+      throw new TypeError("getProxyNodes must return an array");
+    }
+    return nodes;
+  };
+  // compose 时先验一次：否则坏 provider 要等到第一条 proxied 任务才炸，而那时
+  // submit 已经 declare 了 Operation，会留下半入队状态。
+  readProxyNodes();
+
   const slots = new SlotManager();
   const queue = new BackgroundQueue({ operations, events, slots, log });
 
@@ -89,18 +118,22 @@ export async function composeBackground({
   // 语义复验：逐条按任务语义判定，计数器只是触发器。
   queue.configureRevalidate(({ accountId }) => {
     const account = store.getAccount(accountId);
+    // 账号停用/删除不是"这一轮自动运行失败"，而是这个账号不再参与调度：写进
+    // lastResult 会把账号页的「上次运行」污染成一条用户从未发起的失败。
     if (!account || account.enabled === false) {
       return { ok: false, reason: "账号已删除或已停用" };
     }
     if (isQuarantined(accountId)) {
-      return { ok: false, reason: "该账号的 Chrome 未能回收，已隔离" };
+      return { ok: false, reason: "该账号的 Chrome 未能回收，已隔离", settlesRun: true };
     }
     const proxyId = store.effectiveProxyId?.(account) ?? null;
     if (proxyId) {
-      const nodes = store.getProxyNodes?.() ?? [];
-      const node = nodes.find((candidate) => candidate.id === proxyId);
+      // 只认注入的这一个来源。留 store.getProxyNodes?.() 兜底等于把同一个陷阱
+      // 重新装上：store 从来没有这个导出，可选调用会静默退化成空表。
+      const node = readProxyNodes().find((candidate) => candidate.id === proxyId);
       if (!node || node.missing || node.enabled === false) {
-        return { ok: false, reason: "分组绑定的代理节点不可用" };
+        // 健康校验失败：这算一次真实的自动运行结果，要落到调度状态里。
+        return { ok: false, reason: "分组绑定的代理节点不可用", settlesRun: true };
       }
     }
     return { ok: true };
@@ -355,21 +388,74 @@ export async function composeBackground({
     });
   });
 
+  // 已交给队列、尚未收到终态的到期意图。§6.5：补跑完成后只计算一个新的未来执行
+  // 时间，所以重排必须发生在终态，不能在 onDue 里预排——跑 40 分钟的任务会让下次
+  // 时间从"开始时刻"起算，窗口提前滚动甚至吞掉一个周期。
+  const pendingDue = new Set();
+
   const clock = new ScheduleClock({
     log,
     onDue: (accountId) => {
-      queue.submit({
-        accountId,
-        workKind: WORK_KINDS.accountRun,
-        source: SOURCES.scheduled,
-        kind: "account-run",
-        message: "等待自动对话",
-      });
-      // 跑完后由调度器重算下次时间；这里先按间隔预排，避免漏排。
-      const settings = store.getSettings();
-      const interval = Math.max(1, settings.intervalMinutes ?? 180) * 60_000;
-      clock.schedule(accountId, Date.now() + interval);
+      // 先标记再 submit：submit 会同步 pump，健康校验失败时终态回调在 submit 内部
+      // 就已经跑完，标记晚一步就永远等不到重排。
+      pendingDue.add(accountId);
+      try {
+        queue.submit({
+          accountId,
+          workKind: WORK_KINDS.accountRun,
+          source: SOURCES.scheduled,
+          kind: "account-run",
+          message: "等待自动对话",
+        });
+      } catch (error) {
+        pendingDue.delete(accountId);
+        throw error;
+      }
     },
+  });
+
+  /**
+   * 到期任务收口：恰好重排一次。
+   *
+   * 调度已停 / 账号已停用或删除时不重排——那是生命周期，不是"这一轮跑完了"。
+   */
+  const settleDue = (accountId, completion) => {
+    if (!pendingDue.delete(accountId)) return;
+    if (scheduler.running === false) return;
+    const account = store.getAccount(accountId);
+    if (!account || account.enabled === false) return;
+    const nextAt = scheduler.nextAtFromNow(Date.now());
+    clock.schedule(accountId, nextAt);
+    if (completion) {
+      // 真跑过（或健康校验失败）：结果、lastAt、nextAt 一次写完，不留中间态。
+      scheduler.noteCompleted(accountId, { ...completion, nextAt });
+      return;
+    }
+    // 到期意图被已有 manual 条目合并：手动结果不是自动运行结果，只排下次时间。
+    scheduler.noteScheduled(accountId, { nextAt });
+  };
+
+  // 调度状态的另一半：跑完的时间与结果只有队列知道。每个终态恰好通知一次，
+  // 排队期语义取消也在内——代理节点缺失这类健康校验失败必须留下痕迹，否则用户
+  // 只看到「什么都没发生」。生命周期取消（stop / 停用 / 退出）不带 settlesRun。
+  queue.onSettled((entry, outcome) => {
+    if (entry.workKind !== WORK_KINDS.accountRun) return;
+    if (!pendingDue.has(entry.accountId)) return;
+    // 生命周期取消（stop / 停用 / Agent 退出）：不重排、不写结果，只丢掉这次意图。
+    // 必须先于 manual 合并分支判断，否则退出时被合并的手动任务仍会错误重排。
+    if (outcome.settlesRun !== true) {
+      pendingDue.delete(entry.accountId);
+      return;
+    }
+    // 去重把到期意图并进了用户触发的条目：effectiveSource 已被提升为 manual。
+    if (entry.effectiveSource !== SOURCES.scheduled) {
+      settleDue(entry.accountId, null);
+      return;
+    }
+    settleDue(entry.accountId, {
+      lastAt: Date.now(),
+      result: { ok: outcome.ok, reason: outcome.reason },
+    });
   });
 
   return {

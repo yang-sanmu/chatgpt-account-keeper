@@ -50,11 +50,19 @@ async function composeFake(options = {}) {
       getSettings: () => ({ headless: true, intervalMinutes: 180 }),
     },
     log: { info() {}, warn() {}, error() {} },
+    // 本组测的是所有权与关闭序列，账号不绑分组代理；提供者仍是必需参数。
+    getProxyNodes: () => [],
     runOnce: options.runOnce ?? (async () => ({ ok: true })),
     checkSelectors: async () => ({ ok: true }),
     refreshAccount: async () => ({ state: "ok" }),
     statusMonitor: null,
-    scheduler: { running: true },
+    // composeBackground 要求的调度契约：本组不测调度，给足方法即可。
+    scheduler: {
+      running: true,
+      nextAtFromNow: (now = Date.now()) => now + 60_000,
+      noteScheduled: () => {},
+      noteCompleted: () => {},
+    },
     requireBroker: true,
     brokerFactory: () => broker,
     recordConversation: (accountId, result) => recorded.push({ accountId, result }),

@@ -130,8 +130,8 @@ export class ChromeProcessLauncher {
         ?? pages[0]
         ?? (await context.newPage());
 
-      // context.close 收口到 browser.close：CDP 接入的默认持久 Context 不由
-      // Playwright 负责进程生命周期，进程回收由 broker 的 Job 完成。
+      // context.close 显式发送 CDP Browser.close，让持久 Profile 先正常落盘；
+      // 进程树的有界等待、强制兜底与最终证明仍由 BrowserRun / broker 完成。
       installBrokerContextClose(context, browser, barrier);
 
       return {
@@ -213,13 +213,22 @@ export function buildLaunchArgs({ userDataDir, launchArgs, headless, debugPort =
   return args.filter((arg) => arg !== "--no-startup-window=false");
 }
 
+async function requestGracefulBrowserClose(browser) {
+  const session = await browser.newBrowserCDPSession();
+  try {
+    await session.send("Browser.close");
+  } catch (error) {
+    // Chrome 正常退出时 CDP 连接可能先断开，此时命令会以 Target closed 拒绝。
+    if (browser.isConnected()) throw error;
+  }
+}
+
 function installBrokerContextClose(context, browser, barrier) {
   let closing = null;
   const close = () => {
     if (!closing) {
       closing = Promise.resolve()
-        .then(() => browser.close())
-        .catch(() => {})
+        .then(() => requestGracefulBrowserClose(browser))
         .finally(() => barrier?.close?.());
     }
     return closing;

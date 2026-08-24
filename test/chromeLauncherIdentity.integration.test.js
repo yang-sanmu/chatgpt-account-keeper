@@ -236,6 +236,91 @@ test(
   }
 );
 
+test(
+  "broker 交互路径正常关闭后持久 Cookie 可跨 Chrome 重启读取",
+  { timeout: 120_000 },
+  async (t) => {
+    if (!skipUnlessReady(t)) return;
+
+    const server = http.createServer((_req, res) => {
+      res.setHeader(
+        "Set-Cookie",
+        "keeper-session-persistence=present; Max-Age=3600; Path=/; SameSite=Lax"
+      );
+      res.setHeader("Content-Type", "text/html");
+      res.end("<!doctype html><title>session persistence</title>");
+    });
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const port = server.address().port;
+    const url = `http://127.0.0.1:${port}/`;
+
+    const broker = new ChromeLauncherBroker();
+    const relativeProfile = path.join("tmp", `launcher-session-${Date.now()}`);
+    const absoluteProfile = fromRoot(relativeProfile);
+    fs.mkdirSync(absoluteProfile, { recursive: true });
+    const launchedRuns = [];
+
+    const closeAndDispose = async (launched) => {
+      if (!launched) return;
+      await launched.context.close();
+      const drained = await broker.waitForEmpty(launched.runToken, 5_000);
+      assert.equal(drained.count, 0, "Browser.close 后 Chrome 进程树应自然归零");
+      const disposed = await broker.dispose_(launched.runToken);
+      assert.equal(disposed.ok, true);
+      await broker.forget(launched.runToken);
+      launchedRuns.splice(launchedRuns.indexOf(launched), 1);
+    };
+
+    try {
+      await broker.start();
+      const launcher = new ChromeProcessLauncher({ broker });
+      const launch = async () => {
+        const launched = await launcher.launch({
+          userDataDir: absoluteProfile,
+          launchArgs: baseLaunchArgs(false),
+          headless: false,
+          accountId: "session-persistence-probe",
+          runToken: launcher.newRunToken(),
+        });
+        launchedRuns.push(launched);
+        return launched;
+      };
+
+      const first = await launch();
+      await first.page.goto(url, { waitUntil: "domcontentloaded" });
+      assert.match(await first.page.evaluate(() => document.cookie), /keeper-session-persistence=present/);
+      await closeAndDispose(first);
+
+      const second = await launch();
+      // 在服务端再次 Set-Cookie 前读取 Context，证明值来自上一次正常关闭的 Profile。
+      const restored = await second.context.cookies(url);
+      assert.ok(
+        restored.some(
+          (cookie) =>
+            cookie.name === "keeper-session-persistence" && cookie.value === "present"
+        ),
+        "持久 Cookie 应在重新启动后仍存在"
+      );
+      await closeAndDispose(second);
+    } finally {
+      for (const launched of [...launchedRuns]) {
+        await launched.context.close().catch(() => {});
+        await broker.terminate(launched.runToken).catch(() => {});
+        await broker.waitForEmpty(launched.runToken, 5_000).catch(() => {});
+        await broker.dispose_(launched.runToken).catch(() => {});
+      }
+      await broker.dispose();
+      server.closeAllConnections?.();
+      await new Promise((resolve) => server.close(() => resolve()));
+      try {
+        fs.rmSync(absoluteProfile, { recursive: true, force: true });
+      } catch {
+        // 测试失败时仍可能有 Chrome 正在释放 Profile 文件锁。
+      }
+    }
+  }
+);
+
 test("broker 启动参数唯一初始页是 about:blank 且抑制会话恢复", () => {
   const args = buildLaunchArgs({
     userDataDir: "C:/profiles/acc",

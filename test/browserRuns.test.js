@@ -138,6 +138,35 @@ test("closed：Job 计数归零 + dispose ack 后释放 Chrome 槽与账号锁",
   assert.equal(slots.snapshot().workSlots.used, 0);
 });
 
+test("Browser.close 后自然退出时不再 terminate，给 Profile 完整落盘机会", async () => {
+  resetLocksForTest();
+  const { registry, broker, slots } = setup();
+  const chromeSlot = await slots.acquireChromeSlot({ label: "acc-graceful" });
+  broker.launchFake("tok-graceful", 4);
+  const context = {
+    close: async () => {
+      broker.active.get("tok-graceful").count = 0;
+    },
+  };
+  const run = startRun(registry, slots, "acc-graceful", "tok-graceful", {
+    chromeSlot,
+    context,
+  });
+
+  const closed = await registry.close(run.browserRunId, "login-complete");
+
+  assert.equal(closed.state, "closed");
+  assert.equal(
+    broker.calls.filter(([name]) => name === "terminate").length,
+    0,
+    "已经自然退出的 Chrome 不能再被强制终止"
+  );
+  assert.equal(
+    broker.calls.filter(([name]) => name === "dispose").length,
+    1
+  );
+});
+
 test("close_failed：计数未归零则保留 Chrome 容量与账号锁 quarantine", async () => {
   resetLocksForTest();
   const { registry, broker, slots } = setup({ stuckTokens: ["tok-b"] });

@@ -36,6 +36,7 @@ const ACTIVE_STATES = new Set([
 export const CLOSE_BUDGET_MS = 5_000;
 const GRACEFUL_RESERVE_MS = 1_000;
 const GRACEFUL_MAX_MS = 4_000;
+const GRACEFUL_TREE_DRAIN_MAX_MS = 1_500;
 const RECENT_LIMIT = 50;
 const RECENT_TTL_MS = 30 * 60 * 1000;
 const RECHECK_BASE_MS = 15_000;
@@ -208,6 +209,7 @@ export class BrowserRunRegistry {
     this._emit(run);
 
     let closeError = null;
+    const hadContext = !!run._context;
 
     // 子预算 A：优雅退出 + 断开控制连接，必须为 B 留最后 1 秒。
     const gracefulMs = Math.min(GRACEFUL_MAX_MS, budget.sliceLeaving(GRACEFUL_RESERVE_MS));
@@ -222,8 +224,9 @@ export class BrowserRunRegistry {
       if (result) closeError = result;
     }
 
-    // 子预算 B：terminate → 计数归零 → dispose ack。
-    const proof = await this._proveTreeGone(run, budget);
+    // 子预算 B：先允许 Browser.close 后的进程树自然归零；只有仍存活才 terminate，
+    // 最后必须取得计数归零 + dispose ack。直接 terminate 会截断 Cookie/Profile 落盘。
+    const proof = await this._proveTreeGone(run, budget, hadContext);
 
     run.closeError = closeError ? String(closeError.message || closeError) : null;
     if (proof.ok) {
@@ -238,7 +241,7 @@ export class BrowserRunRegistry {
    * 证明完整 owned 树消失。Windows：Job 计数归零 + dispose ack + registry entry 删除。
    * 禁止用「进程最终消失」倒推——Chrome 自己的内部 Job 会掩盖我们的失败。
    */
-  async _proveTreeGone(run, budget) {
+  async _proveTreeGone(run, budget, allowGracefulDrain = false) {
     if (!run.launcherRunToken || !this._broker) {
       // 没有 broker 的路径（POSIX 开发、或从未成功 launch）：无法给出 Windows 级证明。
       // 从未取得 root 的 run 没有任何进程可残留，按 closed 处理。
@@ -247,8 +250,21 @@ export class BrowserRunRegistry {
     }
     const token = run.launcherRunToken;
     try {
-      await this._broker.terminate(token);
-      const drained = await this._broker.waitForEmpty(token, Math.max(0, budget.remaining));
+      let drained = null;
+      if (allowGracefulDrain) {
+        const gracefulDrainMs = Math.min(
+          GRACEFUL_TREE_DRAIN_MAX_MS,
+          budget.sliceLeaving(GRACEFUL_RESERVE_MS)
+        );
+        if (gracefulDrainMs > 0) {
+          drained = await this._broker.waitForEmpty(token, gracefulDrainMs);
+        }
+      }
+
+      if (!drained?.disposed && (!drained?.ok || drained.count !== 0)) {
+        await this._broker.terminate(token);
+        drained = await this._broker.waitForEmpty(token, Math.max(0, budget.remaining));
+      }
       if (drained.disposed) {
         // 命中 tombstone：此前 dispose 已成功但 ack 丢失，直接作为收敛证明。
         run._pendingForget = true;

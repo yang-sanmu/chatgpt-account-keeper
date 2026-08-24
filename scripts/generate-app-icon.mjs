@@ -393,6 +393,31 @@ for (const size of LINUX_ICON_SIZES) {
   );
 }
 
+// Tauri icon set. Same artwork source as the Avalonia/Linux outputs above, so
+// the two clients cannot drift apart while both exist. Names are the ones
+// `bundle.icon` in app/src-tauri/tauri.conf.json references.
+//
+// tray.png uses the simplified artwork for the same reason AppIcon.cs does:
+// the full badge turns into a smudge at the 16-24px the tray actually renders.
+const tauriIconRoot = path.join(repositoryRoot, "app/src-tauri/icons");
+fs.mkdirSync(tauriIconRoot, { recursive: true });
+for (const [name, buffer] of [
+  ["32x32.png", encodePng(render(32), 32)],
+  ["128x128.png", encodePng(render(128), 128)],
+  ["128x128@2x.png", encodePng(render(256), 256)],
+  ["icon.png", windowPng],
+  ["tray.png", trayPng],
+  ["icon.ico", encodeIco(frames)],
+  [
+    "icon.icns",
+    encodeIcns(
+      ICNS_FRAMES.map(([type, size]) => ({ type, data: encodePng(render(size), size) })),
+    ),
+  ],
+]) {
+  fs.writeFileSync(path.join(tauriIconRoot, name), buffer);
+}
+
 // Rewrite both base64 payloads in AppIcon.cs so the embedded copies can never
 // drift from the generated artwork.
 const appIconSource = path.join(projectRoot, "Application/AppIcon.cs");

@@ -113,5 +113,6 @@ export async function runAgent(page, selectors, set) {
     targetRounds,
     stopReason,
     reason,
+    needReauth: sendError?.needReauth === true,
   };
 }

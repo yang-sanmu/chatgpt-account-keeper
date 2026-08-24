@@ -116,6 +116,19 @@ export async function sessionProbeInPage(options = {}) {
       return false;
     }
   };
+  const detectLoggedOutPage = () => {
+    try {
+      return Array.from(
+        document.querySelectorAll("#modal-no-auth-login, [data-testid='login-button']")
+      ).some((element) => {
+        if (element.hidden || element.getAttribute?.("aria-hidden") === "true") return false;
+        const style = element.ownerDocument?.defaultView?.getComputedStyle?.(element);
+        return style?.display !== "none" && style?.visibility !== "hidden";
+      });
+    } catch {
+      return false;
+    }
+  };
   const fetchTextWithTimeout = async (url, init = {}) => {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), fetchTimeoutMs);
@@ -183,6 +196,7 @@ export async function sessionProbeInPage(options = {}) {
   // 挑战页可能在第一次 session 请求后才替换当前文档。必须在所有重试结束
   // 后重新检测，否则三次空对象响应会被错误归类为真实退出。
   out.challengePage = out.challengePage || detectChallengePage();
+  out.loggedOutPage = detectLoggedOutPage();
 
   out.email = sess?.user?.email ?? null;
   out.name = sess?.user?.name ?? null;
@@ -321,6 +335,20 @@ export async function checkSession(page, options = {}) {
 
   const email = probe.email ?? null;
   const name = probe.name ?? null;
+
+  // 游客页与登录页现在同样提供可用输入框，只有会话接口而忽略页面强指示，会让
+  // 自动对话先以游客身份跑几轮，再被 modal-no-auth-login 拦住。可见的登录入口
+  // 或未登录弹窗是明确证据；挑战页优先保持 unknown，避免把 WAF 误判成退出。
+  if (probe.loggedOutPage && !probe.challengePage) {
+    return {
+      state: email ? SESSION_REAUTH : SESSION_OUT,
+      email,
+      name,
+      detail: email
+        ? "ChatGPT 页面要求重新登录"
+        : "ChatGPT 页面显示未登录状态",
+    };
+  }
 
   // 只有成功拿到合法 session JSON 且其中明确没有用户，才能判定未登录。
   // Cloudflare 挑战页、403/5xx、非 JSON 响应和网络错误都只是“无法确认”；

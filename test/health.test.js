@@ -13,7 +13,7 @@ function pageReturning(probe) {
   return { evaluate: async () => probe };
 }
 
-function pageRunningProbe({ session, me }) {
+function pageRunningProbe({ session, me, loggedOut = false }) {
   let expectedAccessToken = "test-token";
   try {
     const parsed = JSON.parse(session.body);
@@ -30,6 +30,9 @@ function pageRunningProbe({ session, me }) {
         title: "ChatGPT",
         body: { innerText: "" },
         querySelector: () => null,
+        querySelectorAll: (selector) => loggedOut && /modal-no-auth-login|login-button/.test(selector)
+          ? [{ hidden: false, getAttribute: () => null }]
+          : [],
       };
       globalThis.fetch = async (url, options = {}) => {
         if (url === "/api/auth/session") {
@@ -117,10 +120,41 @@ test("验证页拦截 session 接口时保持待确认而非误判未登录", as
   assert.match(result.detail, /验证页/);
 });
 
+test("游客页有输入框但显示登录入口时明确判定未登录", async () => {
+  const result = await checkSession(
+    pageRunningProbe({
+      session: { body: '{"message":"Sign in to continue"}' },
+      me: { body: "{}" },
+      loggedOut: true,
+    }),
+    { retryDelayMs: 0, fetchTimeoutMs: 50, hardTimeoutMs: 500 }
+  );
+
+  assert.equal(result.state, SESSION_OUT);
+  assert.match(result.detail, /未登录/);
+});
+
+test("已有会话身份但页面弹出登录窗口时判定需要重新登录", async () => {
+  const result = await checkSession(
+    pageReturning({
+      loggedOutPage: true,
+      challengePage: false,
+      email: "person@example.com",
+      name: "Person",
+      hasToken: true,
+      meStatus: 503,
+    })
+  );
+
+  assert.equal(result.state, SESSION_REAUTH);
+  assert.match(result.detail, /重新登录/);
+});
+
 test("挑战页即使返回空 session JSON 也不能判定未登录", async () => {
   const result = await checkSession(
     pageReturning({
       challengePage: true,
+      loggedOutPage: true,
       sessionOk: true,
       sessionAttempts: 3,
       sessionJsonCount: 3,

@@ -10,6 +10,36 @@ function combinedSelector(value) {
   return selectorList(value).join(", ");
 }
 
+const MEMORY_NUX_SELECTOR = "#modal-m3m-nux";
+const LOGGED_OUT_SELECTOR = "#modal-no-auth-login, [data-testid='login-button']";
+
+async function hasVisible(page, selector) {
+  const handles = await page.$$(selector);
+  for (const handle of handles) {
+    if (await handle.isVisible()) return true;
+  }
+  return false;
+}
+
+async function throwIfLoginRequired(page) {
+  if (await hasVisible(page, LOGGED_OUT_SELECTOR)) {
+    const error = new Error("ChatGPT 页面已要求登录，请在账号页点击“重新登录”");
+    error.needReauth = true;
+    throw error;
+  }
+}
+
+async function dismissMemoryNux(page) {
+  const modal = await page.$(MEMORY_NUX_SELECTOR);
+  if (!modal || !(await modal.isVisible())) return;
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(200);
+  if (await modal.isVisible()) {
+    throw new Error("ChatGPT Memory 功能引导窗口未能关闭");
+  }
+  log.info("已关闭 ChatGPT Memory 功能引导弹窗");
+}
+
 /**
  * 在一组候选选择器里返回第一个可见的元素句柄。
  */
@@ -31,9 +61,10 @@ export async function firstVisible(page, selectorList, timeout = 8000) {
 }
 
 /**
- * 确认账号已登录（输入框可见）。未登录时抛错，由调用方跳过该账号。
+ * 确认账号已登录。明确显示登录入口时返回 false；否则再以输入框作为正向证据。
  */
 export async function ensureLoggedIn(page, selectors) {
+  if (await hasVisible(page, LOGGED_OUT_SELECTOR)) return false;
   try {
     await firstVisible(page, selectors.loginIndicators, 10000);
     return true;
@@ -48,6 +79,8 @@ export async function ensureLoggedIn(page, selectors) {
  * 拿不到 stop 按钮时退化为轮询回复文本稳定。
  */
 export async function sendPrompt(page, selectors, prompt) {
+  await dismissMemoryNux(page);
+  await throwIfLoginRequired(page);
   const composer = await firstVisible(page, selectors.composer, 15000);
 
   // ChatGPT 会虚拟化长会话：新增回复时可能同时移除旧节点，因此不能靠节点数

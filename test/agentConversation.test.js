@@ -33,6 +33,9 @@ function createFakePage(replies, options = {}) {
     navigations: [],
     clickedSendButton: 0,
     pressedEnter: 0,
+    memoryNuxVisible: false,
+    loggedOutVisible: options.loggedOutOnLoad === true,
+    dismissedMemoryNux: 0,
   };
   const stopButtonWorks = options.stopButton !== false;
   const sendButtonWorks = options.sendButton !== false;
@@ -47,6 +50,9 @@ function createFakePage(replies, options = {}) {
   const isSend = (sel) => queryIncludes(sel, activeSelectors.sendButton);
   const isStop = (sel) => queryIncludes(sel, activeSelectors.stopButton);
   const isAssistant = (sel) => queryIncludes(sel, activeSelectors.assistantMessage);
+  const loggedOutSelectors = ["#modal-no-auth-login", "[data-testid='login-button']"];
+  const isLoggedOut = (sel) => queryIncludes(sel, loggedOutSelectors);
+  const isMemoryNux = (sel) => sel === "#modal-m3m-nux";
 
   function replyFor(round) {
     if (replies.length === 0) return "";
@@ -63,6 +69,8 @@ function createFakePage(replies, options = {}) {
       return;
     }
     state.assistantMessages.push({ innerText: replyFor(state.sends - 1) });
+    if (options.memoryNuxAfterRound === state.sends) state.memoryNuxVisible = true;
+    if (options.loggedOutAfterRound === state.sends) state.loggedOutVisible = true;
     const virtualizeLimit = Number(options.virtualizeAssistantLimit);
     if (Number.isFinite(virtualizeLimit) && virtualizeLimit > 0) {
       while (state.assistantMessages.length > virtualizeLimit) {
@@ -81,6 +89,11 @@ function createFakePage(replies, options = {}) {
       }
     },
     isEnabled: async () => true,
+    isVisible: async () => kind === "memory-nux"
+      ? state.memoryNuxVisible
+      : kind === "logged-out"
+        ? state.loggedOutVisible
+        : true,
     innerText: async () => node?.innerText ?? state.assistantMessages.at(-1)?.innerText ?? "",
     evaluate: async (fn, arg) => fn(node, arg?._node ?? arg),
   });
@@ -106,6 +119,7 @@ function createFakePage(replies, options = {}) {
       throw new NotFound(sel);
     },
     async $(sel) {
+      if (isMemoryNux(sel)) return state.memoryNuxVisible ? handle("memory-nux") : null;
       if (isSend(sel)) return sendButtonWorks ? handle("send") : null;
       if (isComposer(sel)) return handle("composer");
       return null;
@@ -113,6 +127,9 @@ function createFakePage(replies, options = {}) {
     async $$(sel) {
       if (isAssistant(sel)) {
         return state.assistantMessages.map((node) => handle("assistant", node));
+      }
+      if (isLoggedOut(sel) && state.loggedOutVisible) {
+        return [handle("logged-out")];
       }
       return [];
     },
@@ -143,6 +160,11 @@ function createFakePage(replies, options = {}) {
         if (options?.delay !== undefined) state.typeDelays.push(options.delay);
       },
       async press(key) {
+        if (key === "Escape" && state.memoryNuxVisible) {
+          state.memoryNuxVisible = false;
+          state.dismissedMemoryNux += 1;
+          return;
+        }
         if (key === "Enter") {
           state.pressedEnter += 1;
           commitSend();
@@ -334,6 +356,66 @@ test("长会话 DOM 虚拟化时不要求回复节点总数增加", async () => 
   assert.equal(result.ok, true);
   assert.equal(result.totalRounds, 5);
   assert.equal(page._state.assistantMessages.length, 3, "页面应只保留最近三个回复节点");
+});
+
+test("Memory 功能引导在下一轮发送前自动关闭", async () => {
+  const page = createFakePage(
+    [
+      withNext("第一轮。", "追问一？"),
+      withNext("第二轮。", "追问二？"),
+    ],
+    { memoryNuxAfterRound: 1 }
+  );
+
+  const result = await runAgent(page, selectors, {
+    topic: "Memory 弹窗",
+    minRounds: 2,
+    maxRounds: 2,
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.totalRounds, 2);
+  assert.equal(page._state.sends, 2);
+  assert.equal(page._state.dismissedMemoryNux, 1);
+});
+
+test("游客页虽有输入框也立即要求重新登录且不发送消息", async () => {
+  const page = createFakePage([withNext("不应发送。", "追问？")], {
+    loggedOutOnLoad: true,
+  });
+
+  const result = await runAgent(page, selectors, {
+    topic: "游客误判",
+    minRounds: 3,
+    maxRounds: 3,
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.needReauth, true);
+  assert.equal(result.stopReason, "send-failed");
+  assert.equal(result.totalRounds, 0);
+  assert.equal(page._state.sends, 0);
+  assert.match(result.reason, /重新登录/);
+});
+
+test("多轮中途出现未登录弹窗时保留已完成轮次并标记重登", async () => {
+  const replies = Array.from({ length: 5 }, (_, index) =>
+    withNext(`第 ${index + 1} 轮。`, `追问 ${index + 1}？`)
+  );
+  const page = createFakePage(replies, { loggedOutAfterRound: 3 });
+
+  const result = await runAgent(page, selectors, {
+    topic: "中途掉线",
+    minRounds: 5,
+    maxRounds: 5,
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.needReauth, true);
+  assert.equal(result.stopReason, "send-failed");
+  assert.equal(result.totalRounds, 3);
+  assert.equal(page._state.sends, 3, "登录弹窗出现后不能再发第四条游客消息");
+  assert.match(result.reason, /第 4 轮发送失败.*重新登录/);
 });
 
 test("第一轮就发送失败时整次运行判为失败", async () => {

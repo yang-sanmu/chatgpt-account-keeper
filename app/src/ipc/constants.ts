@@ -1,0 +1,75 @@
+// IPC 常量定义与友好提示映射
+// 稳定错误码是跨端诊断的关键标识，必须原样透出并提供明确指引
+
+export const ERROR_CODES = [
+  "VALIDATION_FAILED",
+  "NOT_FOUND",
+  "RESOURCE_BUSY",
+  "PROFILE_IN_USE",
+  "PROXY_UNAVAILABLE",
+  "ALREADY_OPEN",
+  "LOGIN_FORCE_CONFLICT",
+  "CHROME_NOT_FOUND",
+  "AGENT_DRAINING",
+  "PROTOCOL_MISMATCH",
+  "FRAME_TOO_LARGE",
+  "INTERNAL",
+  "AGENT_NOT_CONNECTED",
+  "AGENT_TIMEOUT",
+  "MIGRATION_FAILED",
+  "MIGRATION_TIMEOUT",
+  "MIGRATION_PROBE_UNAVAILABLE",
+  "MIGRATION_PROBE_INVALID_OUTPUT",
+] as const;
+
+export const ERROR_MESSAGES: Record<string, string> = {
+  VALIDATION_FAILED: "请求参数校验未通过",
+  NOT_FOUND: "未找到指定资源",
+  RESOURCE_BUSY: "资源当前正忙，请稍候重试",
+  PROFILE_IN_USE: "Chrome Profile 正在使用中",
+  PROXY_UNAVAILABLE: "代理节点不可用或网络异常",
+  ALREADY_OPEN: "网页或会话已在运行中",
+  LOGIN_FORCE_CONFLICT: "登录状态冲突，请使用强制重登",
+  CHROME_NOT_FOUND: "未检测到本机 Google Chrome 浏览器",
+  AGENT_DRAINING: "后台服务正在排空准备更新，暂时拒绝写入",
+  PROTOCOL_MISMATCH: "IPC 协议版本不匹配",
+  FRAME_TOO_LARGE: "传输数据超出上限",
+  INTERNAL: "内部服务异常",
+  AGENT_NOT_CONNECTED: "尚未连接 Agent",
+  AGENT_TIMEOUT: "请求 Agent 超时",
+  MIGRATION_FAILED: "旧项目迁移失败，旧目录未被修改",
+  MIGRATION_TIMEOUT: "旧项目迁移超时",
+  MIGRATION_PROBE_UNAVAILABLE: "找不到迁移预检工具",
+  MIGRATION_PROBE_INVALID_OUTPUT: "迁移预检工具输出异常",
+};
+
+export const EVENT_NAMES = [
+  "account.changed",
+  "account.removed",
+  "accountStatus.changed",
+  "openPage.changed",
+  "operation.changed",
+  "group.changed",
+  "proxyState.changed",
+  "proxyNode.tested",
+  "profile.changed",
+  "conversation.changed",
+  "scheduler.changed",
+  "scheduler.accountChanged",
+  "history.appended",
+  "settings.changed",
+  "agent.draining",
+  "agent.readyForUpdate",
+  "queue.changed",
+  "browserRun.changed",
+] as const;
+
+export const TAURI_EVENTS = {
+  BOOTSTRAP: "keeper://bootstrap",
+  AGENT_EVENT: "keeper://agent-event",
+  CONNECTION: "keeper://connection",
+  MIGRATION: "keeper://migration",
+  UPDATE: "keeper://update",
+  TRAY_ACTION: "keeper://tray-action",
+  CLOSE_REQUESTED: "keeper://close-requested",
+} as const;

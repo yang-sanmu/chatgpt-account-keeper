@@ -20,6 +20,25 @@ Release packages include machine-readable SBOM files and preserve the license fi
 | HarfBuzzSharp | 8.3.1.3 | MIT | https://github.com/mono/SkiaSharp/tree/v3.119.4 |
 | ANGLE Windows native assets | 2.1.27548.20260419 | BSD-3-Clause | https://github.com/AvaloniaUI/ANGLE |
 
+The management client is being migrated from Avalonia to Rust + Tauri
+(`docs/TAURI_MIGRATION_PLAN.md`). The Tauri client is not yet released; the
+components below ship with it once it is. They are listed here so the notice file
+cannot silently fall behind the migration.
+
+| Component (Tauri client) | Version | License | Source |
+| --- | --- | --- | --- |
+| Tauri | 2.11 | Apache-2.0 or MIT | https://github.com/tauri-apps/tauri |
+| wry | 0.55 | Apache-2.0 or MIT | https://github.com/tauri-apps/wry |
+| tao | 0.35 | Apache-2.0 | https://github.com/tauri-apps/tao |
+| React | 19.2 | MIT | https://github.com/facebook/react |
+| Rust standard library and crates | see `app/src-tauri/Cargo.lock` | Apache-2.0 or MIT | https://crates.io |
+
+The Tauri client renders through the platform WebView rather than bundling a
+browser engine: Microsoft Edge WebView2 on Windows (a Microsoft-distributed OS
+component), WKWebView on macOS, and WebKitGTK 4.1 on Linux (supplied by the
+distribution, declared as a package dependency). None of these is redistributed
+by this project.
+
 The production Agent also includes the npm dependencies recorded in `package-lock.json`. Their declared licenses are MIT, ISC, BSD-3-Clause, or Apache-2.0. The installed `agent/node_modules` tree retains license and notice files supplied by those packages.
 
 The exact mihomo GPL text and Node.js license bundle are installed under `licenses/`. Releases also attach the corresponding mihomo source archive. See `SOURCE.md` for source locations and build instructions.

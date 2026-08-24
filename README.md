@@ -1,16 +1,22 @@
 # ChatGPT Account Keeper
 
-ChatGPT 多账号的原生桌面管理与后台自动对话工具。每个账号使用独立的 Google Chrome Profile；管理界面是 Avalonia 原生窗口，不打开浏览器、不使用 WebView，也不监听 `localhost:5173`。
+ChatGPT 多账号的桌面管理与后台自动对话工具。每个账号使用独立的 Google Chrome Profile；管理端不监听任何端口，也不加载任何远端内容。
 
-> Windows、Linux x64、macOS Apple Silicon/Intel 均有独立 NativeAOT 发布门禁。仓库仍保留旧 Express 管理页作为过渡兼容入口；正式安装包只包含 NativeAOT Desktop、私有 Node Agent 和本地 IPC，不会包含旧管理页。
+> Windows、Linux x64、macOS Apple Silicon/Intel 均有独立发布门禁。仓库仍保留旧 Express 管理页作为过渡兼容入口；正式安装包只包含管理端、私有 Node Agent 和本地 IPC，不会包含旧管理页。
 
-## 新架构
+## 架构
+
+管理端正在从 Avalonia 迁移到 Rust + Tauri（见 [迁移计划](docs/TAURI_MIGRATION_PLAN.md)）。
+两个客户端目前并存：`desktop/` 是当前可发布的 Avalonia 客户端，`app/` 是新的 Tauri
+客户端，可用之前不发布。Agent 与 IPC v1 契约对两者完全相同。
 
 ```text
-GptAccountKeeper.Desktop
-Avalonia 12 · .NET 10 NativeAOT · 托盘 · VeloPack
+管理端
+desktop/  Avalonia 12 · .NET 10 NativeAOT · VeloPack   ← 当前发布
+app/      Tauri 2 · Rust · React                       ← 迁移目标
                     │
         Named Pipe / Unix Domain Socket
+        IPC v1 · 协议 1.3 · 50 方法 / 18 事件
                     │
 Keeper.Agent
 私有 Node 24 · playwright-core · SQLite · 调度 · mihomo
@@ -18,12 +24,17 @@ Keeper.Agent
            本机 Google Chrome
 ```
 
-- 管理端：跨平台 Avalonia 原生窗口，编译绑定与 System.Text.Json 源生成，四个发行 RID 均使用 NativeAOT。
+- 管理端：托盘常驻，八个功能页。Avalonia 版是原生控件；Tauri 版把前端资源编进二进制，
+  经自定义协议加载——**不监听任何端口，CSP 不允许任何远端源，且永不访问 chatgpt.com**。
+  访问 ChatGPT 是真实 Chrome 的职责，管理界面不参与。
 - 后台端：独立的每用户 Agent；管理窗口隐藏到托盘后，自动对话、巡检和调度继续运行。
 - 本地通信：Windows Named Pipe；macOS/Linux Unix Domain Socket。帧为 4 字节小端长度加 UTF-8 JSON，最大 8 MiB。
 - 持久化：SQLite（WAL、外键、幂等命令回执）和平台用户数据目录；安装与更新不触碰 Profile/数据库。
 - 浏览器：只使用本机真实 Google Chrome。未安装时返回稳定错误 `CHROME_NOT_FOUND`，不下载或回退 Chromium。
-- 更新：VeloPack 从公开 GitHub Releases 检查；默认只提醒，安装前调用 Agent drain、SQLite checkpoint 和备份。
+- 更新：Avalonia 版用 VeloPack，Tauri 版用 Tauri updater；两者都从公开 GitHub Releases
+  检查，默认只提醒，安装前调用 Agent drain 和 SQLite checkpoint。Linux 上只有 AppImage
+  参与应用内更新，deb/rpm 由发行版包管理器升级（它们的安装路径会要求 root 授权，不适合
+  由后台更新器发起）。
 
 ## 当前可用功能
 
@@ -31,18 +42,20 @@ Keeper.Agent
 - 用对应账号 Profile 打开/关闭真实 Google Chrome。
 - 自动调度启停、持久化与重启恢复；错过任务每账号最多补跑一次并增加抖动。
 - 独立 Profile、账号锁、WAF/unknown 状态保护、Headless Chrome 身份覆盖。
-- 原生侧栏对应八个独立页面：总览、账号、任务、分组与代理、会话、Profile、历史和设置。
+- 侧栏对应八个独立页面：总览、账号、任务、分组与代理、会话、Profile、历史和设置。
 - 账号搜索/筛选/编辑/删除，分组与代理管理，会话集编辑，Profile 扫描/清理/归档/永久删除，已删除账号历史和 Agent 设置均已接入 IPC v1。
 - 旧 JSON/JSONL/Profile 到 SQLite 的原生预览、空间/运行锁检查、进度显示和校验式复制迁移；失败不修改旧数据。
 - Agent 自行写入用户状态目录的脱敏诊断日志，不依赖 Desktop 输出管道；桌面断线会自动重连并在事件缺口后重新获取完整快照。
 
-## 开发与 NativeAOT 构建
+## 开发与构建
 
 要求：
 
 - Node.js `24.11.1`（见 `.node-version`）
-- .NET SDK 10（见 `desktop/global.json`）
 - 本机 Google Chrome
+- Avalonia 客户端：.NET SDK 10（见 `desktop/global.json`）
+- Tauri 客户端：Rust 稳定版 + 平台 WebView 依赖
+  （Windows 需 MSVC C++ 生成工具与 WebView2；Linux 需 `libwebkit2gtk-4.1-dev`）
 
 安装依赖并测试：
 
@@ -51,6 +64,23 @@ $env:PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = '1'
 npm ci --ignore-scripts
 npm test
 dotnet build desktop/GptAccountKeeper.Desktop.sln -c Release
+```
+
+Tauri 客户端（`app/`）：
+
+```powershell
+cd app
+npm ci
+npm run typecheck; npm run test; npm run build
+cd src-tauri
+cargo fmt -- --check; cargo clippy --all-targets -- -D warnings; cargo test
+```
+
+两个迁移门禁 spike（只在 Windows 上有意义）：
+
+```powershell
+cargo run --example containment_spike   # 关闭 job 句柄必须回收整棵进程树
+cargo run --example agent_handshake     # 用真 Agent 跑通 hello / bootstrap / accounts.list
 ```
 
 发布 NativeAOT（将 RID 换成 `linux-x64`、`osx-arm64` 或 `osx-x64` 可在对应原生宿主构建）：
@@ -149,7 +179,10 @@ Copyright © 2026 yang-sanmu。项目代码以 [GNU Affero General Public Licens
 - [隐私政策](PRIVACY.md)
 - [对应源码与构建信息](SOURCE.md)
 
-这些说明随安装包复制到 `licenses/`，也可在应用内"设置 → 关于与许可"打开。AGPL 不会把第三方组件改成 AGPL；Node.js、mihomo、Playwright、Avalonia 等仍各自遵循上游许可证。
+这些说明随安装包复制到 `licenses/`，也可在应用内"设置 → 关于与许可"打开。AGPL 不会把第三方组件改成 AGPL；Node.js、mihomo、Playwright、Avalonia、Tauri、wry、React 等仍各自遵循上游许可证。
+
+Tauri 客户端把前端资源编进二进制并经自定义协议加载，不启动 HTTP 服务器，因此不构成
+AGPL 第 13 条所指的"通过网络提供功能"。
 
 本项目是非官方个人项目，与 OpenAI、Google 或其他服务提供方无隶属、赞助或背书关系。ChatGPT、OpenAI 和 Google Chrome 等名称仅用于说明兼容对象。
 

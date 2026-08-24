@@ -20,7 +20,11 @@ SQLite / 调度 / Profile / mihomo
 
 固定决策：
 
-- 管理端使用 Avalonia 原生桌面窗口，不包含 HTML、WebView 或浏览器壳。
+- ~~管理端使用 Avalonia 原生桌面窗口，不包含 HTML、WebView 或浏览器壳。~~
+  **已被 Tauri 迁移反转，见 [docs/TAURI_MIGRATION_PLAN.md](TAURI_MIGRATION_PLAN.md)。**
+  替换成三条等价且可验收的约束：发布包不监听任何端口、CSP 不允许任何远端源、管理界面
+  永不访问 chatgpt.com。禁 WebView 本身不是目的，"管理界面不能变成第二个浏览器去碰
+  目标站点"才是。
 - Desktop 自包含发布，无需用户安装 .NET。[Avalonia NativeAOT 官方说明](https://docs.avaloniaui.net/docs/deployment/native-aot)
   - **支持的 Release RID 必须通过真实 NativeAOT publish；功能/交互验收与 AOT 门禁分别计分。**
     日常 F5 和 UI 迭代可以使用普通 Debug 构建，但不能把非 AOT 的 Release 伪装成完成品。
@@ -415,7 +419,8 @@ Operation 的两条硬要求（第一版只定义了结构、没规定谁上报�
 最终验收标准：
 
 - 干净机器只下载一个 Release 安装包即可运行，无需 Git、Node、npm、.NET 或 Playwright 浏览器下载。
-- 管理面板是原生桌面程序，不打开浏览器、不使用 WebView、不监听5173或其他管理 TCP 端口。
+- 管理面板是桌面程序，不监听 5173 或其他管理 TCP 端口，不加载任何远端内容，也不自己去
+  访问 chatgpt.com。（Tauri 迁移后 WebView 本身不再被禁，见上方固定决策段的说明。）
 - 隐藏到托盘后自动对话、巡检、代理和调度继续执行。
 - “打开网页”始终使用对应账号 Profile 的系统 Google Chrome。
 - 首次迁移可验证、可重试、旧数据不被修改，现有账号/Profile/历史不丢失。

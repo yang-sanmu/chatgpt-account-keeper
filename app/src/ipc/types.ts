@@ -89,16 +89,37 @@ export interface GroupPatch {
   locale?: string | null;
 }
 
+/// 代理节点。字段名与 `src/proxyManager.js` 的 `getNodes()` 一致。
+///
+/// 注意测速结果有**两种形状**：这里是 `proxies.getState` 返回的
+/// `latencyMs / latencyOk / latencyMessage / latencyTestedAt`，而 `proxyNode.tested`
+/// 事件的 payload 是 `{ id, ok, delay, message, testedAt }`（来自 rememberLatency）。
+/// 两者必须显式转换，直接读事件里的 `latencyMs` 会永远拿到 undefined。
 export interface ProxyNode {
   id: string;
   name: string;
-  server: string;
-  port: number;
-  type: string;
+  /// 订阅里缺字段时为 null，界面要能显示「—」而不是 "null:null"。
+  server: string | null;
+  port: number | null;
+  type: string | null;
   enabled: boolean;
-  latencyMs?: number | null;
-  lastTestedAt?: string | null;
-  error?: string | null;
+  /// 订阅刷新后节点消失。仍留在列表里，但不能被分组引用。
+  missing: boolean;
+  latencyMs: number | null;
+  latencyOk: boolean | null;
+  latencyMessage: string | null;
+  latencyTestedAt: string | null;
+  /// 只有被分组实际引用且启用的节点才有边车监听端口；测速走独立临时进程。
+  localPort: number | null;
+}
+
+/// `proxyNode.tested` 事件的 payload。与上面的节点字段名不同，见 ProxyNode 的说明。
+export interface ProxyNodeTestedPayload {
+  id: string;
+  ok?: boolean;
+  delay?: number | null;
+  message?: string | null;
+  testedAt?: string;
 }
 
 export interface ProxySubscription {

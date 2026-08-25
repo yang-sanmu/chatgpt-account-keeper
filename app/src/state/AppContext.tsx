@@ -69,7 +69,7 @@ interface UpdateModalState {
   installing: boolean;
 }
 
-interface AppContextValue {
+export interface AppContextValue {
   startupInfo: StartupInfo | null;
   isInitializing: boolean;
   connection: ConnectionSnapshot;
@@ -172,6 +172,33 @@ export type AccountActions = Pick<
 >;
 
 const AccountActionsContext = createContext<AccountActions | null>(null);
+
+interface BulkFailure {
+  id: string;
+  error: unknown;
+}
+
+/// 批量操作的结果汇报。
+///
+/// 全成功才报 success。部分失败必须报 error 并给出失败数与第一个稳定错误码——原来四个
+/// 批量操作都在 `catch {}` 之后无条件报 success，用户看到「已提交 2 个账号」却不知道
+/// 另外 2 个失败了，只会疑惑为什么剩下的账号没动。
+function reportBulkOutcome(action: string, total: number, failures: BulkFailure[]): void {
+  const succeeded = total - failures.length;
+  if (failures.length === 0) {
+    toast.success(`${action}完成（${succeeded}/${total}）`);
+    return;
+  }
+  const first = failures[0];
+  const code =
+    typeof first?.error === "object" && first.error !== null
+      ? (first.error as { code?: string }).code
+      : undefined;
+  toast.error(
+    `${action}部分失败：成功 ${succeeded} 个，失败 ${failures.length} 个` +
+      (code ? `（首个错误 ${code}）` : "")
+  );
+}
 
 export function useAccountActions(): AccountActions {
   const context = useContext(AccountActionsContext);
@@ -420,22 +447,37 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         break;
       }
       case "proxyNode.tested": {
-        // 将测试延迟直接回填到该节点的行内
-        const nodeId = String(p.nodeId || p.id || "");
-        const latencyMs = typeof p.latencyMs === "number" ? p.latencyMs : null;
-        const error = typeof p.error === "string" ? p.error : null;
-        const lastTestedAt = typeof p.testedAt === "string" ? p.testedAt : new Date().toISOString();
+        // 测速结果回填到那一行，不能只进任务中心。
+        //
+        // 事件 payload 与节点字段名**不同**：Agent 发的是 `{ id, ok, delay, message,
+        // testedAt }`（见 src/proxyManager.js 的 rememberLatency），而节点上是
+        // `latencyMs / latencyOk / latencyMessage / latencyTestedAt`。原来这里直接读
+        // `p.latencyMs`，永远是 undefined，于是延迟从来没出现在行上。
+        const nodeId = String(p.id ?? "");
+        if (!nodeId) break;
 
-        if (nodeId) {
-          setProxies((prev) => ({
-            ...prev,
-            nodes: prev.nodes.map((node) =>
-              node.id === nodeId
-                ? { ...node, latencyMs, error, lastTestedAt }
-                : node
-            ),
-          }));
-        }
+        const ok = typeof p.ok === "boolean" ? p.ok : null;
+        const latencyMs = typeof p.delay === "number" ? p.delay : null;
+        const latencyMessage = typeof p.message === "string" ? p.message : null;
+        const latencyTestedAt =
+          typeof p.testedAt === "string" ? p.testedAt : new Date().toISOString();
+
+        setProxies((prev) => ({
+          ...prev,
+          // 未知节点不新增行：订阅刷新后 Agent 可能测到一个我们还没拉到的节点，
+          // 凭一条测速事件凭空造一行会缺 server/port 等全部字段。
+          nodes: prev.nodes.map((node) =>
+            node.id === nodeId
+              ? {
+                  ...node,
+                  latencyMs,
+                  latencyOk: ok,
+                  latencyMessage,
+                  latencyTestedAt,
+                }
+              : node
+          ),
+        }));
         break;
       }
       case "conversation.changed": {
@@ -767,60 +809,74 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // 批量操作
   const bulkEnable = useCallback(
     async (ids: string[], enabled: boolean) => {
-      let succeeded = 0;
+      const failures: BulkFailure[] = [];
       for (const id of ids) {
         try {
           const cid = await newCommandId();
-          await agentCall("accounts.update", { id, patch: { enabled } }, cid);
-          setAccountsState((prev) =>
-            handleSingleAccountStatusChanged(prev, { id })
+          const updated = await agentCall<Account>(
+            "accounts.update",
+            { id, patch: { enabled } },
+            cid
           );
-          succeeded++;
-        } catch {
-          // 批量操作容忍单项失败并汇总
+          // 必须用 handleSingleAccountChanged 而不是 handleSingleAccountStatusChanged：
+          // 后者只处理巡检状态字段，完全不碰 enabled，于是界面上的开关不会动，用户会
+          // 以为没生效再点一次。
+          if (updated) {
+            const account = normalizeAccount(updated);
+            setAccountsState((prev) => handleSingleAccountChanged(prev, account));
+          }
+        } catch (error) {
+          failures.push({ id, error });
         }
       }
-      toast.success(`批量${enabled ? "启用" : "停用"}完成 (${succeeded}/${ids.length})`);
+      reportBulkOutcome(enabled ? "批量启用" : "批量停用", ids.length, failures);
     },
     []
   );
 
   const bulkRefreshStatus = useCallback(async (ids: string[]) => {
-    let count = 0;
+    const failures: BulkFailure[] = [];
     for (const id of ids) {
       try {
         const cid = await newCommandId();
         await agentCall("accounts.refreshStatus", { id }, cid);
-        count++;
-      } catch {}
+      } catch (error) {
+        failures.push({ id, error });
+      }
     }
-    toast.success(`已提交 ${count} 个账号的状态刷新任务`);
+    reportBulkOutcome("批量刷新状态", ids.length, failures);
   }, []);
 
+  // 串行，且必须保持串行：每个 runNow 会拉起一个真实 Chrome，并发提交 28 个账号
+  // 等于同时开 28 个浏览器。
   const bulkRunNow = useCallback(async (ids: string[]) => {
-    let count = 0;
+    const failures: BulkFailure[] = [];
     for (const id of ids) {
       try {
         const cid = await newCommandId();
         await agentCall("accounts.runNow", { id }, cid);
-        count++;
-      } catch {}
+      } catch (error) {
+        failures.push({ id, error });
+      }
     }
-    toast.success(`已提交 ${count} 个账号的运行任务`);
+    reportBulkOutcome("批量立即运行", ids.length, failures);
   }, []);
 
   const bulkDelete = useCallback(
     async (ids: string[], profileAction: "detach" | "archive" | "purge") => {
-      let count = 0;
+      const failures: BulkFailure[] = [];
       for (const id of ids) {
         try {
           const cid = await newCommandId();
           await agentCall("accounts.remove", { id, profileAction }, cid);
           setAccountsState((prev) => handleSingleAccountRemoved(prev, id));
-          count++;
-        } catch {}
+        } catch (error) {
+          // 删除失败的账号必须留在列表里。乐观移除会让用户以为删掉了，
+          // 下次刷新它又出现。
+          failures.push({ id, error });
+        }
       }
-      toast.success(`批量删除完成，共移除 ${count} 个账号`);
+      reportBulkOutcome("批量删除", ids.length, failures);
     },
     []
   );

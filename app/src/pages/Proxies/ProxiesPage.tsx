@@ -352,7 +352,10 @@ export const ProxiesPage: React.FC = () => {
                     // 延迟颜色分级：<200ms 绿色，<500ms 黄色，>500ms 橙色，错误/超时 红色
                     let latencyColor = "var(--text-muted)";
                     let latencyBg = "var(--bg-input)";
-                    if (node.error) {
+                    // latencyOk === false 表示测过且失败；null 表示还没测过。两者要分开，
+                    // 否则「没测过」会被涂成红色。
+                    const testFailed = node.latencyOk === false;
+                    if (testFailed) {
                       latencyColor = "var(--color-danger)";
                       latencyBg = "var(--color-danger-bg)";
                     } else if (typeof node.latencyMs === "number") {
@@ -381,17 +384,18 @@ export const ProxiesPage: React.FC = () => {
                         <td style={{ padding: "8px 10px", fontWeight: 600, color: "var(--text-primary)" }}>
                           {node.name}
                         </td>
-                        {/* 规范硬性要求：显示 server:port */}
+                        {/* 规范硬性要求：显示 server:port。订阅缺字段时显示 —，
+                            不能渲染成 "null:null"。 */}
                         <td style={{ padding: "8px 10px" }} className="code-badge">
-                          {node.server}:{node.port}
+                          {node.server ? `${node.server}:${node.port ?? "?"}` : "—"}
                         </td>
                         <td style={{ padding: "8px 10px", color: "var(--text-secondary)" }}>
-                          {node.type.toUpperCase()}
+                          {node.type?.toUpperCase() ?? "—"}
                         </td>
                         <td style={{ padding: "8px 10px" }}>
                           {isTesting ? (
                             <span style={{ color: "var(--color-primary)" }}>测速中...</span>
-                          ) : node.error ? (
+                          ) : testFailed ? (
                             <span
                               style={{
                                 color: "var(--color-danger)",
@@ -401,7 +405,7 @@ export const ProxiesPage: React.FC = () => {
                                 fontSize: "11px",
                               }}
                             >
-                              {node.error}
+                              {node.latencyMessage ?? "测速失败"}
                             </span>
                           ) : typeof node.latencyMs === "number" ? (
                             <span

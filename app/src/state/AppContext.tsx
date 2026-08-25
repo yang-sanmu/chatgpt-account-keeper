@@ -1,7 +1,7 @@
 // 全局应用状态上下文
 // 汇聚 IPC 事件流、全量快照同步、账号草稿合并与跨页面协同
 
-import React, { createContext, useContext, useEffect, useState, useCallback, useTransition, useMemo } from "react";
+import React, { createContext, useContext, useEffect, useState, useCallback, useTransition, useMemo, useRef } from "react";
 import type {
   Account,
   AccountPatch,
@@ -15,7 +15,9 @@ import type {
   ExitProgress,
   Group,
   HistoryAccount,
+  IpcParams,
   Operation,
+  OperationMethod,
   ProfileInfo,
   ProfileScanResult,
   ProxyState,
@@ -138,7 +140,16 @@ export interface AppContextValue {
 
   activeTab: string;
   setActiveTab: (tab: string) => void;
+
+  runOperation: <M extends OperationMethod>(
+    method: M,
+    params: IpcParams<M>
+  ) => Promise<Operation>;
 }
+
+const TERMINAL_OPERATION_STATES = new Set(["succeeded", "failed", "timed_out", "cancelled"]);
+const PENDING_OPERATION_STATES = new Set(["queued", "running", "waiting_user"]);
+const MAX_EARLY_TERMINAL_OPERATIONS = 200;
 
 const defaultDesktopSettings: DesktopSettings = {
   theme: "dark",
@@ -150,7 +161,16 @@ const defaultDesktopSettings: DesktopSettings = {
 
 const defaultProxyState: ProxyState = {
   nodes: [],
-  status: { running: false },
+  status: {
+    running: false,
+    basePort: 7890,
+    basePortShifted: false,
+    nodeCount: 0,
+    routedNodeCount: 0,
+    subscription: null,
+    clashVergeDir: null,
+    mihomo: { path: null, found: false },
+  },
   subscription: null,
   runtime: null,
 };
@@ -183,67 +203,81 @@ const AccountActionsContext = createContext<AccountActions | null>(null);
 
 /// 把 profile-scan 的操作结果窄化成 ProfileScanResult。
 ///
-/// 字段名以 src/profileManager.js 的 scan() 为准：`bytes` / `cacheBytes` / `linked`，
-/// 不是 `sizeBytes` / `cacheSizeBytes` / `isOrphan`。
+/// 严格根据 contracts/ipc-v1.schema.json 与 generated.ts 验证字段类型。
+/// 任何缺失或类型错误直接返回 null，成功时保留 Agent 原值，不合成、不默认、不支持旧别名。
+function isValidProfileInfo(value: unknown): value is ProfileInfo {
+  if (typeof value !== "object" || value === null) return false;
+  const entry = value as Record<string, unknown>;
+  return (
+    typeof entry.name === "string" &&
+    entry.name.length > 0 &&
+    typeof entry.linked === "boolean" &&
+    Array.isArray(entry.accountIds) &&
+    entry.accountIds.every((id) => typeof id === "string") &&
+    Array.isArray(entry.accountLabels) &&
+    entry.accountLabels.every((label) => typeof label === "string") &&
+    typeof entry.nonStandardReference === "boolean" &&
+    typeof entry.busy === "boolean" &&
+    Number.isInteger(entry.bytes) &&
+    (entry.bytes as number) >= 0 &&
+    Number.isInteger(entry.files) &&
+    (entry.files as number) >= 0 &&
+    Number.isInteger(entry.cacheBytes) &&
+    (entry.cacheBytes as number) >= 0 &&
+    Number.isInteger(entry.cacheFiles) &&
+    (entry.cacheFiles as number) >= 0
+  );
+}
+
 function normalizeProfileScan(raw: unknown): ProfileScanResult | null {
   if (typeof raw !== "object" || raw === null) return null;
   const source = raw as Record<string, unknown>;
-  if (!Array.isArray(source.profiles)) return null;
+  if (!Array.isArray(source.profiles) || !Array.isArray(source.orphans)) return null;
 
-  const narrowProfile = (value: unknown): ProfileInfo | null => {
-    if (typeof value !== "object" || value === null) return null;
-    const entry = value as Record<string, unknown>;
-    const name = typeof entry.name === "string" ? entry.name : null;
-    if (!name) return null;
-    const numeric = (key: string): number =>
-      typeof entry[key] === "number" && Number.isFinite(entry[key]) ? (entry[key] as number) : 0;
-    const strings = (key: string): string[] =>
-      Array.isArray(entry[key])
-        ? (entry[key] as unknown[]).filter((item): item is string => typeof item === "string")
-        : [];
-    return {
-      name,
-      linked: entry.linked === true,
-      accountIds: strings("accountIds"),
-      accountLabels: strings("accountLabels"),
-      nonStandardReference: entry.nonStandardReference === true,
-      busy: entry.busy === true,
-      bytes: numeric("bytes"),
-      files: numeric("files"),
-      cacheBytes: numeric("cacheBytes"),
-      cacheFiles: numeric("cacheFiles"),
-    };
-  };
+  for (const profile of source.profiles) {
+    if (!isValidProfileInfo(profile)) return null;
+  }
+  for (const orphan of source.orphans) {
+    if (!isValidProfileInfo(orphan)) return null;
+  }
 
-  const profiles = source.profiles
-    .map(narrowProfile)
-    .filter((profile): profile is ProfileInfo => profile !== null);
-  const totalsSource =
-    typeof source.totals === "object" && source.totals !== null
-      ? (source.totals as Record<string, unknown>)
-      : {};
-  const total = (key: string, fallback: number): number =>
-    typeof totalsSource[key] === "number" && Number.isFinite(totalsSource[key])
-      ? (totalsSource[key] as number)
-      : fallback;
-  const orphans = profiles.filter((profile) => !profile.linked);
-  const sum = (items: ProfileInfo[], field: "bytes" | "cacheBytes"): number =>
-    items.reduce((accumulated, item) => accumulated + item[field], 0);
+  if (typeof source.totals !== "object" || source.totals === null) return null;
+  const t = source.totals as Record<string, unknown>;
+
+  const totalKeys = [
+    "profiles",
+    "linked",
+    "orphans",
+    "bytes",
+    "cacheBytes",
+    "orphanBytes",
+    "archiveCount",
+    "archiveBytes",
+    "trashCount",
+    "trashBytes",
+  ] as const;
+
+  for (const key of totalKeys) {
+    const val = t[key];
+    if (!Number.isInteger(val) || (val as number) < 0) {
+      return null;
+    }
+  }
 
   return {
-    profiles,
-    orphans,
+    profiles: source.profiles as ProfileInfo[],
+    orphans: source.orphans as ProfileInfo[],
     totals: {
-      profiles: total("profiles", profiles.length),
-      linked: total("linked", profiles.length - orphans.length),
-      orphans: total("orphans", orphans.length),
-      bytes: total("bytes", sum(profiles, "bytes")),
-      cacheBytes: total("cacheBytes", sum(profiles, "cacheBytes")),
-      orphanBytes: total("orphanBytes", sum(orphans, "bytes")),
-      archiveCount: total("archiveCount", 0),
-      archiveBytes: total("archiveBytes", 0),
-      trashCount: total("trashCount", 0),
-      trashBytes: total("trashBytes", 0),
+      profiles: t.profiles as number,
+      linked: t.linked as number,
+      orphans: t.orphans as number,
+      bytes: t.bytes as number,
+      cacheBytes: t.cacheBytes as number,
+      orphanBytes: t.orphanBytes as number,
+      archiveCount: t.archiveCount as number,
+      archiveBytes: t.archiveBytes as number,
+      trashCount: t.trashCount as number,
+      trashBytes: t.trashBytes as number,
     },
   };
 }
@@ -281,6 +315,54 @@ export function useAccountActions(): AccountActions {
     throw new Error("useAccountActions must be used within an AppProvider");
   }
   return context;
+}
+
+function normalizeScheduler(raw: unknown): SchedulerState {
+  if (!raw || typeof raw !== "object") {
+    return defaultSchedulerState;
+  }
+  const r = raw as Record<string, unknown>;
+  const running = Boolean(r.running);
+  const enabled = Boolean(r.enabled);
+  const accounts: Record<string, import("../ipc/types").SchedulerAccountState> = {};
+  const rawAccounts = (typeof r.accounts === "object" && r.accounts !== null ? r.accounts : {}) as Record<
+    string,
+    { nextAt?: string | null; lastAt?: string | null; busy?: boolean }
+  >;
+  const rawLastResults = (typeof r.lastResults === "object" && r.lastResults !== null ? r.lastResults : {}) as Record<
+    string,
+    { ok?: boolean | null; reason?: string | null; time?: string }
+  >;
+
+  for (const [id, acc] of Object.entries(rawAccounts)) {
+    if (!acc || typeof acc !== "object") continue;
+    const lastResult = rawLastResults[id];
+    accounts[id] = {
+      nextRunAt: typeof acc.nextAt === "string" || acc.nextAt === null ? acc.nextAt : undefined,
+      lastRunAt: typeof acc.lastAt === "string" || acc.lastAt === null ? acc.lastAt : undefined,
+      lastRunOk:
+        lastResult && typeof lastResult.ok === "boolean"
+          ? lastResult.ok
+          : lastResult && lastResult.ok === null
+          ? null
+          : undefined,
+      reason:
+        lastResult && typeof lastResult.reason === "string"
+          ? lastResult.reason
+          : lastResult && lastResult.reason === null
+          ? null
+          : undefined,
+      busy: Boolean(acc.busy),
+    };
+  }
+
+  return {
+    running,
+    enabled,
+    accounts,
+    lastResults: rawLastResults,
+    message: typeof r.message === "string" ? r.message : undefined,
+  };
 }
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -322,6 +404,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     installing: false,
   });
 
+  const latestOperationsRef = useRef<Map<string, Operation>>(new Map());
+  const operationWaitersRef = useRef<
+    Map<string, { resolve: (op: Operation) => void; reject: (err: unknown) => void }>
+  >(new Map());
+
   const [, startTransition] = useTransition();
 
   // 应用主题样式属性
@@ -354,7 +441,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (snapshot.groups) setGroups(snapshot.groups);
       if (snapshot.proxies) setProxies(snapshot.proxies);
       if (snapshot.conversations) setConversations(snapshot.conversations);
-      if (snapshot.scheduler) setScheduler(snapshot.scheduler);
+      if (snapshot.scheduler) setScheduler(normalizeScheduler(snapshot.scheduler));
       if (snapshot.settings) setAgentSettings(snapshot.settings);
       if (snapshot.operations) setOperations(snapshot.operations);
       if (snapshot.activeOperations) setActiveOperations(snapshot.activeOperations);
@@ -486,16 +573,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // 监听 18 种业务事件
   const handleAgentEvent = useCallback((envelope: AgentEventEnvelope) => {
-    const { name, payload } = envelope;
-    const p = (payload || {}) as Record<string, unknown>;
-
-    switch (name) {
+    switch (envelope.name) {
       case "account.changed": {
-        const updated = normalizeAccount(payload);
+        const updated = normalizeAccount(envelope.payload);
         setAccountsState((prev) => handleSingleAccountChanged(prev, updated));
         break;
       }
       case "account.removed": {
+        const p = (envelope.payload || {}) as Record<string, unknown>;
         const id = String(p.id || p.accountId || "");
         if (id) {
           setAccountsState((prev) => handleSingleAccountRemoved(prev, id));
@@ -503,6 +588,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         break;
       }
       case "accountStatus.changed": {
+        const p = (envelope.payload || {}) as Record<string, unknown>;
         const id = String(p.id || p.accountId || "");
         if (id) {
           setAccountsState((prev) =>
@@ -528,6 +614,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         break;
       }
       case "openPage.changed": {
+        const p = (envelope.payload || {}) as Record<string, unknown>;
         const id = String(p.id || p.accountId || "");
         const open = Boolean(p.open ?? p.pageOpen);
         if (id) {
@@ -538,24 +625,33 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         break;
       }
       case "group.changed": {
-        if (p.groups && Array.isArray(p.groups)) {
-          setGroups(p.groups as Group[]);
-        } else if (p.group && typeof p.group === "object") {
-          const g = p.group as Group;
+        const p = envelope.payload;
+        const id = p.id;
+        if (!id) break;
+        if ("removed" in p) {
+          setGroups((prev) => prev.filter((item) => item.id !== id));
+        } else {
+          const group: Group = {
+            id: p.id,
+            name: p.name,
+            proxyId: p.proxyId,
+            timezone: p.timezone,
+            locale: p.locale,
+          };
           setGroups((prev) => {
-            const idx = prev.findIndex((item) => item.id === g.id);
+            const idx = prev.findIndex((item) => item.id === id);
             if (idx >= 0) {
               const copy = [...prev];
-              copy[idx] = g;
+              copy[idx] = group;
               return copy;
             }
-            return [...prev, g];
+            return [...prev, group];
           });
         }
         break;
       }
       case "proxyState.changed": {
-        setProxies((prev) => ({ ...prev, ...(payload as ProxyState) }));
+        setProxies((prev) => ({ ...prev, ...(envelope.payload as ProxyState) }));
         break;
       }
       case "proxyNode.tested": {
@@ -563,16 +659,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         //
         // 事件 payload 与节点字段名**不同**：Agent 发的是 `{ id, ok, delay, message,
         // testedAt }`（见 src/proxyManager.js 的 rememberLatency），而节点上是
-        // `latencyMs / latencyOk / latencyMessage / latencyTestedAt`。原来这里直接读
-        // `p.latencyMs`，永远是 undefined，于是延迟从来没出现在行上。
-        const nodeId = String(p.id ?? "");
+        // `latencyMs / latencyOk / latencyMessage / latencyTestedAt`。
+        const p = envelope.payload;
+        const nodeId = p.id;
         if (!nodeId) break;
 
-        const ok = typeof p.ok === "boolean" ? p.ok : null;
-        const latencyMs = typeof p.delay === "number" ? p.delay : null;
-        const latencyMessage = typeof p.message === "string" ? p.message : null;
-        const latencyTestedAt =
-          typeof p.testedAt === "string" ? p.testedAt : new Date().toISOString();
+        const latencyMs = p.ok ? p.delay : null;
+        const latencyMessage = p.ok ? null : p.message;
+        const ok = p.ok;
+        const latencyTestedAt = p.testedAt;
 
         setProxies((prev) => ({
           ...prev,
@@ -592,14 +687,37 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }));
         break;
       }
+      case "profile.changed": {
+        // UI 的终态与 Profile 刷新以 operation.changed 为唯一权威来源，
+        // 避免 profile.changed 与 operation.changed 重复发起 profiles.scan
+        break;
+      }
       case "conversation.changed": {
-        if (p.conversations && typeof p.conversations === "object") {
-          setConversations(p.conversations as Record<string, ConversationSet>);
+        const p = envelope.payload;
+        const name = p.name;
+        if (!name) break;
+        if ("removed" in p) {
+          setConversations((prev) => {
+            if (!(name in prev)) return prev;
+            const next = { ...prev };
+            delete next[name];
+            return next;
+          });
+        } else {
+          const set: ConversationSet = {
+            topic: p.set.topic,
+            minRounds: p.set.minRounds,
+            maxRounds: p.set.maxRounds,
+          };
+          setConversations((prev) => ({
+            ...prev,
+            [name]: set,
+          }));
         }
         break;
       }
       case "scheduler.changed": {
-        const nextScheduler = payload as SchedulerState;
+        const nextScheduler = normalizeScheduler(envelope.payload);
         setScheduler(nextScheduler);
         // 同步系统托盘调度状态
         if (typeof nextScheduler.running === "boolean") {
@@ -608,26 +726,86 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         break;
       }
       case "scheduler.accountChanged": {
-        const id = String(p.accountId || p.id || "");
-        if (id) {
-          setScheduler((prev) => ({
+        const p = envelope.payload;
+        const accountId = p.accountId ? p.accountId.trim() : "";
+        if (!accountId) break;
+
+        const nextAt = p.nextAt;
+        const lastAt = p.lastAt;
+
+        let lastRunOk: boolean | null | undefined = undefined;
+        let lastRunReason: string | null | undefined = undefined;
+
+        if (p.lastResult !== undefined) {
+          if (p.lastResult) {
+            lastRunOk = p.lastResult.ok;
+            lastRunReason = p.lastResult.reason;
+          } else {
+            lastRunOk = null;
+            lastRunReason = null;
+          }
+        }
+
+        // 1. 更新 scheduler.accounts 的现有 UI 投影
+        setScheduler((prev) => {
+          const currentAccount = prev.accounts[accountId] || {};
+          return {
             ...prev,
             accounts: {
               ...prev.accounts,
-              [id]: {
-                ...prev.accounts[id],
-                nextRunAt: typeof p.nextRunAt === "string" ? p.nextRunAt : prev.accounts[id]?.nextRunAt,
-                lastRunAt: typeof p.lastRunAt === "string" ? p.lastRunAt : prev.accounts[id]?.lastRunAt,
-                lastRunOk: typeof p.lastRunOk === "boolean" ? p.lastRunOk : prev.accounts[id]?.lastRunOk,
+              [accountId]: {
+                ...currentAccount,
+                nextRunAt: nextAt !== undefined ? nextAt : currentAccount.nextRunAt,
+                lastRunAt: lastAt !== undefined ? lastAt : currentAccount.lastRunAt,
+                lastRunOk: lastRunOk !== undefined ? lastRunOk : currentAccount.lastRunOk,
+                reason: lastRunReason !== undefined ? lastRunReason : currentAccount.reason,
+                busy: p.busy !== undefined ? p.busy : currentAccount.busy,
               },
             },
-          }));
-        }
+          };
+        });
+
+        // 2. 更新对应账号卡片所读的 nextRunAt、lastRunAt、lastRunOk、lastRunReason
+        setAccountsState((prev) =>
+          handleSingleAccountStatusChanged(prev, {
+            id: accountId,
+            nextRunAt: nextAt,
+            lastRunAt: lastAt,
+            lastRunOk,
+            lastRunReason,
+          })
+        );
         break;
       }
       case "operation.changed": {
-        const op = payload as Operation;
+        const op = envelope.payload;
         if (op && op.id) {
+          if (TERMINAL_OPERATION_STATES.has(op.state)) {
+            const waiter = operationWaitersRef.current.get(op.id);
+            if (waiter) {
+              operationWaitersRef.current.delete(op.id);
+              if (op.state === "succeeded") {
+                waiter.resolve(op);
+              } else {
+                waiter.reject(op.error ?? new Error(op.message || `操作${op.state}`));
+              }
+            } else {
+              // 终态早于 agentCall 响应到达：存入定长 FIFO 缓存（上限 200 条）
+              if (latestOperationsRef.current.size >= MAX_EARLY_TERMINAL_OPERATIONS) {
+                const oldest = latestOperationsRef.current.keys().next().value;
+                if (oldest) latestOperationsRef.current.delete(oldest);
+              }
+              latestOperationsRef.current.set(op.id, op);
+            }
+          } else if (!PENDING_OPERATION_STATES.has(op.state)) {
+            // 非终态且非已知排队/运行态（未知异常状态）：若有 waiter 则立即失败
+            const waiter = operationWaitersRef.current.get(op.id);
+            if (waiter) {
+              operationWaitersRef.current.delete(op.id);
+              waiter.reject(new Error(`操作变更进入未知状态: ${op.state}`));
+            }
+          }
+
           setOperations((prev) => {
             const idx = prev.findIndex((o) => o.id === op.id);
             if (idx >= 0) {
@@ -636,6 +814,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               return copy;
             }
             return [op, ...prev];
+          });
+
+          // 同步增量维护 activeOperations: queued/running/waiting_user 为 active，succeeded/failed/timed_out/cancelled 为 terminal
+          const isActive =
+            op.state === "queued" ||
+            op.state === "running" ||
+            op.state === "waiting_user";
+
+          setActiveOperations((prev) => {
+            if (isActive) {
+              const idx = prev.findIndex((o) => o.id === op.id);
+              if (idx >= 0) {
+                const copy = [...prev];
+                copy[idx] = op;
+                return copy;
+              }
+              return [op, ...prev];
+            } else {
+              return prev.filter((o) => o.id !== op.id);
+            }
           });
 
           // 如果是正在前台跟随的登录任务，实时更新
@@ -670,30 +868,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         break;
       }
       case "settings.changed": {
-        if (payload) {
-          setAgentSettings(payload as AgentSettings);
+        if (envelope.payload) {
+          setAgentSettings(envelope.payload as AgentSettings);
         }
         break;
       }
       case "agent.draining": {
+        const p = (envelope.payload || {}) as Record<string, unknown>;
         setDraining(Boolean(p.draining ?? true));
         break;
       }
       case "queue.changed": {
-        if (payload) {
-          setQueueSnapshot(payload as QueueSnapshot);
+        if (envelope.payload) {
+          setQueueSnapshot(envelope.payload as QueueSnapshot);
         }
         break;
       }
       case "browserRun.changed": {
         // 增量更新 browser run 快照
-        agentCall<BrowserRunListResult>("browserRuns.list")
+        agentCall("browserRuns.list", {})
           .then((res) => setBrowserRuns(res))
           .catch(() => {});
         break;
       }
     }
-  }, []);
+  }, [requestProfileScan]);
 
   // 初始化流程
   useEffect(() => {
@@ -842,7 +1041,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setAccountsState((prev) => startAccountSubmit(prev, id, patch));
       try {
         const cid = await newCommandId();
-        const updated = await agentCall<Account>("accounts.update", { id, patch }, cid);
+        const updated = await agentCall("accounts.update", { id, patch }, cid);
         setAccountsState((prev) => finishAccountSubmit(prev, id, patch, updated ? normalizeAccount(updated) : undefined));
         toast.success("账号已更新");
       } catch (err) {
@@ -859,7 +1058,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     async (id: string, force = false) => {
       try {
         const cid = await newCommandId();
-        const op = await agentCall<Operation>("browser.startLogin", { accountId: id, force }, cid);
+        const op = await agentCall("browser.startLogin", { accountId: id, force }, cid);
         // 从 setter 里读账号名，而不是闭包捕获 accountsState。捕获会让这个回调的依赖
         // 变成「任何账号的任何变化」，而它被 28 张记忆化卡片共同持有——依赖一变，全部
         // 卡片的 memo 同时失效。这里只是要一个显示用的标签，不值得那个代价。
@@ -886,7 +1085,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     async (patch: AccountPatch): Promise<Account> => {
       try {
         const cid = await newCommandId();
-        const raw = await agentCall<Account>("accounts.create", patch, cid);
+        const raw = await agentCall("accounts.create", patch, cid);
         const created = normalizeAccount(raw);
         setAccountsState((prev) => handleSingleAccountChanged(prev, created));
         toast.success("账号已创建，正在准备登录...");
@@ -973,7 +1172,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       for (const id of ids) {
         try {
           const cid = await newCommandId();
-          const updated = await agentCall<Account>(
+          const updated = await agentCall(
             "accounts.update",
             { id, patch: { enabled } },
             cid
@@ -1069,6 +1268,55 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const closeActiveLogin = useCallback(() => setActiveLogin(null), []);
   const closeCloseModal = useCallback(() => setCloseModalOpen(false), []);
 
+  /// 执行操作类方法并等待终态（succeeded / failed / timed_out / cancelled）
+  const runOperation = useCallback(
+    async <M extends OperationMethod>(
+      method: M,
+      params: IpcParams<M>
+    ): Promise<Operation> => {
+      const cid = await newCommandId();
+      const initialOp = await agentCall(method, params, cid);
+      if (!initialOp || typeof initialOp !== "object" || typeof initialOp.id !== "string" || !initialOp.id.trim()) {
+        throw new Error(`操作 ${method} 调用未返回有效的 Operation 描述符`);
+      }
+
+      const opId = initialOp.id;
+      const earlyTerminal = latestOperationsRef.current.get(opId);
+      if (earlyTerminal) {
+        latestOperationsRef.current.delete(opId);
+        if (earlyTerminal.state === "succeeded") {
+          return earlyTerminal;
+        }
+        throw earlyTerminal.error ?? new Error(earlyTerminal.message || `操作${earlyTerminal.state}`);
+      }
+
+      if (TERMINAL_OPERATION_STATES.has(initialOp.state)) {
+        if (initialOp.state === "succeeded") {
+          return initialOp;
+        }
+        throw initialOp.error ?? new Error(initialOp.message || `操作${initialOp.state}`);
+      }
+
+      if (!PENDING_OPERATION_STATES.has(initialOp.state)) {
+        throw new Error(`操作 ${method} (${opId}) 处于未知状态: ${initialOp.state}`);
+      }
+
+      return new Promise<Operation>((resolve, reject) => {
+        operationWaitersRef.current.set(opId, {
+          resolve: (terminalOp) => {
+            operationWaitersRef.current.delete(opId);
+            resolve(terminalOp);
+          },
+          reject: (err) => {
+            operationWaitersRef.current.delete(opId);
+            reject(err);
+          },
+        });
+      });
+    },
+    []
+  );
+
   // 必须记忆化。AppContext 被 28 张账号卡片共同消费，而 value 只要是 render 期间新建的
   // 对象，任何一次无关的状态变化（连接状态、任务列表、队列快照）都会让全部卡片重渲染，
   // 下游的 React.memo 也就成了装饰。巡检每 15 分钟推 28 条事件，这个差别是 784 次
@@ -1118,21 +1366,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       activeLogin,
       closeActiveLogin,
       manualRefreshBootstrap,
-    startScheduler,
-    stopScheduler,
-    toggleScheduler,
-    updateModalState,
-    checkAppUpdate,
-    installAppUpdate,
-    closeUpdateModal,
-    closeModalOpen,
-    exitProgress,
-    forceExitAll,
-    handleMinimizeToTray,
-    handleExitAll,
+      startScheduler,
+      stopScheduler,
+      toggleScheduler,
+      updateModalState,
+      checkAppUpdate,
+      installAppUpdate,
+      closeUpdateModal,
+      closeModalOpen,
+      exitProgress,
+      forceExitAll,
+      handleMinimizeToTray,
+      handleExitAll,
       closeCloseModal,
       activeTab,
       setActiveTab,
+      runOperation,
     }),
     [
       startupInfo,
@@ -1188,12 +1437,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       closeModalOpen,
       exitProgress,
       forceExitAll,
-      exitProgress,
-      forceExitAll,
       handleMinimizeToTray,
       handleExitAll,
       closeCloseModal,
       activeTab,
+      setActiveTab,
+      runOperation,
     ]
   );
 

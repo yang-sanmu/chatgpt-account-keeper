@@ -1,145 +1,144 @@
-# 远端发布流程（GitHub Actions）
+# Tauri 远端发布流程
 
-用 GitHub Actions 在原生 runner 上同时构建 Windows x64、Linux x64、macOS arm64/x64，并汇总到同一个 Release。本机只负责触发和验收。脚本名 `publish-windows-release.ps1` 为兼容旧调用保留，实际触发的是四平台工作流。
+GitHub Actions 在四个原生 runner 上构建 Windows x64、macOS arm64/x64 和
+Linux x64，最后汇总为一个候选 artifact 或一个 Draft Release。本机只负责触发与真机验收。
 
-如果 job 无法启动并提示账号或额度问题，需要先恢复 Actions；[本地 Windows 检查流程](RELEASE_LOCAL.md) 不能生成 macOS/Linux 正式产物，也不能替代本流程。
+## 首次启用
 
-## 准备
+### 1. 生成并备份 Tauri 更新签名密钥
 
-只需一次：
+这套密钥与 Authenticode、Apple Developer ID、Minisign 都不同。私钥丢失后，已经安装
+的客户端将永久无法验证后续更新。
 
-```powershell
-winget install GitHub.cli
-gh auth login
-```
+在离线备份介质上选定目标路径，然后运行：
 
-## 完整流程
+~~~powershell
+cd app
+npm run tauri signer generate -- -w D:\offline-backup\gpt-account-keeper-updater.key
+~~~
 
-以发布 `0.1.5` 为例。四条命令里的版本号必须一致；候选和正式构建还必须使用同一份 Markdown 更新摘要，该摘要会同时显示在客户端更新弹窗和 GitHub Release 中。
+使用强密码。完成后：
 
-### 1. 改版本号并推送
+1. 将 CLI 生成/打印的公钥内容写入 app/src-tauri/tauri.conf.json 的
+   plugins.updater.pubkey；公钥可以提交。
+2. 将私钥文件内容保存为 Actions Secret TAURI_SIGNING_PRIVATE_KEY。
+3. 将密码保存为 TAURI_SIGNING_PRIVATE_KEY_PASSWORD。
+4. 私钥与密码分别离线备份并实际验证可以读取。不要把私钥放进仓库、.env 或发布资产。
 
-三处必须一致，脚本会校验：
+仓库当前仍有 PLACEHOLDER_REPLACED_AT_M5 时，工作流会在构建前直接失败。
 
-- `package.json` 的 `version`
-- `package-lock.json`（用下面的命令同步，不要手改）
-- `desktop/src/GptAccountKeeper.Desktop/GptAccountKeeper.Desktop.csproj` 的 `<Version>`
+### 2. 配置平台签名 Secrets
 
-```powershell
-# 改完 package.json 和 csproj 后
-npm install --package-lock-only --ignore-scripts
+- Windows：WINDOWS_SIGNING_CERTIFICATE_BASE64、WINDOWS_SIGNING_CERTIFICATE_PASSWORD
+- macOS：MACOS_APP_CERTIFICATE_BASE64、MACOS_P12_PASSWORD、MACOS_APP_IDENTITY、
+  APPLE_ID、APPLE_APP_SPECIFIC_PASSWORD、APPLE_TEAM_ID
+- Linux：LINUX_MINISIGN_SECRET_KEY_BASE64、LINUX_MINISIGN_PASSWORD、
+  LINUX_MINISIGN_PUBLIC_KEY
+
+同一平台的 Secrets 必须完整配置。缺失整组时仍可产出带 Tauri 更新签名的内部检查包，
+但会生成 UNSIGNED-<rid>.txt，aggregate job 不允许据此创建 Draft。
+
+## 每次发布
+
+以下以 0.2.1 为例。
+
+### 1. 同步版本并推送
+
+Rust/Tauri 版本线独立于旧 C# 0.1.x。以下五处必须一致：
+
+- app/package.json
+- app/package-lock.json 顶层 version
+- app/package-lock.json 的 packages[""].version
+- app/src-tauri/Cargo.toml 的 package.version
+- app/src-tauri/tauri.conf.json 的 version
+
+~~~powershell
+npm install --prefix app --package-lock-only --ignore-scripts
+node scripts/verify-release-version.mjs 0.2.1
 git add -A
-git commit -m "chore: release 0.1.5"
+git commit -m "chore: release 0.2.1"
 git push origin main
-```
+~~~
 
-必须先推送。二进制里嵌的是 HEAD 的 commit，只有工作树干净且与 `origin/main` 一致，`SOURCE.md` 承诺的"tag 源码树可复现该二进制"才成立。
+### 2. 生成四平台候选
 
-### 2. 构建候选包
+准备非空的 Markdown 更新摘要，然后运行：
 
-先创建 `release-notes-0.1.5.md`，只写面向用户的本次变更，例如修复、改进和必要的升级提醒。文件不能为空。
+~~~powershell
+.\scripts\publish-windows-release.ps1 -Version 0.2.1 -Mode Candidate -ReleaseNotesFile .\release-notes-0.2.1.md
+~~~
 
-```powershell
-.\scripts\publish-windows-release.ps1 -Version 0.1.5 -Mode Candidate -ReleaseNotesFile .\release-notes-0.1.5.md
-```
+成功后，脚本把聚合 artifact 下载到 artifacts\candidate-0.2.1。Candidate 不创建 tag，
+不创建 Release，也不会进入稳定更新源。
 
-触发四个平台 job 并实时跟踪日志，跑完才返回。成功后汇总产物平铺下载到 `artifacts\candidate-0.1.5\`，包括安装包、四个 VeloPack 更新通道、签名、SBOM、源码归档和校验和。
+### 3. 候选安装与数据保留验收
 
-这一步**不打 tag、不创建 Release**，只为验收提供安装包。
+按 RELEASE_VERIFY.md 完成四平台安装检查。至少覆盖 Windows NSIS、两种 macOS 架构、
+AppImage、deb 和 rpm；用真实数据确认 Agent、Profile、SQLite、代理与历史均正常。
 
-### 3. N-1 → N 验收（手动）
+通过后创建 Draft：
 
-这是公开发布前唯一的人工闸门，不要跳过。完整清单和原理见 **[N-1 → N 验收](RELEASE_VERIFY.md)**。
+~~~powershell
+.\scripts\publish-windows-release.ps1 -Version 0.2.1 -Mode Release -NMinusOneVerified -ReleaseNotesFile .\release-notes-0.2.1.md
+~~~
 
-简版：在每个已有线上版本的平台上安装 N-1 → 造出真实数据（账号、登录、跑一次任务）→ 用候选目录里的对应安装包/AppImage/DMG 升级 → 确认账号、Profile、登录态、历史、代理都在，Agent 正常重启。首次增加的平台至少完成全新安装、退出重启、自启动和更新源检查。
+工作流只在 Authenticode、两种 macOS Developer ID + 公证 + stapling、Linux Minisign
+全部通过时创建唯一 Draft。
 
-### 4. 创建 Draft Release
+### 4. 真实更新验收
 
-```powershell
-.\scripts\publish-windows-release.ps1 -Version 0.1.5 -Mode Release -NMinusOneVerified -ReleaseNotesFile .\release-notes-0.1.5.md
-```
+Draft 还不会被 GitHub releases/latest 返回，因此不能把“Draft 已生成”等同于 updater
+已验收。把 Draft 中的 updater 资产与 latest.json 原样放到临时 HTTPS 测试源，使用同一
+生产更新公钥；用于 N 版验收的临时构建只通过 Tauri config overlay 把 updater endpoint
+指向该测试源，不能修改发布资产或默认稳定 endpoint。然后完成：
 
-`-NMinusOneVerified` 是强制的，不带这个开关脚本会拒绝执行 —— 它的作用就是挡住跳过第 3 步。
+- Windows：已安装 N 自动发现并升级到 N+1，NSIS 重启后数据完整。
+- macOS arm64/x64：自动升级后应用显式 relaunch。
+- AppImage：自动升级后应用显式 relaunch，原文件被正确替换。
+- deb/rpm：检查更新返回“由系统包管理器升级”，且不请求 latest.json。
+- AppImage：在干净 Ubuntu 22.04 和一台较新发行版各启动一次。
 
-只有四个平台全部构建成功、N-1 验收已确认，且 Authenticode、Apple 公证与 Minisign 凭据全部配置时，这一步才会打 tag 并创建 **一个 Draft Release**。任何 `UNSIGNED-<rid>.txt` 标记都会阻止创建 Draft。
+测试源只用于验收，不得复用另一套签名密钥，也不得修改已经签名的二进制。
 
-### 5. 公开
+### 5. 公开 Draft
 
-先在 Release 页面人工确认下列资产组齐全：
+确认 Release 页面资产完整且第 4 步通过后：
 
-| Asset | 用途 |
-|---|---|
-| Windows `Setup.exe`、Portable.zip、full.nupkg | Windows x64 安装与更新 |
-| 两组 macOS `Setup.pkg`、Portable.zip、DMG、full.nupkg | Apple Silicon 与 Intel 安装/更新 |
-| Linux AppImage、`.minisig`、full.nupkg | Linux x64 运行与更新 |
-| `releases.win.json`、`releases.osx-arm64.json`、`releases.osx-x64.json`、`releases.linux-x64.json` | 四个隔离更新通道 |
-| 四份 `*.spdx.json` | 各 RID SBOM |
-| `chatgpt-account-keeper-<版本>-source.zip` | 项目对应源码（AGPL） |
-| `mihomo-v<版本>-source.zip` | mihomo 对应源码（GPL-3.0 强制） |
-| `SHA256SUMS.linux-x64.txt`、`.minisig`、`minisign.pub` | Linux 独立签名材料 |
-| `SHA256SUMS.release.txt` | 全部资产总校验和 |
+~~~powershell
+.\scripts\publish-windows-release.ps1 -Version 0.2.1 -Mode PublishDraft -UpdaterVerified
+~~~
 
-然后：
+该命令再次核对 Draft、版本和全部必需资产，然后公开并标记 latest。只有此时稳定客户端
+才会从 releases/latest/download/latest.json 看到新版本。
 
-```powershell
-.\scripts\publish-windows-release.ps1 -Version 0.1.5 -Mode PublishDraft
-```
+## 必需资产
 
-脚本会再核对一遍 asset 齐全、确认是 Draft 且非 prerelease，通过后转正并标记 `--latest`。
+| 平台 | 安装/运行 | Tauri updater |
+| --- | --- | --- |
+| Windows x64 | NSIS setup.exe | 同一 exe + .sig |
+| macOS arm64/x64 | 两份 DMG | 两份 app.tar.gz + .sig |
+| Linux x64 | AppImage、deb、rpm | AppImage + .sig |
 
-**只有这一步会让版本进入客户端的稳定更新通道。**
+此外必须有：
 
-### 维护者明确要求跳过人工验收或签名时
+- latest.json（只有 windows-x86_64、darwin-aarch64、darwin-x86_64、
+  linux-x86_64-appimage 四个键）
+- 四份 Agent CycloneDX SBOM
+- 项目源码与对应 mihomo 源码归档
+- Linux AppImage/校验清单的 Minisign 签名与公钥
+- SHA256SUMS.release.txt
 
-正常流程仍应使用上面的签名门禁。如果维护者明确接受无签名产物并要求跳过 N-1 人工验收，可将一次已经成功的四平台 Candidate run 直接提升为公开 Release：
+## 工作流关键门禁
 
-```powershell
-gh workflow run publish-existing-candidate.yml `
-  --repo yang-sanmu/chatgpt-account-keeper `
-  -f version=0.1.5 `
-  -f source_run_id=<成功的 run id> `
-  -f allow_unsigned=true `
-  -f skip_n_minus_one_verification=true
-```
+.github/workflows/windows-release.yml 会：
 
-该例外流程会再次校验来源 run、四平台资产和聚合 SHA-256，先上传为 Draft 并核对资产数量，再公开。Release 说明会明确标注未签名/未公证及跳过 N-1 验收，不会把例外发布伪装成通过正式门禁。
+1. 校验 Tauri 五处版本、非空更新摘要、公钥非占位符和 updater 私钥 Secret。
+2. 下载固定版本 Node/mihomo 并校验 SHA-256；Windows 另构建 chrome-launcher。
+3. 生成 Tauri release-resources，拒绝 Chromium、ms-playwright、旧管理页和 Avalonia
+   可执行文件，随后用私有 Node 做 Agent IPC/SQLite 烟测。
+4. 在 Windows、macOS arm64/x64、固定 ubuntu-22.04 上执行四次 tauri build。
+5. 生成并验证 Tauri .sig；保留 Authenticode、Apple 公证/stapling 与 Minisign 门禁。
+6. 从各 bundle 目录只收集唯一的本次产物，生成 latest.json、源码归档和总校验和。
+7. Candidate 只上传 workflow artifact；Release 模式才创建 Draft。
 
-## 注意事项
-
-- **先干跑**：任何阶段都可以加 `-WhatIf`，只验证状态并显示将执行的操作，不实际执行。
-- **同一版本号只能发一次**：脚本会检查 tag 和 Release 都不存在。重发必须换版本号。
-- **候选目录不能已存在**：重跑第 2 步前先删 `artifacts\candidate-<版本>\`，或用 `-CandidateOutputDirectory` 指定别处。
-- **更新摘要必须一致**：Candidate 和 Release 都通过 `-ReleaseNotesFile` 传入非空 Markdown；正式构建不要临时换另一份内容。
-- **不需要手动 push tag**：tag 由第 4 步自动创建。工作流只接受手动触发（`workflow_dispatch`），推 tag 不会触发构建。
-- **仓库不是默认的**：加 `-Repository <owner>/<repo>`。
-
-## 仓库签名配置
-
-正式 Draft 需要以下 Actions Secrets；缺失时只保留内部候选 artifact：
-
-- Windows：`WINDOWS_SIGNING_CERTIFICATE_BASE64`、`WINDOWS_SIGNING_CERTIFICATE_PASSWORD`
-- macOS 证书：`MACOS_APP_CERTIFICATE_BASE64`、`MACOS_INSTALLER_CERTIFICATE_BASE64`、`MACOS_P12_PASSWORD`、`MACOS_KEYCHAIN_PASSWORD`
-- macOS 身份/公证：`MACOS_APP_IDENTITY`、`MACOS_INSTALLER_IDENTITY`、`APPLE_ID`、`APPLE_APP_SPECIFIC_PASSWORD`、`APPLE_TEAM_ID`
-- Linux：`LINUX_MINISIGN_SECRET_KEY_BASE64`、`LINUX_MINISIGN_PASSWORD`、`LINUX_MINISIGN_PUBLIC_KEY`
-
-`LINUX_MINISIGN_PUBLIC_KEY` 是 `RW...` 单行公钥；私钥 secret 存放 Minisign 私钥文件的 Base64。公钥也会作为 `minisign.pub` 随 Release 发布，但维护者仍应通过仓库外渠道公布可信公钥指纹。
-
-## 工作流做了什么
-
-`.github/workflows/windows-release.yml`：
-
-1. 在四个发行 RID 的原生 runner 上运行完整 Node/.NET 测试和 NativeAOT publish
-2. 下载固定版本的 Node 与 mihomo 并校验 SHA-256
-3. 用 `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1` 安装生产依赖
-4. 拒绝 Chromium、`ms-playwright` 和旧 `public/` 管理页进入产物
-5. 用私有 Node 对 staged Agent 执行 IPC/SQLite 启动烟测
-6. 将许可证、第三方声明、隐私和源码说明写入安装包的 `licenses/`
-7. 生成 Windows 安装器、Linux AppImage、macOS `.pkg`/Portable.zip/DMG，并执行各平台签名门禁
-8. 从 `assets.<channel>.json` 只收集本次构建产物，排除为 delta 下载的历史包
-9. 生成四份 SBOM、源码归档与总校验和，由 aggregate job 创建唯一 Draft
-
-固定发行标识（不随品牌变更）：
-
-- 显示名：`ChatGPT Account Keeper`
-- VeloPack Pack ID：`GptAccountKeeper.Desktop`
-- Bundle ID：`io.github.yang-sanmu.gptaccountkeeper`
+不再保留“允许无签名并跳过人工验收”的直接公开工作流。

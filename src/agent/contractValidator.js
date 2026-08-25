@@ -3,6 +3,7 @@ import Ajv2020 from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
 import { fromInstallRoot } from "../paths.js";
 import { ApplicationError, ERROR_CODES } from "../application/errors.js";
+import { METHOD_CONTRACTS } from "./methodContracts.js";
 
 const schema = JSON.parse(
   fs.readFileSync(fromInstallRoot("contracts", "ipc-v1.schema.json"), "utf8")
@@ -26,59 +27,6 @@ const validators = Object.freeze({
   success: definition("successResponse"),
   error: definition("errorResponse"),
   event: definition("event"),
-});
-
-const METHOD_CONTRACTS = Object.freeze({
-  "system.hello": ["helloParams", "helloResult"],
-  "system.bootstrap": ["emptyParams", "bootstrapResult"],
-  "system.getActivity": ["emptyParams", "activityResult"],
-  "system.prepareUpdate": ["prepareUpdateParams", "prepareUpdateResult"],
-  "system.shutdown": ["shutdownParams", "acceptedResult"],
-  "accounts.list": ["emptyParams", "accountArray"],
-  "accounts.create": ["accountCreateParams", "accountResult"],
-  "accounts.update": ["accountUpdateParams", "accountResult"],
-  "accounts.remove": ["accountRemoveParams", "okResult"],
-  "accounts.getStatus": ["idParams", "accountStatusResult"],
-  "accounts.refreshStatus": ["idParams", "operationResult"],
-  "accounts.runNow": ["idParams", "operationResult"],
-  "accounts.checkSelectors": ["selectorCheckParams", "operationResult"],
-  "browser.startLogin": ["loginParams", "operationResult"],
-  "browser.openPage": ["accountIdParams", "operationResult"],
-  "browser.closePage": ["accountIdParams", "okResult"],
-  "browser.listOpenPages": ["emptyParams", "jsonObject"],
-  "browser.getTask": ["taskIdParams", "jsonObject"],
-  "history.query": ["historyQueryParams", "historyEntryArray"],
-  "accounts.history": ["historyQueryParams", "historyEntryArray"],
-  "history.listAccounts": ["emptyParams", "historyAccountArray"],
-  "groups.list": ["emptyParams", "groupArray"],
-  "groups.create": ["groupCreateParams", "groupResult"],
-  "groups.update": ["groupUpdateParams", "groupResult"],
-  "groups.remove": ["idParams", "okResult"],
-  "proxies.getState": ["emptyParams", "proxyStateResult"],
-  "proxies.importSubscription": ["subscriptionParams", "operationResult"],
-  "proxies.refreshSubscription": ["emptyParams", "operationResult"],
-  "proxies.setRuntimeDirectory": ["runtimeDirectoryParams", "operationResult"],
-  "proxies.setNodeEnabled": ["nodeEnabledParams", "operationResult"],
-  "proxies.testNode": ["idParams", "operationResult"],
-  "proxies.testAll": ["emptyParams", "operationResult"],
-  "profiles.scan": ["emptyParams", "operationResult"],
-  "profiles.cleanCache": ["profileCleanParams", "operationResult"],
-  "profiles.archiveOrphan": ["nameParams", "operationResult"],
-  "profiles.purgeOrphan": ["nameParams", "operationResult"],
-  "conversations.list": ["emptyParams", "conversationMap"],
-  "conversations.upsert": ["conversationUpsertParams", "conversationResult"],
-  "conversations.remove": ["nameParams", "okResult"],
-  "scheduler.getState": ["emptyParams", "schedulerResult"],
-  "scheduler.start": ["emptyParams", "schedulerResult"],
-  "scheduler.stop": ["emptyParams", "schedulerResult"],
-  "settings.get": ["emptyParams", "settingsResult"],
-  "settings.update": ["settingsUpdateParams", "settingsResult"],
-  "operations.get": ["idParams", "operationResult"],
-  "operations.listActive": ["emptyParams", "operationArray"],
-  "operations.list": ["operationListParams", "operationArray"],
-  "queue.getSnapshot": ["emptyParams", "queueSnapshotResult"],
-  "browserRuns.list": ["emptyParams", "browserRunListResult"],
-  "browserRuns.close": ["browserRunCloseParams", "browserRunCloseResult"]
 });
 
 const methodValidators = Object.fromEntries(

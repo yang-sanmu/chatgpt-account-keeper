@@ -30,6 +30,9 @@ const forbidden = [
   /(^|\/)public\/(?:index\.html|app\.js|style\.css)$/i,
   /^agent\/node_modules\/express(\/|$)/i,
   /^agent\/src\/(?:server|cli)\.js$/i,
+  // This verifier receives only the Tauri resource root. A desktop executable
+  // here means the old Avalonia stage was copied into the new package.
+  /^GptAccountKeeper\.Desktop(?:\.exe)?$/i,
   /\.pdb$/i,
 ];
 
@@ -64,7 +67,6 @@ if (!hasPrivateNode) {
 }
 
 const requiredPatterns = [
-  /^GptAccountKeeper\.Desktop(?:\.exe)?$/i,
   /^agent\/src\/agent\/launcher\.js$/i,
   /^agent\/package\.json$/i,
   /^agent\/package-lock\.json$/i,
@@ -94,7 +96,6 @@ if (missing.length) {
 if (expectedRid) {
   const windows = expectedRid === "win-x64";
   const platformFiles = [
-    windows ? "GptAccountKeeper.Desktop.exe" : "GptAccountKeeper.Desktop",
     windows ? "agent/runtime/node.exe" : "agent/runtime/node",
     windows ? "agent/bin/mihomo.exe" : "agent/bin/mihomo",
     // Windows 上 broker 缺失会让 Agent 在接受 IPC 前 fail-closed，等于整个安装不可用。

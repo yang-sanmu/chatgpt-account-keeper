@@ -10,7 +10,7 @@
     { "$ref": "#/$defs/event" }
   ],
   "$defs": {
-    "jsonValue": true,
+    "jsonValue": {},
     "protocolVersion": {
       "type": "object",
       "additionalProperties": false,
@@ -96,7 +96,7 @@
         "queue.changed", "browserRun.changed"
       ]
     },
-    "event": {
+    "eventBase": {
       "type": "object",
       "additionalProperties": false,
       "required": ["event", "seq", "instanceId", "revision", "occurredAt", "payload"],
@@ -108,6 +108,268 @@
         "occurredAt": { "type": "string", "format": "date-time" },
         "payload": { "$ref": "#/$defs/jsonValue" }
       }
+    },
+    "proxyNodeTestedPayload": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "ok", "delay", "testedAt"],
+          "properties": {
+            "id": { "type": "string", "minLength": 1 },
+            "ok": { "const": true },
+            "delay": { "type": ["number", "null"], "minimum": 0 },
+            "testedAt": { "type": "string", "format": "date-time" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "ok", "message", "testedAt"],
+          "properties": {
+            "id": { "type": "string", "minLength": 1 },
+            "ok": { "const": false },
+            "message": { "type": "string" },
+            "testedAt": { "type": "string", "format": "date-time" }
+          }
+        }
+      ]
+    },
+    "profileInfo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name", "linked", "accountIds", "accountLabels", "nonStandardReference", "busy",
+        "bytes", "files", "cacheBytes", "cacheFiles"
+      ],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "linked": { "type": "boolean" },
+        "accountIds": { "type": "array", "items": { "type": "string" } },
+        "accountLabels": { "type": "array", "items": { "type": "string" } },
+        "nonStandardReference": { "type": "boolean" },
+        "busy": { "type": "boolean" },
+        "bytes": { "type": "integer", "minimum": 0 },
+        "files": { "type": "integer", "minimum": 0 },
+        "cacheBytes": { "type": "integer", "minimum": 0 },
+        "cacheFiles": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "profileScanResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["profiles", "orphans", "totals"],
+      "properties": {
+        "profiles": { "type": "array", "items": { "$ref": "#/$defs/profileInfo" } },
+        "orphans": { "type": "array", "items": { "$ref": "#/$defs/profileInfo" } },
+        "totals": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "profiles", "linked", "orphans", "bytes", "cacheBytes", "orphanBytes",
+            "archiveCount", "archiveBytes", "trashCount", "trashBytes"
+          ],
+          "properties": {
+            "profiles": { "type": "integer", "minimum": 0 },
+            "linked": { "type": "integer", "minimum": 0 },
+            "orphans": { "type": "integer", "minimum": 0 },
+            "bytes": { "type": "integer", "minimum": 0 },
+            "cacheBytes": { "type": "integer", "minimum": 0 },
+            "orphanBytes": { "type": "integer", "minimum": 0 },
+            "archiveCount": { "type": "integer", "minimum": 0 },
+            "archiveBytes": { "type": "integer", "minimum": 0 },
+            "trashCount": { "type": "integer", "minimum": 0 },
+            "trashBytes": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    "profileChangedPayload": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "name", "result"],
+          "properties": {
+            "kind": { "const": "profile-scan" },
+            "name": { "type": "null" },
+            "result": { "$ref": "#/$defs/profileScanResult" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "name", "result"],
+          "properties": {
+            "kind": { "enum": ["profile-cache-clean", "profile-orphan-archive", "profile-orphan-purge"] },
+            "name": { "type": ["string", "null"] },
+            "result": { "$ref": "#/$defs/jsonValue" }
+          }
+        }
+      ]
+    },
+    "groupChangedPayload": {
+      "oneOf": [
+        { "$ref": "ipc-v1.methods.schema.json#/$defs/groupResult" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "removed"],
+          "properties": {
+            "id": { "type": "string", "minLength": 1 },
+            "removed": { "const": true }
+          }
+        }
+      ]
+    },
+    "conversationChangedPayload": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "set"],
+          "properties": {
+            "name": { "type": "string", "minLength": 1 },
+            "set": { "$ref": "ipc-v1.methods.schema.json#/$defs/conversationResult" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "removed"],
+          "properties": {
+            "name": { "type": "string", "minLength": 1 },
+            "removed": { "const": true }
+          }
+        }
+      ]
+    },
+    "schedulerAccountChangedPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["accountId", "nextAt", "lastAt", "busy", "lastResultState", "lastResult"],
+      "properties": {
+        "accountId": { "type": "string", "minLength": 1 },
+        "nextAt": { "type": ["string", "null"], "format": "date-time" },
+        "lastAt": { "type": ["string", "null"], "format": "date-time" },
+        "busy": { "type": "boolean" },
+        "lastResultState": { "enum": ["succeeded", "failed", null] },
+        "lastResult": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["ok", "reason", "time"],
+              "properties": {
+                "ok": { "type": "boolean" },
+                "reason": { "type": ["string", "null"] },
+                "time": { "type": "string", "format": "date-time" }
+              }
+            },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "event": {
+      "oneOf": [
+        {
+          "allOf": [
+            { "$ref": "#/$defs/eventBase" },
+            {
+              "type": "object",
+              "required": ["event", "payload"],
+              "properties": {
+                "event": { "const": "operation.changed" },
+                "payload": { "$ref": "#/$defs/operation" }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            { "$ref": "#/$defs/eventBase" },
+            {
+              "type": "object",
+              "required": ["event", "payload"],
+              "properties": {
+                "event": { "const": "proxyNode.tested" },
+                "payload": { "$ref": "#/$defs/proxyNodeTestedPayload" }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            { "$ref": "#/$defs/eventBase" },
+            {
+              "type": "object",
+              "required": ["event", "payload"],
+              "properties": {
+                "event": { "const": "profile.changed" },
+                "payload": { "$ref": "#/$defs/profileChangedPayload" }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            { "$ref": "#/$defs/eventBase" },
+            {
+              "type": "object",
+              "required": ["event", "payload"],
+              "properties": {
+                "event": { "const": "group.changed" },
+                "payload": { "$ref": "#/$defs/groupChangedPayload" }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            { "$ref": "#/$defs/eventBase" },
+            {
+              "type": "object",
+              "required": ["event", "payload"],
+              "properties": {
+                "event": { "const": "conversation.changed" },
+                "payload": { "$ref": "#/$defs/conversationChangedPayload" }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            { "$ref": "#/$defs/eventBase" },
+            {
+              "type": "object",
+              "required": ["event", "payload"],
+              "properties": {
+                "event": { "const": "scheduler.accountChanged" },
+                "payload": { "$ref": "#/$defs/schedulerAccountChangedPayload" }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            { "$ref": "#/$defs/eventBase" },
+            {
+              "type": "object",
+              "required": ["event"],
+              "properties": {
+                "event": {
+                  "enum": [
+                    "account.changed", "account.removed", "accountStatus.changed", "openPage.changed",
+                    "proxyState.changed", "scheduler.changed", "history.appended", "settings.changed",
+                    "agent.draining", "agent.readyForUpdate", "queue.changed", "browserRun.changed"
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      ]
     },
     "helloParams": {
       "type": "object",
@@ -147,7 +409,10 @@
     "operation": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "kind", "state", "startedAt", "updatedAt", "blocksUpdate"],
+      "required": [
+        "id", "kind", "resourceId", "state", "stage", "message", "progress", "startedAt",
+        "updatedAt", "finishedAt", "result", "error", "blocksUpdate"
+      ],
       "properties": {
         "id": { "type": "string", "format": "uuid" },
         "kind": { "type": "string", "minLength": 1 },

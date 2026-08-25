@@ -8,6 +8,7 @@ import addFormats from "ajv-formats";
 import {
   METHOD_CONTRACTS,
   assertMethodResultContract,
+  assertOutgoingContract,
   assertRequestContract,
 } from "../src/agent/contractValidator.js";
 
@@ -15,11 +16,16 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const schema = JSON.parse(
   fs.readFileSync(path.join(here, "..", "contracts", "ipc-v1.schema.json"), "utf8")
 );
+const methodSchema = JSON.parse(
+  fs.readFileSync(path.join(here, "..", "contracts", "ipc-v1.methods.schema.json"), "utf8")
+);
 
 function validator() {
   const ajv = new Ajv2020({ strict: true, allErrors: true });
   addFormats(ajv);
-  return ajv.compile(schema);
+  ajv.addSchema(schema);
+  ajv.addSchema(methodSchema);
+  return ajv.getSchema(schema.$id);
 }
 
 test("IPC v1 canonical schema accepts requests, responses and events", () => {
@@ -74,10 +80,15 @@ test("IPC v1 schema rejects unknown methods and unstable error codes", () => {
 });
 
 test("every advertised IPC method has runtime parameter and result contracts", () => {
+  assert.equal(Object.keys(methodSchema.$defs).length, 53);
   assert.deepEqual(
     Object.keys(METHOD_CONTRACTS).sort(),
     [...schema.$defs.method.enum].sort()
   );
+  for (const [method, [paramsName, resultName]] of Object.entries(METHOD_CONTRACTS)) {
+    assert.ok(methodSchema.$defs[paramsName], `${method} 缺少参数定义 ${paramsName}`);
+    assert.ok(methodSchema.$defs[resultName], `${method} 缺少结果定义 ${resultName}`);
+  }
   assert.throws(
     () => assertRequestContract({ id: "x", method: "accounts.runNow", params: { accountId: "wrong-field" } }),
     (error) => error.code === "VALIDATION_FAILED"
@@ -100,11 +111,81 @@ test("every advertised IPC method has runtime parameter and result contracts", (
   assert.doesNotThrow(() => assertMethodResultContract("history.query", [{
     time: "2026-08-21T00:00:00.000Z",
     ok: true,
+    setName: null,
+    topic: null,
     totalRounds: 1,
     targetRounds: 2,
     stopReason: "future-reason",
+    error: null,
+    needReauth: false,
     rounds: [],
   }]));
+});
+
+test("实证过的事件字段与 operation 状态由出站契约封住", () => {
+  const event = (name, payload) => ({
+    event: name,
+    seq: 1,
+    instanceId: "346d2d5d-2b90-4dce-9b07-3b68fcb6f935",
+    revision: 1,
+    occurredAt: "2026-08-25T00:00:00.000Z",
+    payload,
+  });
+
+  assert.doesNotThrow(() => assertOutgoingContract(event("proxyNode.tested", {
+    id: "node-1",
+    ok: true,
+    delay: 123,
+    testedAt: "2026-08-25T00:00:00.000Z",
+  })));
+  assert.throws(
+    () => assertOutgoingContract(event("proxyNode.tested", {
+      id: "node-1",
+      latencyMs: 123,
+      error: null,
+    })),
+    (error) => error.code === "INTERNAL"
+  );
+
+  assert.throws(
+    () => assertOutgoingContract(event("profile.changed", {
+      kind: "profile-scan",
+      name: null,
+      result: {
+        profiles: [{ name: "p", sizeBytes: 1, isOrphan: true }],
+        orphans: [],
+        totals: {},
+      },
+    })),
+    (error) => error.code === "INTERNAL"
+  );
+
+  assert.throws(
+    () => assertOutgoingContract(event("group.changed", {
+      group: { id: "grp-1", name: "旧猜法" },
+    })),
+    (error) => error.code === "INTERNAL"
+  );
+
+  const operation = {
+    id: "346d2d5d-2b90-4dce-9b07-3b68fcb6f935",
+    kind: "profile-scan",
+    resourceId: null,
+    state: "interrupted",
+    stage: null,
+    message: null,
+    progress: null,
+    startedAt: "2026-08-25T00:00:00.000Z",
+    updatedAt: "2026-08-25T00:00:00.000Z",
+    finishedAt: null,
+    result: null,
+    error: null,
+    blocksUpdate: false,
+  };
+  assert.throws(
+    () => assertOutgoingContract(event("operation.changed", operation)),
+    (error) => error.code === "INTERNAL"
+  );
 });
 
 test("队列与 BrowserRun 的新方法、事件与 DTO 四处同步", () => {
@@ -185,9 +266,16 @@ test("队列与 BrowserRun 的新方法、事件与 DTO 四处同步", () => {
       result: {
         id: "346d2d5d-2b90-4dce-9b07-3b68fcb6f935",
         kind: "account-run",
+        resourceId: "acc-1",
         state: "queued",
+        stage: null,
+        message: null,
+        progress: null,
         startedAt: "2026-08-22T00:00:00.000Z",
         updatedAt: "2026-08-22T00:00:00.000Z",
+        finishedAt: null,
+        result: null,
+        error: null,
         blocksUpdate: false,
         effectiveSource: "manual",
       },

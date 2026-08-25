@@ -193,11 +193,13 @@ per-run Job 句柄，于是 `KILL_ON_JOB_CLOSE` 永不触发，Desktop 崩溃时
   `std::process::exit(0)`），NSIS 装完按 `restart_after_install`（默认 true）重启。
   **macOS 与 Linux 的 `install()` 返回后不退出，必须我们自己重启。**
 - **签名**：`tauri signer generate` 生成密钥对；私钥经环境变量
-  `TAURI_SIGNING_PRIVATE_KEY`（+ 可选 `_PASSWORD`）在构建时提供，不能放 `.env`；
+  `TAURI_SIGNING_PRIVATE_KEY` 与 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` 在构建时提供，
+  不能放 `.env`；
   公钥**内联**进 `tauri.conf.json` 的 `plugins.updater.pubkey`，不能是路径。
   丢失私钥 = 已安装的客户端永久收不到更新。
-- **`bundle.createUpdaterArtifacts`**：`true` 或 `"v1Compatible"`。AppImage 的更新
-  产物是 `.AppImage.tar.gz`。
+- **`bundle.createUpdaterArtifacts`**：新客户端用 `true`，Linux 直接复用 `.AppImage`
+  并生成 `.AppImage.sig`；只有兼容 Tauri v1 的 `"v1Compatible"` 才额外生成
+  `.AppImage.tar.gz`。本项目没有 Tauri v1 用户，不使用兼容模式。
 - **NSIS `installMode` 默认 `currentUser`**，装到 `%LOCALAPPDATA%`，不需要管理员权限，
   与现在的每用户模型一致。
 - **`Update`** 有分离的 `download()` 与 `install()`，不只有 `download_and_install()`。
@@ -210,7 +212,7 @@ per-run Job 句柄，于是 `KILL_ON_JOB_CLOSE` 永不触发，Desktop 崩溃时
 | macOS arm64 / x64 | `.app` + `.dmg`，签名 + 公证 + stapling | 是（`.tar.gz`，需显式重启） |
 | Linux x64 | AppImage（自更新）、deb + rpm（附，不自更新） | 仅 AppImage |
 
-**`latest.json` 只放三个平台键**：`windows-x86_64`、`darwin-aarch64`、
+**`latest.json` 只放四个平台键**：`windows-x86_64`、`darwin-aarch64`、
 `darwin-x86_64`、`linux-x86_64-appimage`。**绝不放通用 `linux-x86_64` 键**——deb/rpm
 客户端会回退到它，拿到 AppImage 的包。
 
@@ -448,20 +450,41 @@ Agent + chrome-launcher broker + Chrome 全部死透。**这条不通过，迁�
 **M4 门禁**：三条更新提示行为有测试；迁移进度解析器对不完整尾行有测试；
 "退出全部不会启动新 Agent"有测试。
 
+### M4.5 · 跨层正确性收口（M5 前新增）
+
+2026-08-25 对最后七次 Tauri 提交的复审证明，仅有方法名与信封的契约门禁不足以发现
+payload 字段漂移，也不能区分“操作已入队”和“操作已完成”。因此在 M5 前增加以下门禁：
+
+- [x] 根 Node 测试只收集 `test/**/*.test.js`，不再误收集 Vitest 的 TS/TSX；重型 Agent/
+  Chrome 集成测试按最多 4 个文件并发，避免高核心数主机耗尽启动资源。CI 新增独立的
+  Tauri 前端 build/test 与 Rust fmt/clippy/test job。
+- [x] `group.changed`、`conversation.changed`、`scheduler.accountChanged` 按 Agent 的真实
+  delta payload 增量更新；`operation.changed` 同步维护 active operations。Agent 与 React
+  两侧都有真实 payload 回归测试。
+- [x] 前端统一通过事件驱动的 `runOperation` 等待 terminal state；Profile 清理/归档/删除、
+  代理订阅导入与节点启停不再把 queued response 报成成功。无轮询、无任意前端超时。
+- [x] `.gitignore` 明确放行 `app/src/pages/Profiles/`，避免 Windows 大小写不敏感规则把
+  React 页面当成敏感的 `profiles/` 登录态目录忽略。
+- [x] 把 53 个 `$defs` 写实并生成 `app/src/ipc/generated.ts`。本轮只封住已实证的事件和
+  operation 语义，不声称已经完成全量 schema 代码生成。
+
 ### M5 · 分发
 
-- `tauri.conf.json`：`bundle.targets`、`resources`、`createUpdaterArtifacts`、
-  `plugins.updater.pubkey`、NSIS `installMode: currentUser`、Linux deb/rpm depends。
-- 生成生产签名密钥对，存入仓库 Secret 并**离线备份**。
-- 改造 `scripts/stage-release.mjs`：staged 布局改为 Tauri resources 布局。
-- 改造 `scripts/verify-package.mjs`：路径规则跟着新布局改；禁止 chromium /
+- [x] `tauri.conf.json`：`bundle.targets`、`createUpdaterArtifacts`、NSIS
+  `installMode: currentUser`、Linux deb/rpm depends；发布时通过
+  `tauri.release.conf.json` 映射生成的 resources，普通 cargo 门禁不依赖本地二进制。
+- [ ] 用 CLI 生成生产签名密钥对，把公钥替换进 `plugins.updater.pubkey`，私钥/密码存入
+  仓库 Secret 并**分别离线备份**。工作流在占位符或缺私钥时 fail-closed。
+- [x] 改造 `scripts/stage-release.mjs`：输出只含 Tauri `$RESOURCE` 下的 agent/licenses，
+  不再复制旧 Desktop publish 目录。
+- [x] 改造 `scripts/verify-package.mjs`：路径规则跟着新布局改；禁止 chromium /
   ms-playwright / 旧管理页那几条保留。
-- 新增 `scripts/write-latest-json.mjs`：从各平台 `.sig` 的**内容**生成 `latest.json`，
+- [x] 新增 `scripts/write-latest-json.mjs`：从各平台 `.sig` 的**内容**生成 `latest.json`，
   键只有 `windows-x86_64` / `darwin-aarch64` / `darwin-x86_64` /
   `linux-x86_64-appimage`。加一个测试断言产物里没有通用 `linux-x86_64` 键。
-- CI：从"4 个 NativeAOT publish 门禁"变成"1 个 cargo 门禁 + 4 个 `tauri build`"。
+- [x] CI：从"4 个 NativeAOT publish 门禁"变成"1 个 cargo 门禁 + 4 个 `tauri build`"。
   Linux 固定 `ubuntu-22.04`。
-- 保留：Node 测试矩阵、私有 Node/mihomo 固定版本 + SHA-256 校验、
+- [x] 保留：Node 测试矩阵、私有 Node/mihomo 固定版本 + SHA-256 校验、
   `smoke-staged-agent.mjs`、SBOM、licenses 复制、Authenticode / Apple 公证 / Minisign。
 - **chrome-launcher 仍需 .NET SDK**（`tools/chrome-launcher`，1193 行 C# AOT）。它由
   Agent 启动而非管理端，本次不动；"移植到 Rust"记为后续独立任务。
@@ -470,6 +493,9 @@ Agent + chrome-launcher broker + Chrome 全部死透。**这条不通过，迁�
 AppImage 各一次**（macOS 与 AppImage 要确认 `install()` 后的显式重启真的发生）；
 deb 与 rpm 各装一次并确认**没有**发起更新检查；AppImage 在干净 Ubuntu 22.04 与一台
 较新发行版上各起一次。
+
+2026-08-25 仓库内门禁已落地并通过本地单元/配置验证；生产密钥、公钥替换、四平台
+workflow 实跑与上述真机验收仍是外部门禁，未完成前不得把 M5 标为完成。
 
 ### M6 · 删除 `desktop/`
 
@@ -507,11 +533,14 @@ deb 与 rpm 各装一次并确认**没有**发起更新检查；AppImage 在干�
 - **不做移动端。** 这个产品要驱动本机真实 Chrome。
 - **deb/rpm 不做自更新**，见 §四。
 
-## 九之二、迁移完成后的独立任务
+## 九之二、迁移收口与后续独立任务
 
-这些不属于本迁移，但已经有足够证据支撑它们值得做。
+以下分为 M4.5 尚未完成的迁移门禁，以及迁移完成后再做的独立任务。
 
-### 从契约生成 TypeScript 类型（有四次实证）
+### 从契约生成 TypeScript 类型（M4.5 剩余门禁，有四次实证）
+
+2026-08-25 复审后，这项不再作为“迁移完成后再做”的独立优化：事件 delta 与 operation
+终态已经先行收口，但完整 `$defs` 与生成类型仍须在 M5 分发前完成。
 
 **问题**：前端的 TS interface 是手写的，而 `contracts/ipc-v1.methods.schema.json` 只约束
 方法名和信封，payload 形状大多是 `{"type":"object"}` 或 `{"type":"array"}` 这类松约束
@@ -527,13 +556,17 @@ deb 与 rpm 各装一次并确认**没有**发起更新检查；AppImage 在干�
 | `proxyNode.tested` | `latencyMs` / `error` | `delay` / `message` / `ok` | 测速延迟从不出现在节点行 |
 | `profiles.scan` | `sizeBytes` / `isOrphan` / `linkedAccountId`，且当成同步返回值 | `bytes` / `linked` / `accountLabels`，结果在 `operation.changed` | 47 个 Profile 显示「无 Profile」 |
 
-**做法**：先把 53 个 `$defs` 写实（这是 Agent 侧工作，`publicAccount`、`getNodes`、
-`scan` 等投影函数是权威来源），再用 `json-schema-to-typescript` 之类从 schema 生成
-`app/src/ipc/generated.ts`，并加一个 CI 门禁断言生成结果与提交的一致。
+**已完成（2026-08-25）**：53 个 `$defs` 已按 `publicAccount`、`getNodes`、`scan` 等
+Agent 投影写实；`src/agent/methodContracts.js` 成为运行时校验器与生成器共用的唯一方法
+映射。`npm run ipc:generate` 通过固定版本的 `json-schema-to-typescript` 生成
+`app/src/ipc/generated.ts`，`npm run ipc:check` 及 CI 会阻止提交结果漂移。本轮精确封住
+`operation.changed`、`proxyNode.tested`、`profile.changed`、`group.changed`、
+`conversation.changed`、`scheduler.accountChanged`；其余事件 payload 仍保持 `unknown`，
+避免在没有实证前扩大全量事件模型。
 
-**顺带能消掉一类隐患**：哪些方法是「操作类」（返回 operationResult，真实数据走
-`operation.changed`）目前只存在于 `contractValidator.js` 的 `METHOD_CONTRACTS` 表里，
-前端无从得知。生成类型时把这个区分一起带出来，`profiles.scan` 那种错误就成了编译错误。
+生成结果同时导出 `OPERATION_METHODS` / `OperationMethod`：返回 `operationResult` 的方法
+与普通同步结果在编译期分开，`runOperation` 只能接收前者，`profiles.scan` 那种把 queued
+描述符当扫描数据的错误会直接成为编译错误。
 
 ### chrome-launcher 移植到 Rust
 

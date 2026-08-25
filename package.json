@@ -14,8 +14,10 @@
     "login": "node src/cli.js login",
     "run": "node src/cli.js run",
     "once": "node src/cli.js once",
-    "test": "node --test",
-    "test:node": "node --test"
+    "ipc:generate": "node scripts/generate-ipc-types.mjs",
+    "ipc:check": "node scripts/generate-ipc-types.mjs --check",
+    "test": "node --test --test-concurrency=4 \"test/**/*.test.js\"",
+    "test:node": "node --test --test-concurrency=4 \"test/**/*.test.js\""
   },
   "engines": {
     "node": ">=24 <25"
@@ -29,6 +31,7 @@
     "yaml": "2.9.0"
   },
   "devDependencies": {
-    "express": "4.22.2"
+    "express": "4.22.2",
+    "json-schema-to-typescript": "15.0.4"
   }
 }

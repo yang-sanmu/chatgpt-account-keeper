@@ -40,17 +40,12 @@ test("native dependency pruning keeps only the requested RID", (t) => {
   assert.deepEqual(fs.readdirSync(prebuildRoot), ["darwin-arm64.node"]);
 });
 
-test("cross-platform stage uses RID-specific executable names and immutable Agent layout", (t) => {
+test("cross-platform stage creates the exact Tauri resource layout", (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "keeper-stage-release-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const desktop = path.join(root, "desktop");
   const inputs = path.join(root, "inputs");
   const output = path.join(root, "stage");
-  fs.mkdirSync(desktop, { recursive: true });
   fs.mkdirSync(inputs, { recursive: true });
-  fs.writeFileSync(path.join(desktop, "GptAccountKeeper.Desktop"), "desktop");
-  fs.chmodSync(path.join(desktop, "GptAccountKeeper.Desktop"), 0o755);
-  fs.writeFileSync(path.join(desktop, "debug.pdb"), "debug");
   for (const name of ["node", "mihomo", "node-license", "mihomo-license"]) {
     fs.writeFileSync(path.join(inputs, name), name);
   }
@@ -58,7 +53,6 @@ test("cross-platform stage uses RID-specific executable names and immutable Agen
   stageRelease({
     version: "2.3.4",
     rid: "linux-x64",
-    desktopDirectory: desktop,
     nodeExecutable: path.join(inputs, "node"),
     nodeLicense: path.join(inputs, "node-license"),
     mihomoExecutable: path.join(inputs, "mihomo"),
@@ -68,8 +62,7 @@ test("cross-platform stage uses RID-specific executable names and immutable Agen
     verify: true,
   });
 
-  assert.equal(fs.readFileSync(path.join(output, "GptAccountKeeper.Desktop"), "utf8"), "desktop");
-  assert.equal(fs.existsSync(path.join(output, "debug.pdb")), false);
+  assert.deepEqual(fs.readdirSync(output).sort(), ["SHA256SUMS", "agent", "licenses"]);
   assert.equal(fs.readFileSync(path.join(output, "agent", "runtime", "node"), "utf8"), "node");
   assert.equal(fs.readFileSync(path.join(output, "agent", "bin", "mihomo"), "utf8"), "mihomo");
   assert.equal(fs.existsSync(path.join(output, "agent", "runtime", "node.exe")), false);
@@ -92,12 +85,9 @@ test("cross-platform stage uses RID-specific executable names and immutable Agen
 test("Windows staging 把 chrome-launcher broker 放在 agent/bin，与 mihomo 同层", (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "stage-broker-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const desktop = path.join(root, "desktop");
   const inputs = path.join(root, "inputs");
   const output = path.join(root, "stage");
-  fs.mkdirSync(desktop, { recursive: true });
   fs.mkdirSync(inputs, { recursive: true });
-  fs.writeFileSync(path.join(desktop, "GptAccountKeeper.Desktop.exe"), "desktop");
   for (const name of ["node.exe", "mihomo.exe", "node-license", "mihomo-license", "chrome-launcher.exe"]) {
     fs.writeFileSync(path.join(inputs, name), name);
   }
@@ -105,7 +95,6 @@ test("Windows staging 把 chrome-launcher broker 放在 agent/bin，与 mihomo �
   stageRelease({
     version: "2.3.4",
     rid: "win-x64",
-    desktopDirectory: desktop,
     nodeExecutable: path.join(inputs, "node.exe"),
     nodeLicense: path.join(inputs, "node-license"),
     mihomoExecutable: path.join(inputs, "mihomo.exe"),
@@ -127,11 +116,8 @@ test("Windows staging 把 chrome-launcher broker 放在 agent/bin，与 mihomo �
 test("Windows staging 缺少 broker 时必须直接失败，不产出半个包", (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "stage-nobroker-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const desktop = path.join(root, "desktop");
   const inputs = path.join(root, "inputs");
-  fs.mkdirSync(desktop, { recursive: true });
   fs.mkdirSync(inputs, { recursive: true });
-  fs.writeFileSync(path.join(desktop, "GptAccountKeeper.Desktop.exe"), "desktop");
   for (const name of ["node.exe", "mihomo.exe", "node-license", "mihomo-license"]) {
     fs.writeFileSync(path.join(inputs, name), name);
   }
@@ -142,7 +128,6 @@ test("Windows staging 缺少 broker 时必须直接失败，不产出半个包",
     () => stageRelease({
       version: "2.3.4",
       rid: "win-x64",
-      desktopDirectory: desktop,
       nodeExecutable: path.join(inputs, "node.exe"),
       nodeLicense: path.join(inputs, "node-license"),
       mihomoExecutable: path.join(inputs, "mihomo.exe"),

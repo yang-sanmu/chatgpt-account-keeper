@@ -48,7 +48,6 @@ function fixture() {
   for (const document of ["LICENSE", "THIRD_PARTY_NOTICES.md", "PRIVACY.md", "SOURCE.md"]) {
     fs.writeFileSync(path.join(dir, "licenses", document), document);
   }
-  fs.writeFileSync(path.join(dir, "GptAccountKeeper.Desktop.exe"), "desktop");
   return dir;
 }
 
@@ -73,10 +72,19 @@ test("release verifier rejects Chromium and the legacy web panel", (t) => {
 test("release verifier rejects native debug symbols", (t) => {
   const dir = fixture();
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  fs.writeFileSync(path.join(dir, "GptAccountKeeper.Desktop.pdb"), "debug symbols");
+  fs.writeFileSync(path.join(dir, "agent", "bin", "chrome-launcher.pdb"), "debug symbols");
   const result = spawnSync(process.execPath, [script, dir], { encoding: "utf8" });
   assert.equal(result.status, 1);
-  assert.match(result.stderr, /GptAccountKeeper\.Desktop\.pdb/);
+  assert.match(result.stderr, /chrome-launcher\.pdb/);
+});
+
+test("release verifier rejects the legacy desktop executable in the Tauri resource root", (t) => {
+  const dir = fixture();
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(dir, "GptAccountKeeper.Desktop.exe"), "legacy desktop");
+  const result = spawnSync(process.execPath, [script, dir], { encoding: "utf8" });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /GptAccountKeeper\.Desktop\.exe/);
 });
 
 test("release verifier rejects a package without the site selectors", (t) => {

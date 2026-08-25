@@ -20,7 +20,6 @@ const nativePrebuildByRid = {
 export function stageRelease({
   version,
   rid,
-  desktopDirectory,
   nodeExecutable,
   nodeLicense,
   mihomoExecutable,
@@ -37,7 +36,6 @@ export function stageRelease({
   }
   if (!supportedRids.has(rid)) throw new Error(`Unsupported release RID: ${rid}`);
 
-  const desktopRoot = requireDirectory(desktopDirectory, "Desktop publish directory");
   const nodeFile = requireFile(nodeExecutable, "Node executable");
   const nodeLicenseFile = requireFile(nodeLicense, "Node license");
   const mihomoFile = requireFile(mihomoExecutable, "mihomo executable");
@@ -49,20 +47,14 @@ export function stageRelease({
     : null;
   const outputRoot = path.resolve(outputDirectory ?? "");
   if (!outputDirectory) throw new Error("Output directory is required");
-  assertNoPathOverlap(outputRoot, desktopRoot, "release stage", "Desktop publish directory");
   if (fs.existsSync(outputRoot) && fs.readdirSync(outputRoot).length > 0) {
     throw new Error(`Release stage must be a new or empty directory: ${outputRoot}`);
   }
 
   fs.mkdirSync(outputRoot, { recursive: true });
-  copyTree(desktopRoot, outputRoot, {
-    include(relative, entry) {
-      if (entry.isDirectory()) return true;
-      if (path.extname(relative).toLowerCase() === ".pdb") return false;
-      return !rid.startsWith("osx-") || relative !== "Info.plist";
-    },
-  });
-
+  // outputRoot is the exact directory mapped to Tauri's $RESOURCE root. The
+  // application binary and installer are produced later by `tauri build`; copying
+  // the legacy Avalonia publish directory here would silently ship two managers.
   const agentRoot = path.join(outputRoot, "agent");
   const agentSource = path.join(agentRoot, "src");
   const agentRuntime = path.join(agentRoot, "runtime");
@@ -165,29 +157,12 @@ export function pruneNativePrebuilds(agentRoot, rid) {
   }
 }
 
-function requireDirectory(value, label) {
-  const resolved = path.resolve(value ?? "");
-  if (!value || !fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) {
-    throw new Error(`${label} does not exist: ${resolved}`);
-  }
-  return resolved;
-}
-
 function requireFile(value, label) {
   const resolved = path.resolve(value ?? "");
   if (!value || !fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) {
     throw new Error(`${label} does not exist: ${resolved}`);
   }
   return resolved;
-}
-
-function assertNoPathOverlap(left, right, leftLabel, rightLabel) {
-  const relative = path.relative(left, right);
-  const reverse = path.relative(right, left);
-  const contains = (value) => value === "" || (!value.startsWith("..") && !path.isAbsolute(value));
-  if (contains(relative) || contains(reverse)) {
-    throw new Error(`${leftLabel} must not overlap ${rightLabel}`);
-  }
 }
 
 function copyTree(source, destination, { include = () => true } = {}) {
@@ -253,7 +228,6 @@ function main() {
     options: {
       version: { type: "string" },
       rid: { type: "string" },
-      desktop: { type: "string" },
       node: { type: "string" },
       "node-license": { type: "string" },
       mihomo: { type: "string" },
@@ -265,7 +239,6 @@ function main() {
   stageRelease({
     version: values.version,
     rid: values.rid,
-    desktopDirectory: values.desktop,
     nodeExecutable: values.node,
     nodeLicense: values["node-license"],
     mihomoExecutable: values.mihomo,

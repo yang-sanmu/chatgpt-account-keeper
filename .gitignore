@@ -10,6 +10,7 @@ tools/**/obj/
 artifacts/
 Releases/
 *.AppImage
+/tmp/
 
 # Local SQLite runtime files (fixtures under test/fixtures stay explicit)
 keeper.db
@@ -18,6 +19,11 @@ keeper.db-shm
 
 # 敏感：账号登录态（cookies/session），泄露即账号被盗
 profiles/
+
+# React 页面目录，不是账号登录态数据。Windows 的 Git ignore 大小写不敏感，
+# 上面的 profiles/ 否则会把 app/src/pages/Profiles/ 一并吞掉。
+!app/src/pages/Profiles/
+!app/src/pages/Profiles/**
 
 # 敏感：已归档账号的完整浏览器登录态
 profiles-archive/
@@ -64,3 +70,4 @@ app/node_modules/
 app/dist/
 app/src-tauri/target/
 app/src-tauri/gen/
+app/src-tauri/release-resources/

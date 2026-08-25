@@ -70,10 +70,11 @@ export const ConversationsPage: React.FC = () => {
 
     setSubmitting(true);
     try {
+      const originalName = modalState.originalName;
       const isRenaming =
         modalState.mode === "edit" &&
-        modalState.originalName &&
-        modalState.originalName !== trimmedName;
+        Boolean(originalName) &&
+        originalName !== trimmedName;
 
       const newSet: ConversationSet = {
         topic: trimmedTopic,
@@ -85,7 +86,7 @@ export const ConversationsPage: React.FC = () => {
       const cid1 = await newCommandId();
       await agentCall("conversations.upsert", { name: trimmedName, set: newSet }, cid1);
 
-      if (isRenaming) {
+      if (isRenaming && originalName) {
         // 第二步单独 catch。
         //
         // upsert 成功而 remove 失败时，磁盘上**两个**会话集同时存在，而用户看到的只是
@@ -93,11 +94,11 @@ export const ConversationsPage: React.FC = () => {
         // 留下一个多出来的会话集在调度里继续被引用。这里必须说清当前的真实状态。
         try {
           const cid2 = await newCommandId();
-          await agentCall("conversations.remove", { name: modalState.originalName }, cid2);
+          await agentCall("conversations.remove", { name: originalName }, cid2);
           toast.success(`会话集已重命名为「${trimmedName}」`);
         } catch (removeError) {
           toast.error(
-            `新会话集「${trimmedName}」已创建，但旧的「${modalState.originalName}」删除失败，` +
+            `新会话集「${trimmedName}」已创建，但旧的「${originalName}」删除失败，` +
               `现在两个都存在。请手动删除旧的那个，否则它会继续参与调度。`,
             removeError
           );

@@ -18,6 +18,9 @@ import type {
   MigrationProgress,
   StartupInfo,
   UpdateStatus,
+  IpcMethod,
+  IpcParams,
+  IpcResult,
 } from "./types";
 import { TAURI_EVENTS } from "./constants";
 
@@ -51,15 +54,15 @@ export function normalizeApiError(error: unknown): ApiError {
 }
 
 // 统一业务 IPC 通道
-export async function agentCall<T>(
-  method: string,
-  params?: unknown,
+export async function agentCall<M extends IpcMethod>(
+  method: M,
+  params: IpcParams<M>,
   commandId?: string
-): Promise<T> {
+): Promise<IpcResult<M>> {
   try {
-    const result = await invoke<T>("agent_call", {
+    const result = await invoke<IpcResult<M>>("agent_call", {
       method,
-      params: params ?? {},
+      params,
       commandId: commandId ?? null,
     });
     return result;

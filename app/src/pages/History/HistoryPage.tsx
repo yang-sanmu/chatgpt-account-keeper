@@ -22,14 +22,7 @@ export const HistoryPage: React.FC = () => {
   const fetchAccounts = async () => {
     setLoadingAccounts(true);
     try {
-      const res = await agentCall<HistoryAccount[] | { accounts: HistoryAccount[] }>(
-        "history.listAccounts"
-      );
-      const list = Array.isArray(res)
-        ? res
-        : Array.isArray((res as { accounts: unknown }).accounts)
-        ? (res as { accounts: HistoryAccount[] }).accounts
-        : [];
+      const list = await agentCall("history.listAccounts", {});
       setAccounts(list);
       if (list.length > 0 && !selectedAccountId) {
         setSelectedAccountId(list[0]?.accountId ?? null);
@@ -45,15 +38,7 @@ export const HistoryPage: React.FC = () => {
   const fetchAccountHistory = async (accountId: string) => {
     setLoadingHistory(true);
     try {
-      const res = await agentCall<HistoryEntry[] | { entries: HistoryEntry[] }>(
-        "history.query",
-        { accountId, limit: 100 }
-      );
-      const list = Array.isArray(res)
-        ? res
-        : Array.isArray((res as { entries: unknown }).entries)
-        ? (res as { entries: HistoryEntry[] }).entries
-        : [];
+      const list = await agentCall("history.query", { accountId, limit: 100 });
       setHistoryEntries(list);
     } catch (err) {
       toast.error("查询账号对话历史失败", err);

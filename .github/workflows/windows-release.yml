@@ -1,560 +1,104 @@
-name: Cross-platform release candidate
+name: Cross-platform Tauri release candidate
 
-# Only workflow_dispatch. The aggregate job creates the tag only after all four
-# RID packages have passed their native runner gates, so a tag trigger would
-# rebuild a version already present in each VeloPack channel.
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: SemVer without the v prefix
+        description: Tauri release version (without v)
         required: true
         type: string
       release_notes:
-        description: Markdown update summary embedded in every VeloPack channel and shown by the desktop update prompt
+        description: User-facing Markdown update summary
         required: true
         type: string
       publish_draft:
-        description: Upload to a GitHub draft Release (leave false to keep the build as a workflow artifact only)
+        description: Create the shared GitHub draft after all signing gates pass
         required: true
         default: false
         type: boolean
       n_minus_one_verified:
-        description: Confirm installed N-1 to N checks passed on every applicable platform, with Agent restart and data intact
+        description: Candidate install and data-retention checks are complete
         required: true
         default: false
         type: boolean
 
 permissions:
+  actions: read
   contents: write
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: tauri-release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  package:
-    name: Windows win-x64 candidate
-    runs-on: windows-latest
+  gate:
+    name: Release metadata and signing gate
+    runs-on: ubuntu-22.04
     env:
-      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
-      SIGNING_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_BASE64 }}
-      SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_PASSWORD }}
+      GAK_RELEASE_NOTES: ${{ inputs.release_notes }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
           node-version-file: .node-version
-          cache: npm
 
-      - uses: actions/setup-dotnet@v4
-        with:
-          global-json-file: desktop/global.json
+      - name: Verify the independent Tauri version line
+        run: node scripts/verify-release-version.mjs '${{ inputs.version }}'
 
-      - name: Resolve and validate version
-        id: version
-        shell: pwsh
+      - name: Validate release notes and updater signing configuration
+        shell: bash
         run: |
-          $version = '${{ inputs.version }}'
-          if ($version -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$') {
-            throw "Version must be SemVer: $version"
-          }
-          "version=$version" >> $env:GITHUB_OUTPUT
+          node scripts/write-release-notes.mjs artifacts/release-notes.md
+          node -e "const fs=require('fs');const c=JSON.parse(fs.readFileSync('app/src-tauri/tauri.conf.json','utf8'));const k=c.plugins?.updater?.pubkey;if(!k||/PLACEHOLDER/i.test(k)){throw new Error('Replace the M5 updater public-key placeholder before building a release')}"
+          if [[ -z "$TAURI_SIGNING_PRIVATE_KEY" ]]; then
+            echo 'TAURI_SIGNING_PRIVATE_KEY is required to create updater artifacts.' >&2
+            exit 1
+          fi
+          if [[ -z "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" ]]; then
+            echo 'TAURI_SIGNING_PRIVATE_KEY_PASSWORD is required for the encrypted updater key.' >&2
+            exit 1
+          fi
 
-      - name: Verify committed release versions agree
-        run: node scripts/verify-release-version.mjs ${{ steps.version.outputs.version }}
-
-      - name: Publish chrome-launcher broker
-        run: >-
-          dotnet publish
-          tools/chrome-launcher/ChromeLauncher.csproj
-          -c Release
-          -r win-x64
-          -o artifacts/chrome-launcher
-
-      # Missing signing material still produces an internal inspection artifact,
-      # but the aggregate job refuses to create a GitHub draft from it.
-      - name: Report signing mode
-        shell: pwsh
-        run: |
-          if ([string]::IsNullOrWhiteSpace($env:SIGNING_CERTIFICATE_BASE64) -or
-              [string]::IsNullOrWhiteSpace($env:SIGNING_CERTIFICATE_PASSWORD)) {
-            Write-Host 'No signing certificate configured: building UNSIGNED artifacts.'
-            Write-Host 'Windows SmartScreen will warn on first run of the installer and main executable.'
-            'signed=false' >> $env:GITHUB_OUTPUT
-          } else {
-            Write-Host 'Signing certificate present: artifacts will be Authenticode signed.'
-            'signed=true' >> $env:GITHUB_OUTPUT
-          }
-        id: signing
-
-      - name: Install dependencies and test
-        env:
-          GPT_ACCOUNT_KEEPER_CHROME_LAUNCHER: ${{ github.workspace }}/artifacts/chrome-launcher/chrome-launcher.exe
-        run: |
-          npm ci --ignore-scripts --no-audit --no-fund
-          npm test
-          dotnet test desktop/GptAccountKeeper.Desktop.sln -c Release
-
-      - name: Publish Avalonia NativeAOT
-        run: >-
-          dotnet publish
-          desktop/src/GptAccountKeeper.Desktop/GptAccountKeeper.Desktop.csproj
-          -c Release
-          -r win-x64
-          -p:Version=${{ steps.version.outputs.version }}
-          -o artifacts/desktop
-
-      - name: Download pinned private runtimes
-        run: >-
-          node scripts/download-release-runtime.mjs
-          --rid win-x64
-          --output artifacts/runtimes
-
-      - name: Stage private Agent and verify release contents
-        shell: pwsh
-        run: |
-          ./scripts/stage-windows-release.ps1 `
-            -Version ${{ steps.version.outputs.version }} `
-            -DesktopPublishDirectory artifacts/desktop `
-            -NodeDirectory artifacts/runtimes/node `
-            -MihomoExecutable artifacts/runtimes/mihomo/mihomo.exe `
-            -MihomoLicense artifacts/runtimes/mihomo/LICENSE `
-            -ChromeLauncherExecutable artifacts/chrome-launcher/chrome-launcher.exe `
-            -OutputDirectory artifacts/stage
-          npm sbom --prefix artifacts/stage/agent --omit=dev --package-lock-only --sbom-format cyclonedx | Out-File artifacts/stage/licenses/agent.cdx.json -Encoding utf8
-          if ($LASTEXITCODE -ne 0) { throw 'Agent SBOM generation failed' }
-          node scripts/verify-package.mjs artifacts/stage ${{ steps.version.outputs.version }} win-x64
-          node scripts/smoke-staged-agent.mjs artifacts/stage
-
-      - name: Install pinned VeloPack CLI
-        run: dotnet tool install --global vpk --version 1.2.0
-
-      - name: Prepare user-facing release notes
-        env:
-          GAK_RELEASE_NOTES: ${{ inputs.release_notes }}
-        run: node scripts/write-release-notes.mjs artifacts/release-notes.md
-
-      - name: Download previous release for delta generation
-        continue-on-error: true
-        run: >-
-          vpk download github
-          --repoUrl https://github.com/yang-sanmu/chatgpt-account-keeper
-          --token ${{ github.token }}
-          --outputDir artifacts/Releases
-
-      - name: Decode signing certificate
-        if: steps.signing.outputs.signed == 'true'
-        shell: pwsh
-        run: |
-          [IO.File]::WriteAllBytes(
-            (Join-Path $env:RUNNER_TEMP 'keeper-signing.pfx'),
-            [Convert]::FromBase64String($env:SIGNING_CERTIFICATE_BASE64))
-
-      - name: Create signed VeloPack package
-        if: steps.signing.outputs.signed == 'true'
-        shell: pwsh
-        run: |
-          $certificate = Join-Path $env:RUNNER_TEMP 'keeper-signing.pfx'
-          $signParams = "/td sha256 /fd sha256 /f `"$certificate`" /p `"$env:SIGNING_CERTIFICATE_PASSWORD`" /tr http://timestamp.digicert.com"
-          vpk pack `
-            --packId GptAccountKeeper.Desktop `
-            --packVersion ${{ steps.version.outputs.version }} `
-            --packTitle 'ChatGPT Account Keeper' `
-            --packAuthors 'yang-sanmu' `
-            --releaseNotes artifacts/release-notes.md `
-            --packDir artifacts/stage `
-            --mainExe GptAccountKeeper.Desktop.exe `
-            --icon desktop/src/GptAccountKeeper.Desktop/app-icon.ico `
-            --runtime win-x64 `
-            --outputDir artifacts/Releases `
-            --signParams $signParams
-
-      - name: Create unsigned VeloPack package
-        if: steps.signing.outputs.signed != 'true'
-        run: >-
-          vpk pack
-          --packId GptAccountKeeper.Desktop
-          --packVersion ${{ steps.version.outputs.version }}
-          --packTitle "ChatGPT Account Keeper"
-          --packAuthors "yang-sanmu"
-          --releaseNotes artifacts/release-notes.md
-          --packDir artifacts/stage
-          --mainExe GptAccountKeeper.Desktop.exe
-          --icon desktop/src/GptAccountKeeper.Desktop/app-icon.ico
-          --runtime win-x64
-          --outputDir artifacts/Releases
-
-      - name: Verify Authenticode signatures
-        if: steps.signing.outputs.signed == 'true'
-        shell: pwsh
-        run: |
-          $executables = Get-ChildItem artifacts/Releases -File -Filter '*.exe'
-          if ($executables.Count -eq 0) { throw 'VeloPack produced no Windows executables' }
-          foreach ($executable in $executables) {
-            $signature = Get-AuthenticodeSignature $executable.FullName
-            if ($signature.Status -ne 'Valid') {
-              throw "Invalid signature on $($executable.Name): $($signature.Status)"
-            }
-          }
-
-      # Compliance files stay separate from VeloPack's delta cache until the
-      # per-job collector selects this build's exact upload set.
-      - name: Create compliance directory
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory artifacts/compliance -Force | Out-Null
-          if ('${{ steps.signing.outputs.signed }}' -ne 'true') {
-            @(
-              'Windows Authenticode secrets were not all configured.'
-              'This candidate is for CI inspection only and must not be published.'
-            ) | Set-Content artifacts/compliance/UNSIGNED-win-x64.txt -Encoding utf8
-          }
-
-      - name: Generate release SBOM
-        uses: anchore/sbom-action@v0
-        with:
-          path: artifacts/stage
-          format: spdx-json
-          output-file: artifacts/compliance/GptAccountKeeper.Desktop-${{ steps.version.outputs.version }}-win-x64.spdx.json
-
-      - name: Bundle corresponding source
-        shell: pwsh
-        run: |
-          $version = '${{ steps.version.outputs.version }}'
-          $versions = Get-Content build/runtime-versions.json -Raw | ConvertFrom-Json
-          New-Item -ItemType Directory artifacts/compliance -Force | Out-Null
-
-          git archive --format=zip --output "artifacts/compliance/chatgpt-account-keeper-$version-source.zip" HEAD
-          if ($LASTEXITCODE -ne 0) { throw 'Project source archive generation failed' }
-
-          $mihomoSource = "artifacts/compliance/mihomo-v$($versions.mihomo.version)-source.zip"
-          Invoke-WebRequest `
-            "https://github.com/MetaCubeX/mihomo/archive/refs/tags/v$($versions.mihomo.version).zip" `
-            -OutFile $mihomoSource
-
-      - name: Collect only assets created by this build
-        run: >-
-          node scripts/collect-release-assets.mjs
-          --releases artifacts/Releases
-          --compliance artifacts/compliance
-          --channel win
-          --output artifacts/upload
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: GptAccountKeeper.Desktop-win-x64-${{ steps.version.outputs.version }}
-          path: artifacts/upload
-          if-no-files-found: error
-
-      - name: Remove signing material
-        if: always()
-        shell: pwsh
-        run: |
-          $certificate = Join-Path $env:RUNNER_TEMP 'keeper-signing.pfx'
-          if (Test-Path -LiteralPath $certificate) {
-            Remove-Item -LiteralPath $certificate -Force
-          }
-
-  macos:
-    name: macOS ${{ matrix.rid }} candidate
+  build:
+    name: Tauri ${{ matrix.rid }} candidate
+    needs: gate
     strategy:
       fail-fast: false
       matrix:
         include:
-          - rid: osx-arm64
-            runner: macos-15
-            architecture: arm64
-          - rid: osx-x64
-            runner: macos-15-intel
-            architecture: x86_64
+          - runner: windows-latest
+            rid: win-x64
+            target: x86_64-pc-windows-msvc
+            bundles: nsis
+          - runner: macos-15
+            rid: osx-arm64
+            target: aarch64-apple-darwin
+            bundles: app,dmg
+          - runner: macos-15-intel
+            rid: osx-x64
+            target: x86_64-apple-darwin
+            bundles: app,dmg
+          - runner: ubuntu-22.04
+            rid: linux-x64
+            target: x86_64-unknown-linux-gnu
+            bundles: appimage,deb,rpm
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 75
     env:
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
-      MACOS_APP_CERTIFICATE_BASE64: ${{ secrets.MACOS_APP_CERTIFICATE_BASE64 }}
-      MACOS_INSTALLER_CERTIFICATE_BASE64: ${{ secrets.MACOS_INSTALLER_CERTIFICATE_BASE64 }}
-      MACOS_P12_PASSWORD: ${{ secrets.MACOS_P12_PASSWORD }}
-      MACOS_KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
-      MACOS_APP_IDENTITY: ${{ secrets.MACOS_APP_IDENTITY }}
-      MACOS_INSTALLER_IDENTITY: ${{ secrets.MACOS_INSTALLER_IDENTITY }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      WINDOWS_SIGNING_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_BASE64 }}
+      WINDOWS_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_PASSWORD }}
+      APPLE_CERTIFICATE: ${{ secrets.MACOS_APP_CERTIFICATE_BASE64 }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_P12_PASSWORD }}
+      APPLE_SIGNING_IDENTITY: ${{ secrets.MACOS_APP_IDENTITY }}
       APPLE_ID: ${{ secrets.APPLE_ID }}
-      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      APPLE_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .node-version
-          cache: npm
-
-      - uses: actions/setup-dotnet@v4
-        with:
-          global-json-file: desktop/global.json
-
-      - name: Resolve and validate version
-        id: version
-        shell: bash
-        run: |
-          set -euo pipefail
-          version='${{ inputs.version }}'
-          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
-            echo "Version must be SemVer: $version" >&2
-            exit 1
-          fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-
-      - name: Verify committed release versions agree
-        run: node scripts/verify-release-version.mjs '${{ steps.version.outputs.version }}'
-
-      - name: Install dependencies and test
-        run: |
-          npm ci --ignore-scripts --no-audit --no-fund
-          npm test
-          dotnet test desktop/GptAccountKeeper.Desktop.sln -c Release
-
-      - name: Publish Avalonia NativeAOT
-        run: >-
-          dotnet publish
-          desktop/src/GptAccountKeeper.Desktop/GptAccountKeeper.Desktop.csproj
-          -c Release
-          -r ${{ matrix.rid }}
-          -p:Version=${{ steps.version.outputs.version }}
-          -o artifacts/desktop
-
-      - name: Download and verify pinned private runtimes
-        run: >-
-          node scripts/download-release-runtime.mjs
-          --rid ${{ matrix.rid }}
-          --output artifacts/runtimes
-
-      - name: Stage private Agent and verify release contents
-        run: |
-          node scripts/stage-release.mjs \
-            --version '${{ steps.version.outputs.version }}' \
-            --rid '${{ matrix.rid }}' \
-            --desktop artifacts/desktop \
-            --node artifacts/runtimes/node/node \
-            --node-license artifacts/runtimes/node/LICENSE \
-            --mihomo artifacts/runtimes/mihomo/mihomo \
-            --mihomo-license artifacts/runtimes/mihomo/LICENSE \
-            --output artifacts/stage
-          npm sbom --prefix artifacts/stage/agent --omit=dev --package-lock-only --sbom-format cyclonedx \
-            > artifacts/stage/licenses/agent.cdx.json
-          node scripts/verify-package.mjs \
-            artifacts/stage '${{ steps.version.outputs.version }}' '${{ matrix.rid }}'
-          node scripts/smoke-staged-agent.mjs artifacts/stage
-
-      - name: Verify staged binary architectures
-        shell: bash
-        run: |
-          set -euo pipefail
-          plutil -lint artifacts/desktop/Info.plist
-          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' artifacts/desktop/Info.plist)" = \
-            "$(printf '%s' '${{ steps.version.outputs.version }}' | sed 's/-.*$//')"
-          test ! -e artifacts/stage/Info.plist
-          for binary in \
-            artifacts/stage/GptAccountKeeper.Desktop \
-            artifacts/stage/agent/runtime/node \
-            artifacts/stage/agent/bin/mihomo; do
-            file "$binary"
-            file "$binary" | grep -q '${{ matrix.architecture }}'
-          done
-          native="artifacts/stage/agent/node_modules/better-sqlite3/prebuilds"
-          test "$(find "$native" -type f -name '*.node' | wc -l | tr -d ' ')" = 1
-          file "$native"/*.node | grep -q '${{ matrix.architecture }}'
-
-      - name: Install pinned VeloPack CLI
-        run: dotnet tool install --global vpk --version 1.2.0
-
-      - name: Prepare user-facing release notes
-        env:
-          GAK_RELEASE_NOTES: ${{ inputs.release_notes }}
-        run: node scripts/write-release-notes.mjs artifacts/release-notes.md
-
-      - name: Download previous architecture release for deltas
-        continue-on-error: true
-        run: >-
-          vpk download github
-          --repoUrl https://github.com/yang-sanmu/chatgpt-account-keeper
-          --token ${{ github.token }}
-          --channel ${{ matrix.rid }}
-          --outputDir artifacts/Releases
-
-      - name: Detect Apple signing configuration
-        id: signing
-        shell: bash
-        run: |
-          set -euo pipefail
-          configured=true
-          for name in \
-            MACOS_APP_CERTIFICATE_BASE64 MACOS_INSTALLER_CERTIFICATE_BASE64 \
-            MACOS_P12_PASSWORD MACOS_KEYCHAIN_PASSWORD MACOS_APP_IDENTITY \
-            MACOS_INSTALLER_IDENTITY APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
-            if [[ -z "${!name:-}" ]]; then configured=false; fi
-          done
-          echo "configured=$configured" >> "$GITHUB_OUTPUT"
-          mkdir -p artifacts/compliance
-          if [[ "$configured" != true ]]; then
-            printf '%s\n' \
-              'Apple signing/notarization secrets were not all configured.' \
-              'This candidate is for CI inspection only and must not be published.' \
-              > 'artifacts/compliance/UNSIGNED-${{ matrix.rid }}.txt'
-          fi
-
-      - name: Install Apple certificates and notary profile
-        if: steps.signing.outputs.configured == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          app_certificate="$RUNNER_TEMP/app-certificate.p12"
-          installer_certificate="$RUNNER_TEMP/installer-certificate.p12"
-          keychain="$RUNNER_TEMP/gpt-account-keeper.keychain-db"
-          printf '%s' "$MACOS_APP_CERTIFICATE_BASE64" | /usr/bin/base64 -D > "$app_certificate"
-          printf '%s' "$MACOS_INSTALLER_CERTIFICATE_BASE64" | /usr/bin/base64 -D > "$installer_certificate"
-          security create-keychain -p "$MACOS_KEYCHAIN_PASSWORD" "$keychain"
-          security set-keychain-settings -lut 21600 "$keychain"
-          security unlock-keychain -p "$MACOS_KEYCHAIN_PASSWORD" "$keychain"
-          security import "$app_certificate" -P "$MACOS_P12_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
-          security import "$installer_certificate" -P "$MACOS_P12_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
-          security set-key-partition-list \
-            -S apple-tool:,apple:,codesign: -s -k "$MACOS_KEYCHAIN_PASSWORD" "$keychain"
-          security list-keychains -d user -s "$keychain"
-          xcrun notarytool store-credentials gpt-account-keeper \
-            --apple-id "$APPLE_ID" \
-            --team-id "$APPLE_TEAM_ID" \
-            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
-            --keychain "$keychain"
-
-      - name: Create signed and notarized VeloPack packages
-        if: steps.signing.outputs.configured == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          vpk pack \
-            --packId GptAccountKeeper.Desktop \
-            --packVersion '${{ steps.version.outputs.version }}' \
-            --packTitle 'ChatGPT Account Keeper' \
-            --packAuthors 'yang-sanmu' \
-            --releaseNotes artifacts/release-notes.md \
-            --packDir artifacts/stage \
-            --mainExe GptAccountKeeper.Desktop \
-            --icon desktop/src/GptAccountKeeper.Desktop/app-icon.icns \
-            --plist artifacts/desktop/Info.plist \
-            --runtime '${{ matrix.rid }}' \
-            --channel '${{ matrix.rid }}' \
-            --outputDir artifacts/Releases \
-            --signAppIdentity "$MACOS_APP_IDENTITY" \
-            --signInstallIdentity "$MACOS_INSTALLER_IDENTITY" \
-            --notaryProfile gpt-account-keeper \
-            --keychain "$RUNNER_TEMP/gpt-account-keeper.keychain-db"
-
-      - name: Create unsigned VeloPack inspection packages
-        if: steps.signing.outputs.configured != 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          vpk pack \
-            --packId GptAccountKeeper.Desktop \
-            --packVersion '${{ steps.version.outputs.version }}' \
-            --packTitle 'ChatGPT Account Keeper' \
-            --packAuthors 'yang-sanmu' \
-            --releaseNotes artifacts/release-notes.md \
-            --packDir artifacts/stage \
-            --mainExe GptAccountKeeper.Desktop \
-            --icon desktop/src/GptAccountKeeper.Desktop/app-icon.icns \
-            --plist artifacts/desktop/Info.plist \
-            --runtime '${{ matrix.rid }}' \
-            --channel '${{ matrix.rid }}' \
-            --outputDir artifacts/Releases
-
-      - name: Create DMG from the VeloPack portable app
-        id: dmg
-        shell: bash
-        run: |
-          set -euo pipefail
-          portable="$(find artifacts/Releases -maxdepth 1 -type f -name '*-Portable.zip' -print -quit)"
-          test -n "$portable"
-          mkdir -p artifacts/dmg-root
-          ditto -x -k "$portable" artifacts/dmg-root
-          app="$(find artifacts/dmg-root -maxdepth 2 -type d -name '*.app' -print -quit)"
-          test -n "$app"
-          dmg="artifacts/Releases/GptAccountKeeper.Desktop-${{ steps.version.outputs.version }}-${{ matrix.rid }}.dmg"
-          hdiutil create -volname 'ChatGPT Account Keeper' -srcfolder "$app" -ov -format UDZO "$dmg"
-          echo "app=$app" >> "$GITHUB_OUTPUT"
-          echo "path=$dmg" >> "$GITHUB_OUTPUT"
-
-      - name: Notarize and staple DMG
-        if: steps.signing.outputs.configured == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          keychain="$RUNNER_TEMP/gpt-account-keeper.keychain-db"
-          xcrun notarytool submit '${{ steps.dmg.outputs.path }}' \
-            --keychain-profile gpt-account-keeper --keychain "$keychain" --wait
-          xcrun stapler staple '${{ steps.dmg.outputs.path }}'
-
-      - name: Verify signed Apple artifacts
-        if: steps.signing.outputs.configured == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          codesign --verify --deep --strict --verbose=2 '${{ steps.dmg.outputs.app }}'
-          spctl --assess --type execute --verbose=2 '${{ steps.dmg.outputs.app }}'
-          pkg="$(find artifacts/Releases -maxdepth 1 -type f -name '*.pkg' -print -quit)"
-          test -n "$pkg"
-          pkgutil --check-signature "$pkg"
-          spctl --assess --type install --verbose=2 "$pkg"
-          xcrun stapler validate "$pkg"
-          xcrun stapler validate '${{ steps.dmg.outputs.path }}'
-
-      - name: Verify macOS release output set
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -n "$(find artifacts/Releases -maxdepth 1 -type f -name '*.pkg' -print -quit)"
-          test -n "$(find artifacts/Releases -maxdepth 1 -type f -name '*-Portable.zip' -print -quit)"
-          test -n "$(find artifacts/Releases -maxdepth 1 -type f -name '*-full.nupkg' -print -quit)"
-          test -f 'artifacts/Releases/releases.${{ matrix.rid }}.json'
-          test -f '${{ steps.dmg.outputs.path }}'
-
-      - name: Generate release SBOM
-        uses: anchore/sbom-action@v0
-        with:
-          path: artifacts/stage
-          format: spdx-json
-          output-file: artifacts/compliance/GptAccountKeeper.Desktop-${{ steps.version.outputs.version }}-${{ matrix.rid }}.spdx.json
-
-      - name: Collect only assets created by this build
-        run: >-
-          node scripts/collect-release-assets.mjs
-          --releases artifacts/Releases
-          --compliance artifacts/compliance
-          --channel '${{ matrix.rid }}'
-          --extra '${{ steps.dmg.outputs.path }}'
-          --output artifacts/upload
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: GptAccountKeeper.Desktop-${{ matrix.rid }}-${{ steps.version.outputs.version }}
-          path: artifacts/upload
-          if-no-files-found: error
-
-      - name: Remove Apple signing material
-        if: always()
-        shell: bash
-        run: |
-          set +e
-          security delete-keychain "$RUNNER_TEMP/gpt-account-keeper.keychain-db" 2>/dev/null
-          rm -f "$RUNNER_TEMP/app-certificate.p12" "$RUNNER_TEMP/installer-certificate.p12"
-
-  linux:
-    name: Linux linux-x64 candidate
-    runs-on: ubuntu-24.04
-    env:
-      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
-      APPIMAGE_EXTRACT_AND_RUN: "1"
       LINUX_MINISIGN_SECRET_KEY_BASE64: ${{ secrets.LINUX_MINISIGN_SECRET_KEY_BASE64 }}
       LINUX_MINISIGN_PASSWORD: ${{ secrets.LINUX_MINISIGN_PASSWORD }}
       LINUX_MINISIGN_PUBLIC_KEY: ${{ secrets.LINUX_MINISIGN_PUBLIC_KEY }}
@@ -565,331 +109,354 @@ jobs:
         with:
           node-version-file: .node-version
           cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            app/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri -> target
+          key: ${{ matrix.target }}
 
       - uses: actions/setup-dotnet@v4
+        if: matrix.rid == 'win-x64'
         with:
           global-json-file: desktop/global.json
 
-      - name: Resolve and validate version
-        id: version
-        shell: bash
+      - name: Install Linux Tauri bundler prerequisites
+        if: matrix.rid == 'linux-x64'
+        timeout-minutes: 10
         run: |
-          set -euo pipefail
-          version='${{ inputs.version }}'
-          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
-            echo "Version must be SemVer: $version" >&2
-            exit 1
-          fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends build-essential curl file libssl-dev libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libfuse2 patchelf rpm xdg-utils minisign
 
-      - name: Verify committed release versions agree
-        run: node scripts/verify-release-version.mjs '${{ steps.version.outputs.version }}'
-
-      - name: Install dependencies and test
+      - name: Install Agent and Tauri frontend dependencies
         run: |
           npm ci --ignore-scripts --no-audit --no-fund
-          npm test
-          dotnet test desktop/GptAccountKeeper.Desktop.sln -c Release
-
-      - name: Publish Avalonia NativeAOT
-        run: >-
-          dotnet publish
-          desktop/src/GptAccountKeeper.Desktop/GptAccountKeeper.Desktop.csproj
-          -c Release
-          -r linux-x64
-          -p:Version=${{ steps.version.outputs.version }}
-          -o artifacts/desktop
+          npm ci --prefix app --ignore-scripts --no-audit --no-fund
 
       - name: Download and verify pinned private runtimes
-        run: >-
-          node scripts/download-release-runtime.mjs
-          --rid linux-x64
-          --output artifacts/runtimes
+        run: node scripts/download-release-runtime.mjs --rid '${{ matrix.rid }}' --output artifacts/runtime
 
-      - name: Stage private Agent and verify release contents
-        run: |
-          node scripts/stage-release.mjs \
-            --version '${{ steps.version.outputs.version }}' \
-            --rid linux-x64 \
-            --desktop artifacts/desktop \
-            --node artifacts/runtimes/node/node \
-            --node-license artifacts/runtimes/node/LICENSE \
-            --mihomo artifacts/runtimes/mihomo/mihomo \
-            --mihomo-license artifacts/runtimes/mihomo/LICENSE \
-            --output artifacts/stage
-          npm sbom --prefix artifacts/stage/agent --omit=dev --package-lock-only --sbom-format cyclonedx \
-            > artifacts/stage/licenses/agent.cdx.json
-          node scripts/verify-package.mjs \
-            artifacts/stage '${{ steps.version.outputs.version }}' linux-x64
-          node scripts/smoke-staged-agent.mjs artifacts/stage
+      - name: Publish chrome-launcher broker
+        if: matrix.rid == 'win-x64'
+        run: dotnet publish tools/chrome-launcher/ChromeLauncher.csproj -c Release -r win-x64 -o artifacts/chrome-launcher
 
-      - name: Verify staged binary architectures
+      - name: Stage Tauri resources, generate Agent SBOM and smoke the private Agent
         shell: bash
-        run: |
-          set -euo pipefail
-          for binary in \
-            artifacts/stage/GptAccountKeeper.Desktop \
-            artifacts/stage/agent/runtime/node \
-            artifacts/stage/agent/bin/mihomo; do
-            file "$binary"
-            file "$binary" | grep -q 'x86-64'
-          done
-          native=artifacts/stage/agent/node_modules/better-sqlite3/prebuilds
-          test "$(find "$native" -type f -name '*.node' | wc -l | tr -d ' ')" = 1
-          test -f "$native/linux-x64.node"
-          file "$native/linux-x64.node" | grep -q 'x86-64'
-
-      - name: Install pinned VeloPack CLI
-        run: dotnet tool install --global vpk --version 1.2.0
-
-      - name: Prepare user-facing release notes
         env:
-          GAK_RELEASE_NOTES: ${{ inputs.release_notes }}
-        run: node scripts/write-release-notes.mjs artifacts/release-notes.md
+          VERSION: ${{ inputs.version }}
+          RID: ${{ matrix.rid }}
+        run: |
+          node_name=node
+          mihomo_name=mihomo
+          if [[ "$RID" == win-x64 ]]; then
+            node_name=node.exe
+            mihomo_name=mihomo.exe
+            node scripts/stage-release.mjs --version "$VERSION" --rid "$RID" --node "artifacts/runtime/node/$node_name" --node-license artifacts/runtime/node/LICENSE --mihomo "artifacts/runtime/mihomo/$mihomo_name" --mihomo-license artifacts/runtime/mihomo/LICENSE --chrome-launcher artifacts/chrome-launcher/chrome-launcher.exe --output app/src-tauri/release-resources
+          else
+            node scripts/stage-release.mjs --version "$VERSION" --rid "$RID" --node "artifacts/runtime/node/$node_name" --node-license artifacts/runtime/node/LICENSE --mihomo "artifacts/runtime/mihomo/$mihomo_name" --mihomo-license artifacts/runtime/mihomo/LICENSE --output app/src-tauri/release-resources
+          fi
+          npm sbom --prefix app/src-tauri/release-resources/agent --omit=dev --package-lock-only --sbom-format cyclonedx > app/src-tauri/release-resources/licenses/agent.cdx.json
+          node scripts/verify-package.mjs app/src-tauri/release-resources "$VERSION" "$RID"
+          node scripts/smoke-staged-agent.mjs app/src-tauri/release-resources
 
-      - name: Download previous Linux release for deltas
-        continue-on-error: true
-        run: >-
-          vpk download github
-          --repoUrl https://github.com/yang-sanmu/chatgpt-account-keeper
-          --token ${{ github.token }}
-          --channel linux-x64
-          --outputDir artifacts/Releases
+      - name: Verify staged Unix binary architecture
+        if: matrix.rid != 'win-x64'
+        shell: bash
+        env:
+          RID: ${{ matrix.rid }}
+        run: |
+          file app/src-tauri/release-resources/agent/runtime/node
+          file app/src-tauri/release-resources/agent/bin/mihomo
+          case "$RID" in
+            osx-arm64)
+              file app/src-tauri/release-resources/agent/runtime/node | grep -q arm64
+              ;;
+            osx-x64)
+              file app/src-tauri/release-resources/agent/runtime/node | grep -q x86_64
+              ;;
+            linux-x64)
+              file app/src-tauri/release-resources/agent/runtime/node | grep -Eq 'x86-64|x86_64'
+              ;;
+          esac
 
-      - name: Create AppImage and update packages
-        run: >-
-          vpk pack
-          --packId GptAccountKeeper.Desktop
-          --packVersion '${{ steps.version.outputs.version }}'
-          --packTitle 'ChatGPT Account Keeper'
-          --packAuthors 'yang-sanmu'
-          --releaseNotes artifacts/release-notes.md
-          --packDir artifacts/stage
-          --mainExe GptAccountKeeper.Desktop
-          --icon desktop/src/GptAccountKeeper.Desktop/icons/hicolor/512x512/apps/gpt-account-keeper.png
-          --categories 'Utility;Network'
-          --compression gzip
-          --runtime linux-x64
-          --channel linux-x64
-          --outputDir artifacts/Releases
+      - name: Configure Windows Authenticode signing
+        if: matrix.rid == 'win-x64'
+        id: windows_signing
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          $hasCertificate = -not [string]::IsNullOrWhiteSpace($env:WINDOWS_SIGNING_CERTIFICATE_BASE64)
+          $hasPassword = -not [string]::IsNullOrWhiteSpace($env:WINDOWS_SIGNING_CERTIFICATE_PASSWORD)
+          if ($hasCertificate -xor $hasPassword) {
+            throw 'Windows signing secrets must either both be configured or both be absent.'
+          }
+          if (-not $hasCertificate) {
+            '{}' | Set-Content artifacts/platform-signing.conf.json -Encoding utf8
+            'signed=false' >> $env:GITHUB_OUTPUT
+            exit 0
+          }
+          $pfx = Join-Path $env:RUNNER_TEMP 'keeper-signing.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_SIGNING_CERTIFICATE_BASE64))
+          $secure = ConvertTo-SecureString $env:WINDOWS_SIGNING_CERTIFICATE_PASSWORD -AsPlainText -Force
+          $certificate = Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $secure |
+            Where-Object HasPrivateKey | Select-Object -First 1
+          if ($null -eq $certificate) { throw 'Imported PFX does not contain a private signing key.' }
+          @{
+            bundle = @{
+              windows = @{
+                certificateThumbprint = $certificate.Thumbprint
+                digestAlgorithm = 'sha256'
+                timestampUrl = 'http://timestamp.digicert.com'
+              }
+            }
+          } | ConvertTo-Json -Depth 5 | Set-Content artifacts/platform-signing.conf.json -Encoding utf8
+          'signed=true' >> $env:GITHUB_OUTPUT
 
-      - name: Inspect the generated AppImage
-        id: appimage
+      - name: Configure Apple signing and notarization
+        if: startsWith(matrix.rid, 'osx-')
+        id: apple_signing
         shell: bash
         run: |
-          set -euo pipefail
-          appimage="$(find artifacts/Releases -maxdepth 1 -type f -name '*.AppImage' -print -quit)"
-          test -n "$appimage"
-          chmod +x "$appimage"
-          mkdir -p artifacts/appimage-extract
-          (
-            cd artifacts/appimage-extract
-            "$GITHUB_WORKSPACE/$appimage" --appimage-extract >/dev/null
-          )
-          root=artifacts/appimage-extract/squashfs-root
-          desktop="$(find "$root" -maxdepth 1 -type f -name '*.desktop' -print -quit)"
-          test -n "$desktop"
-          grep -Fxq 'Exec=GptAccountKeeper.Desktop' "$desktop"
-          grep -Fxq 'Categories=Utility;Network;' "$desktop"
-          test -f "$root/GptAccountKeeper.Desktop.png"
-          test -f "$root/usr/share/icons/hicolor/scalable/apps/GptAccountKeeper.Desktop.png"
-          test -x "$root/usr/bin/GptAccountKeeper.Desktop"
-          test -x "$root/usr/bin/agent/runtime/node"
-          test -x "$root/usr/bin/agent/bin/mihomo"
-          echo "path=$appimage" >> "$GITHUB_OUTPUT"
-          echo "name=$(basename "$appimage")" >> "$GITHUB_OUTPUT"
-
-      - name: Detect Minisign configuration
-        id: signing
-        shell: bash
-        run: |
-          set -euo pipefail
-          configured=true
-          for name in LINUX_MINISIGN_SECRET_KEY_BASE64 LINUX_MINISIGN_PASSWORD LINUX_MINISIGN_PUBLIC_KEY; do
-            if [[ -z "${!name:-}" ]]; then configured=false; fi
+          values=("$APPLE_CERTIFICATE" "$APPLE_CERTIFICATE_PASSWORD" "$APPLE_SIGNING_IDENTITY" "$APPLE_ID" "$APPLE_PASSWORD" "$APPLE_TEAM_ID")
+          configured=0
+          for value in "${values[@]}"; do
+            [[ -n "$value" ]] && configured=$((configured + 1))
           done
-          echo "configured=$configured" >> "$GITHUB_OUTPUT"
-          mkdir -p artifacts/compliance
-          if [[ "$configured" != true ]]; then
-            printf '%s\n' \
-              'Minisign secrets were not all configured.' \
-              'This candidate is for CI inspection only and must not be published.' \
-              > artifacts/compliance/UNSIGNED-linux-x64.txt
+          if [[ "$configured" -ne 0 && "$configured" -ne 6 ]]; then
+            echo 'All Apple signing and notarization secrets must be configured together.' >&2
+            exit 1
+          fi
+          mkdir -p artifacts
+          if [[ "$configured" -eq 6 ]]; then
+            printf '{}\n' > artifacts/platform-signing.conf.json
+            echo 'signed=true' >> "$GITHUB_OUTPUT"
+          else
+            printf '{"bundle":{"macOS":{"signingIdentity":"-"}}}\n' > artifacts/platform-signing.conf.json
+            echo 'APPLE_SIGNING_IDENTITY=-' >> "$GITHUB_ENV"
+            echo 'signed=false' >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Create and verify Linux checksums
+      - name: Configure Linux bundle
+        if: matrix.rid == 'linux-x64'
         shell: bash
         run: |
-          set -euo pipefail
-          (
-            cd artifacts/Releases
-            sha256sum \
-              '${{ steps.appimage.outputs.name }}' \
-              releases.linux-x64.json
-          ) > artifacts/compliance/SHA256SUMS.linux-x64.txt
-          (
-            cd artifacts/Releases
-            sha256sum --check ../compliance/SHA256SUMS.linux-x64.txt
-          )
+          mkdir -p artifacts
+          printf '{}\n' > artifacts/platform-signing.conf.json
 
-      - name: Minisign AppImage, release index and checksum manifest
-        if: steps.signing.outputs.configured == 'true'
+      - name: Build Tauri bundles and updater signatures
+        working-directory: app
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          BUNDLES: ${{ matrix.bundles }}
+        run: npm run tauri:build:release -- --target "$TARGET" --bundles "$BUNDLES" --config ../artifacts/platform-signing.conf.json
+
+      - name: Collect deterministic release assets
+        run: >-
+          node scripts/collect-tauri-artifacts.mjs
+          --bundles app/src-tauri/target
+          --version '${{ inputs.version }}'
+          --rid '${{ matrix.rid }}'
+          --sbom app/src-tauri/release-resources/licenses/agent.cdx.json
+          --output artifacts/release-assets
+
+      - name: Verify Authenticode signatures
+        if: matrix.rid == 'win-x64' && steps.windows_signing.outputs.signed == 'true'
+        shell: pwsh
+        run: |
+          $installers = @(Get-ChildItem artifacts/release-assets -File -Filter '*-setup.exe')
+          $applications = @(Get-ChildItem app/src-tauri/target -Recurse -File -Filter 'keeper-app.exe' |
+            Where-Object { $_.FullName -match '[\\/]release[\\/]keeper-app\.exe$' })
+          if ($installers.Count -ne 1 -or $applications.Count -ne 1) {
+            throw "Expected one NSIS installer and one release application, found $($installers.Count) and $($applications.Count)."
+          }
+          $installer = $installers[0]
+          $application = $applications[0]
+          foreach ($file in @($installer, $application)) {
+            $signature = Get-AuthenticodeSignature -LiteralPath $file.FullName
+            if ($signature.Status -ne 'Valid') {
+              throw "Invalid Authenticode signature on $($file.FullName): $($signature.Status)"
+            }
+          }
+          'Authenticode and timestamp verified.' | Set-Content artifacts/release-assets/SIGNED-win-x64.txt -Encoding utf8
+
+      - name: Mark unsigned Windows inspection candidate
+        if: matrix.rid == 'win-x64' && steps.windows_signing.outputs.signed != 'true'
+        shell: pwsh
+        run: "'Authenticode certificate was not configured.' | Set-Content artifacts/release-assets/UNSIGNED-win-x64.txt -Encoding utf8"
+
+      - name: Verify signed, notarized and stapled Apple bundles
+        if: startsWith(matrix.rid, 'osx-') && steps.apple_signing.outputs.signed == 'true'
+        shell: bash
+        env:
+          RID: ${{ matrix.rid }}
+        run: |
+          app_bundle=$(find app/src-tauri/target -type d -path '*/release/bundle/macos/*.app' -print -quit)
+          dmg=$(find artifacts/release-assets -maxdepth 1 -type f -name '*.dmg' -print -quit)
+          test -n "$app_bundle"
+          test -n "$dmg"
+          codesign --verify --deep --strict --verbose=2 "$app_bundle"
+          spctl --assess --type execute --verbose=2 "$app_bundle"
+          xcrun stapler validate "$app_bundle"
+          xcrun stapler validate "$dmg"
+          executable=$(find "$app_bundle/Contents/MacOS" -maxdepth 1 -type f -perm -111 -print -quit)
+          file "$executable"
+          if [[ "$RID" == osx-arm64 ]]; then
+            file "$executable" | grep -q arm64
+          else
+            file "$executable" | grep -q x86_64
+          fi
+          printf 'Developer ID, notarization and stapling verified.\n' > "artifacts/release-assets/SIGNED-$RID.txt"
+
+      - name: Mark ad-hoc Apple inspection candidate
+        if: startsWith(matrix.rid, 'osx-') && steps.apple_signing.outputs.signed != 'true'
+        shell: bash
+        env:
+          RID: ${{ matrix.rid }}
+        run: printf 'Developer ID and notarization secrets were not configured.\n' > "artifacts/release-assets/UNSIGNED-$RID.txt"
+
+      - name: Create Linux checksum manifest
+        if: matrix.rid == 'linux-x64'
         shell: bash
         run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install --yes minisign
+          cd artifacts/release-assets
+          sha256sum *.AppImage *.AppImage.sig *.deb *.rpm > SHA256SUMS.linux-x64.txt
+
+      - name: Detect and apply Linux Minisign
+        if: matrix.rid == 'linux-x64'
+        id: linux_signing
+        shell: bash
+        run: |
+          values=("$LINUX_MINISIGN_SECRET_KEY_BASE64" "$LINUX_MINISIGN_PASSWORD" "$LINUX_MINISIGN_PUBLIC_KEY")
+          configured=0
+          for value in "${values[@]}"; do
+            [[ -n "$value" ]] && configured=$((configured + 1))
+          done
+          if [[ "$configured" -ne 0 && "$configured" -ne 3 ]]; then
+            echo 'All Linux Minisign secrets must be configured together.' >&2
+            exit 1
+          fi
+          if [[ "$configured" -eq 0 ]]; then
+            printf 'Minisign secrets were not configured.\n' > artifacts/release-assets/UNSIGNED-linux-x64.txt
+            echo 'signed=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           key="$RUNNER_TEMP/gpt-account-keeper.minisign.key"
           printf '%s' "$LINUX_MINISIGN_SECRET_KEY_BASE64" | base64 --decode > "$key"
-          chmod 600 "$key"
-          sign_file() {
-            printf '%s\n' "$LINUX_MINISIGN_PASSWORD" | minisign -S \
-              -s "$key" -m "$1" -x "$1.minisig" \
-              -t "ChatGPT Account Keeper ${{ steps.version.outputs.version }} linux-x64"
-            minisign -V -P "$LINUX_MINISIGN_PUBLIC_KEY" -m "$1" -x "$1.minisig"
-          }
-          sign_file '${{ steps.appimage.outputs.path }}'
-          sign_file artifacts/Releases/releases.linux-x64.json
-          sign_file artifacts/compliance/SHA256SUMS.linux-x64.txt
-          printf 'untrusted comment: ChatGPT Account Keeper Minisign public key\n%s\n' \
-            "$LINUX_MINISIGN_PUBLIC_KEY" > artifacts/compliance/minisign.pub
+          appimage=$(find artifacts/release-assets -maxdepth 1 -type f -name '*.AppImage' -print -quit)
+          printf '%s\n' "$LINUX_MINISIGN_PASSWORD" | minisign -S -s "$key" -m "$appimage" -x "$appimage.minisig"
+          printf '%s\n' "$LINUX_MINISIGN_PASSWORD" | minisign -S -s "$key" -m artifacts/release-assets/SHA256SUMS.linux-x64.txt -x artifacts/release-assets/SHA256SUMS.linux-x64.txt.minisig
+          minisign -V -P "$LINUX_MINISIGN_PUBLIC_KEY" -m "$appimage" -x "$appimage.minisig"
+          minisign -V -P "$LINUX_MINISIGN_PUBLIC_KEY" -m artifacts/release-assets/SHA256SUMS.linux-x64.txt -x artifacts/release-assets/SHA256SUMS.linux-x64.txt.minisig
+          printf 'untrusted comment: ChatGPT Account Keeper Minisign public key\n%s\n' "$LINUX_MINISIGN_PUBLIC_KEY" > artifacts/release-assets/minisign.pub
+          printf 'Minisign signatures verified.\n' > artifacts/release-assets/SIGNED-linux-x64.txt
+          rm -f "$key"
+          echo 'signed=true' >> "$GITHUB_OUTPUT"
 
-      - name: Verify Linux release output set
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -f '${{ steps.appimage.outputs.path }}'
-          test -n "$(find artifacts/Releases -maxdepth 1 -type f -name '*-full.nupkg' -print -quit)"
-          test -f artifacts/Releases/releases.linux-x64.json
-          test -s artifacts/compliance/SHA256SUMS.linux-x64.txt
-          if [[ '${{ steps.signing.outputs.configured }}' == true ]]; then
-            test -s '${{ steps.appimage.outputs.path }}.minisig'
-            test -s artifacts/Releases/releases.linux-x64.json.minisig
-            test -s artifacts/compliance/SHA256SUMS.linux-x64.txt.minisig
-            test -s artifacts/compliance/minisign.pub
-          fi
-
-      - name: Generate release SBOM
-        uses: anchore/sbom-action@v0
-        with:
-          path: artifacts/stage
-          format: spdx-json
-          output-file: artifacts/compliance/GptAccountKeeper.Desktop-${{ steps.version.outputs.version }}-linux-x64.spdx.json
-
-      - name: Collect only assets created by this build
-        run: >-
-          node scripts/collect-release-assets.mjs
-          --releases artifacts/Releases
-          --compliance artifacts/compliance
-          --channel linux-x64
-          --output artifacts/upload
+      - name: Remove Windows signing material
+        if: always() && matrix.rid == 'win-x64'
+        shell: pwsh
+        run: Remove-Item -LiteralPath (Join-Path $env:RUNNER_TEMP 'keeper-signing.pfx') -Force -ErrorAction SilentlyContinue
 
       - uses: actions/upload-artifact@v4
         with:
-          name: GptAccountKeeper.Desktop-linux-x64-${{ steps.version.outputs.version }}
-          path: artifacts/upload
+          name: tauri-${{ matrix.rid }}-${{ inputs.version }}
+          path: artifacts/release-assets
           if-no-files-found: error
-
-      - name: Remove Minisign private key
-        if: always()
-        shell: bash
-        run: rm -f "$RUNNER_TEMP/gpt-account-keeper.minisign.key"
+          retention-days: 14
 
   aggregate:
-    name: Aggregate cross-platform release
-    needs: [package, macos, linux]
-    runs-on: ubuntu-24.04
+    name: Aggregate cross-platform Tauri release
+    needs: [gate, build]
+    runs-on: ubuntu-22.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GAK_RELEASE_NOTES: ${{ inputs.release_notes }}
+      VERSION: ${{ inputs.version }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download all native release candidates
-        uses: actions/download-artifact@v4
+      - uses: actions/setup-node@v4
         with:
-          pattern: GptAccountKeeper.Desktop-*-${{ inputs.version }}
-          path: artifacts/release
+          node-version-file: .node-version
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: tauri-*-${{ inputs.version }}
+          path: artifacts/assets
           merge-multiple: true
 
-      - name: Verify the aggregate release set
+      - name: Validate the complete platform set
         shell: bash
         run: |
-          set -euo pipefail
-          root=artifacts/release
-          for channel in win osx-arm64 osx-x64 linux-x64; do
-            test -s "$root/releases.$channel.json"
+          root=artifacts/assets
+          test -s "$root/ChatGPT-Account-Keeper_$VERSION_windows_x86_64-setup.exe"
+          test -s "$root/ChatGPT-Account-Keeper_$VERSION_windows_x86_64-setup.exe.sig"
+          for arch in aarch64 x86_64; do
+            test -s "$root/ChatGPT-Account-Keeper_$VERSION_darwin_$arch.dmg"
+            test -s "$root/ChatGPT-Account-Keeper_$VERSION_darwin_$arch.app.tar.gz"
+            test -s "$root/ChatGPT-Account-Keeper_$VERSION_darwin_$arch.app.tar.gz.sig"
           done
-          test "$(find "$root" -maxdepth 1 -type f -name '*.dmg' | wc -l | tr -d ' ')" = 2
-          test "$(find "$root" -maxdepth 1 -type f -name '*.pkg' | wc -l | tr -d ' ')" = 2
-          test "$(find "$root" -maxdepth 1 -type f -name '*.AppImage' | wc -l | tr -d ' ')" = 1
-          test "$(find "$root" -maxdepth 1 -type f -name '*.exe' | wc -l | tr -d ' ')" -ge 1
-          test "$(find "$root" -maxdepth 1 -type f -name '*-full.nupkg' | wc -l | tr -d ' ')" -ge 4
-          test "$(find "$root" -maxdepth 1 -type f -name '*.spdx.json' | wc -l | tr -d ' ')" = 4
-          test -s "$root/chatgpt-account-keeper-${{ inputs.version }}-source.zip"
-          test -n "$(find "$root" -maxdepth 1 -type f -name 'mihomo-v*-source.zip' -print -quit)"
-          if ! find "$root" -maxdepth 1 -type f -name 'UNSIGNED-*' -print -quit | grep -q .; then
-            appimage="$(find "$root" -maxdepth 1 -type f -name '*.AppImage' -print -quit)"
-            test -s "$appimage.minisig"
-            test -s "$root/releases.linux-x64.json.minisig"
-            test -s "$root/SHA256SUMS.linux-x64.txt.minisig"
-          fi
+          test -s "$root/ChatGPT-Account-Keeper_$VERSION_linux_x86_64.AppImage"
+          test -s "$root/ChatGPT-Account-Keeper_$VERSION_linux_x86_64.AppImage.sig"
+          test -s "$root/ChatGPT-Account-Keeper_$VERSION_linux_x86_64.deb"
+          test -s "$root/ChatGPT-Account-Keeper_$VERSION_linux_x86_64.rpm"
+          test "$(find "$root" -maxdepth 1 -type f -name '*-agent.cdx.json' | wc -l | tr -d ' ')" = 4
 
-      - name: Create and verify aggregate SHA-256 manifest
+      - name: Create source archives and latest.json
         shell: bash
         run: |
-          set -euo pipefail
+          node scripts/write-release-notes.mjs artifacts/release-notes.md
+          git archive --format=zip --prefix="chatgpt-account-keeper-$VERSION/" --output="artifacts/assets/chatgpt-account-keeper-$VERSION-source.zip" HEAD
+          mihomo_version=$(node -p "require('./build/runtime-versions.json').mihomo.version")
+          curl --fail --location --retry 3 "https://github.com/MetaCubeX/mihomo/archive/refs/tags/v$mihomo_version.zip" --output "artifacts/assets/mihomo-v$mihomo_version-source.zip"
+          node scripts/write-latest-json.mjs --version "$VERSION" --notes-file artifacts/release-notes.md --base-url "https://github.com/$GITHUB_REPOSITORY/releases/download/v$VERSION" --windows "artifacts/assets/ChatGPT-Account-Keeper_$VERSION_windows_x86_64-setup.exe" --darwin-arm64 "artifacts/assets/ChatGPT-Account-Keeper_$VERSION_darwin_aarch64.app.tar.gz" --darwin-x64 "artifacts/assets/ChatGPT-Account-Keeper_$VERSION_darwin_x86_64.app.tar.gz" --linux-appimage "artifacts/assets/ChatGPT-Account-Keeper_$VERSION_linux_x86_64.AppImage" --output artifacts/assets/latest.json
           (
-            cd artifacts/release
-            find . -maxdepth 1 -type f ! -name SHA256SUMS.release.txt -printf '%f\0' \
-              | sort -z \
-              | xargs -0 sha256sum
-          ) > artifacts/release/SHA256SUMS.release.txt
-          (
-            cd artifacts/release
-            sha256sum --check SHA256SUMS.release.txt
-          )
+            cd artifacts/assets
+            find . -maxdepth 1 -type f ! -name 'SHA256SUMS.release.txt' ! -name 'SIGNED-*.txt' ! -name 'UNSIGNED-*.txt' -printf '%P\0' |
+              sort -z |
+              xargs -0 sha256sum
+          ) > artifacts/assets/SHA256SUMS.release.txt
 
       - uses: actions/upload-artifact@v4
         with:
-          name: GptAccountKeeper.Desktop-all-${{ inputs.version }}
-          path: artifacts/release
+          name: ChatGPT-Account-Keeper-all-${{ inputs.version }}
+          path: artifacts/assets
           if-no-files-found: error
+          retention-days: 14
 
-      - name: Require signed and notarized artifacts before publishing
-        if: inputs.publish_draft == true && inputs.n_minus_one_verified == true
+      - name: Require human and platform signing gates before Draft
+        if: inputs.publish_draft == true
         shell: bash
         run: |
-          set -euo pipefail
-          markers="$(find artifacts/release -maxdepth 1 -type f -name 'UNSIGNED-*' -print)"
-          if [[ -n "$markers" ]]; then
-            echo 'A GitHub draft cannot be created from unsigned or unnotarized candidates:' >&2
-            printf '%s\n' "$markers" >&2
+          if [[ '${{ inputs.n_minus_one_verified }}' != true ]]; then
+            echo 'Draft creation requires the N-1 to N attestation.' >&2
             exit 1
           fi
+          if find artifacts/assets -maxdepth 1 -type f -name 'UNSIGNED-*.txt' -print -quit | grep -q .; then
+            echo 'A Draft cannot be created from unsigned or unnotarized candidates:' >&2
+            find artifacts/assets -maxdepth 1 -type f -name 'UNSIGNED-*.txt' -print >&2
+            exit 1
+          fi
+          for rid in win-x64 osx-arm64 osx-x64 linux-x64; do
+            test -s "artifacts/assets/SIGNED-$rid.txt"
+          done
 
-      - name: Create one GitHub draft containing every platform
-        if: inputs.publish_draft == true && inputs.n_minus_one_verified == true
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GAK_RELEASE_NOTES: ${{ inputs.release_notes }}
+      - name: Create the single GitHub Draft
+        if: inputs.publish_draft == true
         shell: bash
         run: |
-          set -euo pipefail
-          tag='v${{ inputs.version }}'
-          if gh release view "$tag" --repo '${{ github.repository }}' >/dev/null 2>&1; then
-            echo "Release $tag already exists; refusing to merge into potentially stale assets." >&2
-            exit 1
-          fi
-          mapfile -d '' assets < <(find artifacts/release -maxdepth 1 -type f -print0 | sort -z)
-          test "${#assets[@]}" -gt 0
-          node scripts/write-release-notes.mjs artifacts/github-release-notes.md
-          printf '\nWindows x64, Linux x64, macOS Apple Silicon and macOS Intel release candidate.\n' >> artifacts/github-release-notes.md
-          gh release create "$tag" "${assets[@]}" \
-            --repo '${{ github.repository }}' \
-            --target '${{ github.sha }}' \
-            --draft \
-            --title 'ChatGPT Account Keeper ${{ inputs.version }}' \
-            --notes-file artifacts/github-release-notes.md
+          mapfile -d '' assets < <(
+            find artifacts/assets -maxdepth 1 -type f ! -name 'SIGNED-*.txt' ! -name 'UNSIGNED-*.txt' -print0 | sort -z
+          )
+          gh release create "v$VERSION" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "ChatGPT Account Keeper $VERSION" --notes-file artifacts/release-notes.md --draft
 
-      - name: Report why draft publication was withheld
-        if: inputs.publish_draft != true || inputs.n_minus_one_verified != true
-        run: >-
-          echo 'Candidate retained as a workflow artifact; creating the shared GitHub draft requires publish_draft and the installed N-1 to N attestation.'
+      - name: Report candidate-only result
+        if: inputs.publish_draft != true
+        run: echo 'Candidate retained as a workflow artifact; no tag or GitHub Release was created.'

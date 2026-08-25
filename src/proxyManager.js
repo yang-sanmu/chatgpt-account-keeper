@@ -163,7 +163,9 @@ export function getSubscriptionInfo() {
   return {
     configured: true,
     host, // 只给主机名，不含 path/query 里的 token
-    updatedAt: subscription.updatedAt,
+    // 旧订阅记录可能没有 updatedAt；公开 DTO 用 null 保持字段稳定，避免序列化时
+    // undefined 直接把键吞掉。
+    updatedAt: subscription.updatedAt ?? null,
     count: getNodes().length,
   };
 }

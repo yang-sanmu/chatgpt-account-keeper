@@ -3,21 +3,86 @@
   "$id": "https://github.com/yang-sanmu/chatgpt-account-keeper/contracts/ipc-v1.methods.schema.json",
   "title": "GptAccount Keeper IPC v1 method DTOs",
   "$defs": {
-    "emptyParams": { "type": "object", "additionalProperties": false },
-    "jsonObject": { "type": "object" },
-    "jsonArray": { "type": "array" },
+    "emptyParams": {
+      "type": "object",
+      "additionalProperties": false
+    },
+    "openPageMap": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["url", "openedAt"],
+        "properties": {
+          "url": { "type": "string" },
+          "openedAt": { "type": "string", "format": "date-time" }
+        }
+      }
+    },
+    "loginTaskResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["accountId", "force", "status", "message", "startedAt"],
+      "properties": {
+        "accountId": { "type": "string", "minLength": 1 },
+        "force": { "type": "boolean" },
+        "status": {
+          "enum": ["opening", "clearing", "waiting", "saving", "success", "failed", "timeout"]
+        },
+        "message": { "type": "string" },
+        "startedAt": { "type": "string", "format": "date-time" },
+        "finishedAt": { "type": "string", "format": "date-time" },
+        "code": { "type": "string" },
+        "conflictTaskId": { "type": "string" },
+        "email": { "type": ["string", "null"] }
+      }
+    },
     "accountResult": {
       "type": "object",
-      "required": ["id", "enabled", "switchRule", "minWindows", "maxWindows", "loggedIn", "pageOpen"],
+      "additionalProperties": false,
+      "required": [
+        "id", "enabled", "switchRule", "minWindows", "maxWindows", "state", "loggedIn",
+        "statusDetail", "checkedAt", "stale", "lastCheckState", "lastCheckDetail",
+        "confirmedState", "confirmedAt", "consecutiveUnknowns", "unknownSince", "pageOpen",
+        "rotationCurrentSet", "rotationWindowsDone", "rotationWindowsTarget", "groupName",
+        "proxyId", "proxyName", "proxyMissing", "nextRunAt", "lastRunAt", "running",
+        "lastRunOk", "lastRunReason"
+      ],
       "properties": {
-        "id": { "type": "string", "minLength": 1 }, "note": { "type": ["string", "null"] },
-        "email": { "type": ["string", "null"] }, "gptName": { "type": ["string", "null"] },
-        "groupId": { "type": ["string", "null"] }, "enabled": { "type": "boolean" },
-        "switchRule": { "enum": ["random", "sequential"] }, "minWindows": { "type": "integer", "minimum": 1 },
-        "maxWindows": { "type": "integer", "minimum": 1 }, "state": { "type": ["string", "null"] },
-        "loggedIn": { "type": "boolean" }, "pageOpen": { "type": "boolean" },
-        "statusDetail": { "type": ["string", "null"] }, "checkedAt": { "type": ["string", "null"], "format": "date-time" },
+        "id": { "type": "string", "minLength": 1 },
+        "sortOrder": { "type": "integer", "minimum": 0 },
+        "note": { "type": "string" },
+        "email": { "type": ["string", "null"] },
+        "gptName": { "type": ["string", "null"] },
+        "profileName": { "type": "string" },
+        "profileDir": { "type": "string" },
+        "groupId": { "type": ["string", "null"] },
+        "enabled": { "type": "boolean" },
+        "switchRule": { "enum": ["random", "sequential"] },
+        "minWindows": { "type": "integer", "minimum": 1 },
+        "maxWindows": { "type": "integer", "minimum": 1 },
+        "rotation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["currentSet", "windowsDone", "windowsTarget"],
+          "properties": {
+            "currentSet": { "type": ["string", "null"] },
+            "windowsDone": { "type": "integer", "minimum": 0 },
+            "windowsTarget": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "state": { "enum": ["ok", "reauth", "out", "unknown", null] },
+        "loggedIn": { "type": "boolean" },
+        "statusDetail": { "type": ["string", "null"] },
+        "checkedAt": { "type": ["string", "null"], "format": "date-time" },
         "stale": { "type": "boolean" },
+        "lastCheckState": { "enum": ["ok", "reauth", "out", "unknown", null] },
+        "lastCheckDetail": { "type": ["string", "null"] },
+        "confirmedState": { "enum": ["ok", "reauth", "out", null] },
+        "confirmedAt": { "type": ["string", "null"], "format": "date-time" },
+        "consecutiveUnknowns": { "type": "integer", "minimum": 0 },
+        "unknownSince": { "type": ["string", "null"], "format": "date-time" },
+        "pageOpen": { "type": "boolean" },
         "rotationCurrentSet": { "type": ["string", "null"] },
         "rotationWindowsDone": { "type": "integer", "minimum": 0 },
         "rotationWindowsTarget": { "type": "integer", "minimum": 0 },
@@ -34,7 +99,11 @@
     },
     "historyEntryResult": {
       "type": "object",
-      "required": ["time", "ok", "totalRounds", "rounds"],
+      "additionalProperties": false,
+      "required": [
+        "time", "ok", "setName", "topic", "totalRounds", "targetRounds", "stopReason",
+        "error", "needReauth", "rounds"
+      ],
       "properties": {
         "time": { "type": ["string", "null"] },
         "ok": { "type": ["boolean", "null"] },
@@ -42,16 +111,15 @@
         "topic": { "type": ["string", "null"] },
         "totalRounds": { "type": "integer", "minimum": 0 },
         "targetRounds": { "type": ["integer", "null"], "minimum": 0 },
-        "stopReason": {
-          "type": ["string", "null"]
-        },
+        "stopReason": { "type": ["string", "null"] },
         "error": { "type": ["string", "null"] },
         "needReauth": { "type": "boolean" },
         "rounds": {
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["question", "answer"],
+            "additionalProperties": false,
+            "required": ["question", "answer", "at"],
             "properties": {
               "question": { "type": ["string", "null"] },
               "answer": { "type": ["string", "null"] },
@@ -61,65 +129,306 @@
         }
       }
     },
-    "historyEntryArray": { "type": "array", "items": { "$ref": "#/$defs/historyEntryResult" } },
-    "accountArray": { "type": "array", "items": { "$ref": "#/$defs/accountResult" } },
+    "historyEntryArray": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/historyEntryResult" }
+    },
+    "accountArray": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/accountResult" }
+    },
     "accountStatusResult": {
-      "type": "object", "required": ["id", "state", "loggedIn"],
-      "properties": { "id": { "type": "string", "minLength": 1 }, "state": { "type": ["string", "null"] }, "loggedIn": { "type": "boolean" } }
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "state", "loggedIn", "email", "detail", "checkedAt", "stale",
+        "lastCheckState", "lastCheckDetail", "confirmedState", "confirmedAt",
+        "consecutiveUnknowns", "unknownSince", "skipped", "skipKind", "skipReason"
+      ],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "state": { "enum": ["ok", "reauth", "out", "unknown", null] },
+        "loggedIn": { "type": "boolean" },
+        "email": { "type": ["string", "null"] },
+        "detail": { "type": ["string", "null"] },
+        "checkedAt": { "type": ["string", "null"], "format": "date-time" },
+        "stale": { "type": "boolean" },
+        "lastCheckState": { "enum": ["ok", "reauth", "out", "unknown", null] },
+        "lastCheckDetail": { "type": ["string", "null"] },
+        "confirmedState": { "enum": ["ok", "reauth", "out", null] },
+        "confirmedAt": { "type": ["string", "null"], "format": "date-time" },
+        "consecutiveUnknowns": { "type": "integer", "minimum": 0 },
+        "unknownSince": { "type": ["string", "null"], "format": "date-time" },
+        "skipped": { "type": "boolean" },
+        "skipKind": { "type": ["string", "null"] },
+        "skipReason": { "type": ["string", "null"] }
+      }
     },
     "groupResult": {
-      "type": "object", "required": ["id", "name"],
-      "properties": { "id": { "type": "string", "minLength": 1 }, "name": { "type": "string", "minLength": 1 }, "proxyId": { "type": ["string", "null"] }, "timezone": { "type": ["string", "null"] }, "locale": { "type": ["string", "null"] } }
-    },
-    "groupArray": { "type": "array", "items": { "$ref": "#/$defs/groupResult" } },
-    "conversationResult": {
-      "type": "object", "required": ["topic", "minRounds", "maxRounds"],
-      "properties": { "topic": { "type": "string" }, "minRounds": { "type": "integer", "minimum": 0 }, "maxRounds": { "type": "integer", "minimum": 0 } }
-    },
-    "conversationMap": { "type": "object", "additionalProperties": { "$ref": "#/$defs/conversationResult" } },
-    "settingsResult": {
-      "type": "object", "required": ["intervalMinutes", "jitterMinutes", "headless", "statusCheckMinutes", "statusCheckOnStartup", "openPageTimeoutMinutes", "profileAutoCleanEnabled"],
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "proxyId", "timezone", "locale"],
       "properties": {
-        "intervalMinutes": { "type": "number", "minimum": 1 }, "jitterMinutes": { "type": "number", "minimum": 0 },
-        "headless": { "type": "boolean" }, "statusCheckMinutes": { "type": "number", "minimum": 1 },
-        "statusCheckOnStartup": { "type": "boolean" }, "openPageTimeoutMinutes": { "type": "number", "minimum": 0 },
-        "profileAutoCleanEnabled": { "type": "boolean" }
+        "id": { "type": "string", "minLength": 1 },
+        "sortOrder": { "type": "integer", "minimum": 0 },
+        "name": { "type": "string", "minLength": 1 },
+        "proxyId": { "type": ["string", "null"] },
+        "timezone": { "type": ["string", "null"] },
+        "locale": { "type": ["string", "null"] },
+        "tzManual": { "type": "boolean" }
+      }
+    },
+    "groupArray": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/groupResult" }
+    },
+    "conversationResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["topic", "minRounds", "maxRounds"],
+      "properties": {
+        "id": { "type": "string" },
+        "sortOrder": { "type": "integer", "minimum": 0 },
+        "topic": { "type": "string" },
+        "minRounds": { "type": "integer", "minimum": 0 },
+        "maxRounds": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "conversationMap": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["topic", "minRounds", "maxRounds"],
+        "properties": {
+          "topic": { "type": "string" },
+          "minRounds": { "type": "integer", "minimum": 0 },
+          "maxRounds": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "settingsResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "intervalMinutes", "jitterMinutes", "headless", "statusCheckMinutes",
+        "statusCheckOnStartup", "openPageTimeoutMinutes", "profileAutoCleanEnabled"
+      ],
+      "properties": {
+        "intervalMinutes": { "type": "number", "minimum": 1 },
+        "jitterMinutes": { "type": "number", "minimum": 0 },
+        "headless": { "type": "boolean" },
+        "statusCheckMinutes": { "type": "number", "minimum": 1 },
+        "statusCheckOnStartup": { "type": "boolean" },
+        "openPageTimeoutMinutes": { "type": "number", "minimum": 0 },
+        "profileAutoCleanEnabled": { "type": "boolean" },
+        "schedulerEnabled": { "type": "boolean" }
       }
     },
     "schedulerResult": {
-      "type": "object", "required": ["running", "enabled", "accounts"],
-      "properties": { "running": { "type": "boolean" }, "enabled": { "type": "boolean" }, "accounts": { "type": "object" }, "lastResults": { "type": "object" }, "message": { "type": "string" } }
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["running", "enabled", "accounts", "lastResults"],
+      "properties": {
+        "running": { "type": "boolean" },
+        "enabled": { "type": "boolean" },
+        "accounts": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["nextAt", "lastAt", "busy"],
+            "properties": {
+              "nextAt": { "type": ["string", "null"], "format": "date-time" },
+              "lastAt": { "type": ["string", "null"], "format": "date-time" },
+              "busy": { "type": "boolean" }
+            }
+          }
+        },
+        "lastResults": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["ok", "reason", "time"],
+            "properties": {
+              "ok": { "type": "boolean" },
+              "reason": { "type": ["string", "null"] },
+              "time": { "type": "string", "format": "date-time" }
+            }
+          }
+        },
+        "message": { "type": "string" }
+      }
     },
     "historyAccountResult": {
-      "type": "object", "required": ["accountId", "entryCount", "deleted"],
-      "properties": { "accountId": { "type": "string", "minLength": 1 }, "entryCount": { "type": "integer", "minimum": 0 }, "deleted": { "type": "boolean" }, "lastAt": { "type": ["string", "null"], "format": "date-time" }, "lastOk": { "type": ["boolean", "null"] }, "note": { "type": ["string", "null"] }, "email": { "type": ["string", "null"] }, "gptName": { "type": ["string", "null"] } }
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["accountId", "entryCount", "deleted"],
+      "properties": {
+        "accountId": { "type": "string", "minLength": 1 },
+        "entryCount": { "type": "integer", "minimum": 0 },
+        "deleted": { "type": "boolean" },
+        "lastAt": { "type": ["string", "null"], "format": "date-time" },
+        "lastOk": { "type": ["boolean", "null"] },
+        "note": { "type": ["string", "null"] },
+        "email": { "type": ["string", "null"] },
+        "gptName": { "type": ["string", "null"] }
+      }
     },
-    "historyAccountArray": { "type": "array", "items": { "$ref": "#/$defs/historyAccountResult" } },
+    "historyAccountArray": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/historyAccountResult" }
+    },
     "proxyStateResult": {
-      "type": "object", "required": ["nodes", "status", "subscription", "runtime"],
-      "properties": { "nodes": { "type": "array" }, "status": { "type": "object" }, "subscription": { "type": ["object", "null"] }, "runtime": { "type": ["object", "null"] } }
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nodes", "status", "subscription", "runtime"],
+      "properties": {
+        "nodes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id", "name", "type", "server", "port", "enabled", "missing", "latencyMs",
+              "latencyOk", "latencyMessage", "latencyTestedAt", "localPort"
+            ],
+            "properties": {
+              "id": { "type": "string", "minLength": 1 },
+              "name": { "type": "string" },
+              "type": { "type": ["string", "null"] },
+              "server": { "type": ["string", "null"] },
+              "port": { "type": ["integer", "null"], "minimum": 1, "maximum": 65535 },
+              "enabled": { "type": "boolean" },
+              "missing": { "type": "boolean" },
+              "latencyMs": { "type": ["number", "null"], "minimum": 0 },
+              "latencyOk": { "type": ["boolean", "null"] },
+              "latencyMessage": { "type": ["string", "null"] },
+              "latencyTestedAt": { "type": ["string", "null"], "format": "date-time" },
+              "localPort": { "type": ["integer", "null"], "minimum": 1, "maximum": 65535 }
+            }
+          }
+        },
+        "status": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "running", "mihomo", "nodeCount", "routedNodeCount", "subscription",
+            "clashVergeDir", "basePort", "basePortShifted"
+          ],
+          "properties": {
+            "running": { "type": "boolean" },
+            "mihomo": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["path", "found"],
+              "properties": {
+                "path": { "type": ["string", "null"] },
+                "found": { "type": "boolean" }
+              }
+            },
+            "nodeCount": { "type": "integer", "minimum": 0 },
+            "routedNodeCount": { "type": "integer", "minimum": 0 },
+            "subscription": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["configured", "host", "updatedAt", "count"],
+                  "properties": {
+                    "configured": { "const": true },
+                    "host": { "type": "string" },
+                    "updatedAt": { "type": ["string", "null"], "format": "date-time" },
+                    "count": { "type": "integer", "minimum": 0 }
+                  }
+                },
+                { "type": "null" }
+              ]
+            },
+            "clashVergeDir": { "type": ["string", "null"] },
+            "basePort": { "type": "integer", "minimum": 1, "maximum": 65535 },
+            "basePortShifted": { "type": "boolean" }
+          }
+        },
+        "subscription": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["configured", "host", "updatedAt", "count"],
+              "properties": {
+                "configured": { "const": true },
+                "host": { "type": "string" },
+                "updatedAt": { "type": ["string", "null"], "format": "date-time" },
+                "count": { "type": "integer", "minimum": 0 }
+              }
+            },
+            { "type": "null" }
+          ]
+        },
+        "runtime": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["path", "found"],
+              "properties": {
+                "path": { "type": ["string", "null"] },
+                "found": { "type": "boolean" }
+              }
+            },
+            { "type": "null" }
+          ]
+        }
+      }
     },
-    "okResult": { "type": "object", "required": ["ok"], "properties": { "ok": { "type": "boolean" } } },
-    "acceptedResult": { "type": "object", "required": ["accepted"], "properties": { "accepted": { "type": "boolean" } } },
+    "okResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok"],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "profile": { "$ref": "ipc-v1.schema.json#/$defs/jsonValue" }
+      }
+    },
+    "acceptedResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["accepted"],
+      "properties": {
+        "accepted": { "type": "boolean" }
+      }
+    },
     "operationResult": { "$ref": "ipc-v1.schema.json#/$defs/operation" },
-    "operationArray": { "type": "array", "items": { "$ref": "ipc-v1.schema.json#/$defs/operation" } },
+    "operationArray": {
+      "type": "array",
+      "items": { "$ref": "ipc-v1.schema.json#/$defs/operation" }
+    },
     "idParams": {
-      "type": "object", "additionalProperties": false, "required": ["id"],
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id"],
       "properties": { "id": { "type": "string", "minLength": 1 } }
     },
     "selectorCheckParams": {
-      "type": "object", "additionalProperties": false, "required": ["id"],
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id"],
       "properties": {
         "id": { "type": "string", "minLength": 1 },
         "deep": { "type": "boolean" }
       }
     },
     "taskIdParams": {
-      "type": "object", "additionalProperties": false, "required": ["taskId"],
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["taskId"],
       "properties": { "taskId": { "type": "string", "minLength": 1 } }
     },
     "operationListParams": {
-      "type": "object", "additionalProperties": false,
+      "type": "object",
+      "additionalProperties": false,
       "properties": {
         "limit": { "type": "integer", "minimum": 1, "maximum": 500 },
         "includeTerminal": { "type": "boolean" }
@@ -127,11 +436,17 @@
     },
     "queueSnapshotResult": {
       "type": "object",
-      "required": ["queuedTotal", "waiting", "running", "closing", "workSlots", "chromeSlots"],
+      "additionalProperties": false,
+      "required": [
+        "queuedTotal", "waiting", "running", "closing", "workSlots", "chromeSlots",
+        "bySource", "byWorkKind", "admissionPaused"
+      ],
       "properties": {
         "queuedTotal": { "type": "integer", "minimum": 0 },
         "waiting": {
           "type": "object",
+          "additionalProperties": false,
+          "required": ["queued", "workSlot", "account", "chrome"],
           "properties": {
             "queued": { "type": "integer", "minimum": 0 },
             "workSlot": { "type": "integer", "minimum": 0 },
@@ -142,36 +457,64 @@
         "running": { "type": "integer", "minimum": 0 },
         "closing": { "type": "integer", "minimum": 0 },
         "workSlots": {
-          "type": "object", "required": ["used", "limit"],
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["used", "limit"],
           "properties": {
             "used": { "type": "integer", "minimum": 0 },
             "limit": { "type": "integer", "minimum": 1 }
           }
         },
         "chromeSlots": {
-          "type": "object", "required": ["used", "limit"],
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["used", "limit"],
           "properties": {
             "used": { "type": "integer", "minimum": 0 },
             "limit": { "type": "integer", "minimum": 1 }
           }
         },
-        "bySource": { "type": "object" },
-        "byWorkKind": { "type": "object" },
+        "bySource": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 0 } },
+        "byWorkKind": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 0 } },
         "admissionPaused": { "type": "boolean" },
-        "browserRuns": { "type": "object" },
-        "broker": { "type": ["object", "null"] }
+        "browserRuns": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["active", "byPurpose"],
+          "properties": {
+            "active": { "type": "integer", "minimum": 0 },
+            "byPurpose": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 0 } }
+          }
+        },
+        "broker": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["running", "generationId"],
+              "properties": {
+                "running": { "type": "boolean" },
+                "generationId": { "type": ["string", "null"] }
+              }
+            },
+            { "type": "null" }
+          ]
+        }
       }
     },
     "browserRun": {
       "type": "object",
-      "required": ["browserRunId", "accountId", "purpose", "state", "startedAt"],
+      "additionalProperties": false,
+      "required": [
+        "browserRunId", "accountId", "operationId", "purpose", "effectiveSource", "profilePath",
+        "rootPid", "rootStartTime", "debugEndpointFingerprint", "launcherRunToken",
+        "brokerGenerationId", "startedAt", "state", "closeReason", "closeError"
+      ],
       "properties": {
         "browserRunId": { "type": "string", "minLength": 1 },
         "accountId": { "type": "string", "minLength": 1 },
         "operationId": { "type": ["string", "null"] },
-        "purpose": {
-          "enum": ["login", "open-page", "manual-run", "scheduled-run", "status-check", "selector-check"]
-        },
+        "purpose": { "enum": ["login", "open-page", "manual-run", "scheduled-run", "status-check", "selector-check"] },
         "effectiveSource": { "type": ["string", "null"] },
         "profilePath": { "type": ["string", "null"] },
         "rootPid": { "type": ["integer", "null"] },
@@ -179,149 +522,333 @@
         "debugEndpointFingerprint": { "type": ["string", "null"] },
         "launcherRunToken": { "type": ["string", "null"] },
         "brokerGenerationId": { "type": ["string", "null"] },
-        "startedAt": { "type": "string" },
-        "state": {
-          "enum": ["waiting", "launching", "running", "closing", "closed", "close_failed"]
-        },
+        "startedAt": { "type": "string", "format": "date-time" },
+        "state": { "enum": ["waiting", "launching", "running", "closing", "closed", "close_failed"] },
         "closeReason": { "type": ["string", "null"] },
         "closeError": { "type": ["string", "null"] }
       }
     },
     "browserRunListResult": {
-      "type": "object", "required": ["active", "recent"],
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["active", "recent", "chromeOccupancy", "quarantined"],
       "properties": {
         "active": { "type": "array", "items": { "$ref": "#/$defs/browserRun" } },
         "recent": { "type": "array", "items": { "$ref": "#/$defs/browserRun" } },
         "chromeOccupancy": { "type": "integer", "minimum": 0 },
-        "quarantined": { "type": "array" }
+        "quarantined": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["accountId", "reason"],
+            "properties": {
+              "accountId": { "type": "string", "minLength": 1 },
+              "reason": { "type": "string" }
+            }
+          }
+        }
       }
     },
     "browserRunCloseParams": {
-      "type": "object", "additionalProperties": false, "required": ["browserRunId"],
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["browserRunId"],
       "properties": { "browserRunId": { "type": "string", "minLength": 1 } }
     },
     "browserRunCloseResult": {
-      "type": "object", "required": ["ok"],
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "run"],
       "properties": {
         "ok": { "type": "boolean" },
         "run": { "oneOf": [{ "$ref": "#/$defs/browserRun" }, { "type": "null" }] }
       }
     },
     "accountIdParams": {
-      "type": "object", "additionalProperties": false, "required": ["accountId"],
-      "properties": { "accountId": { "type": "string", "minLength": 1 }, "url": { "type": "string" } }
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["accountId"],
+      "properties": {
+        "accountId": { "type": "string", "minLength": 1 },
+        "url": { "type": "string" }
+      }
     },
     "helloParams": { "$ref": "ipc-v1.schema.json#/$defs/helloParams" },
     "helloResult": { "$ref": "ipc-v1.schema.json#/$defs/helloResult" },
     "prepareUpdateParams": {
-      "type": "object", "additionalProperties": false,
-      "properties": { "commit": { "type": "boolean" }, "reason": { "type": "string" } }
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "commit": { "type": "boolean" },
+        "reason": { "type": "string" }
+      }
     },
     "prepareUpdateResult": {
-      "type": "object", "required": ["ready", "blockers"],
-      "properties": { "ready": { "type": "boolean" }, "committed": { "type": "boolean" }, "blockers": { "type": "array" } }
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ready", "draining", "scheduler", "openPages", "operations", "blockers"],
+      "properties": {
+        "ready": { "type": "boolean" },
+        "committed": { "type": "boolean" },
+        "draining": { "type": "boolean" },
+        "scheduler": { "$ref": "#/$defs/schedulerResult" },
+        "openPages": { "$ref": "#/$defs/openPageMap" },
+        "operations": { "$ref": "#/$defs/operationArray" },
+        "blockers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "resourceId", "detail"],
+            "properties": {
+              "kind": { "enum": ["open-page", "operation", "account-busy", "chrome-reclaim-failed"] },
+              "resourceId": { "type": "string" },
+              "detail": { "$ref": "ipc-v1.schema.json#/$defs/jsonValue" }
+            }
+          }
+        }
+      }
     },
     "shutdownParams": {
-      "type": "object", "additionalProperties": false,
-      "properties": { "reason": { "type": "string" }, "force": { "type": "boolean" } }
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "reason": { "type": "string" },
+        "force": { "type": "boolean" }
+      }
     },
     "bootstrapResult": {
       "type": "object",
-      "required": ["instanceId", "revision", "accounts", "statuses", "openPages", "groups", "proxies", "conversations", "scheduler", "settings", "operations", "historyAccounts", "draining"],
+      "additionalProperties": false,
+      "required": [
+        "instanceId", "revision", "accounts", "statuses", "openPages", "groups", "proxies",
+        "conversations", "scheduler", "settings", "operations", "activeOperations",
+        "historyAccounts", "draining"
+      ],
       "properties": {
-        "instanceId": { "type": "string", "format": "uuid" }, "revision": { "type": "integer" },
-        "accounts": { "$ref": "#/$defs/accountArray" }, "statuses": { "type": "object" }, "openPages": { "type": "object" },
-        "groups": { "$ref": "#/$defs/groupArray" }, "proxies": { "$ref": "#/$defs/proxyStateResult" }, "conversations": { "$ref": "#/$defs/conversationMap" },
-        "scheduler": { "$ref": "#/$defs/schedulerResult" }, "settings": { "$ref": "#/$defs/settingsResult" }, "operations": { "$ref": "#/$defs/operationArray" },
+        "instanceId": { "type": "string", "format": "uuid" },
+        "revision": { "type": "integer", "minimum": 0 },
+        "accounts": { "$ref": "#/$defs/accountArray" },
+        "statuses": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "state", "loggedIn", "email", "detail", "checkedAt", "lastCheckState",
+              "lastCheckDetail", "confirmedState", "confirmedAt", "consecutiveUnknowns",
+              "unknownSince", "stale"
+            ],
+            "properties": {
+              "state": { "enum": ["ok", "reauth", "out", "unknown", null] },
+              "loggedIn": { "type": ["boolean", "null"] },
+              "email": { "type": ["string", "null"] },
+              "detail": { "type": ["string", "null"] },
+              "checkedAt": { "type": ["string", "null"], "format": "date-time" },
+              "lastCheckState": { "enum": ["ok", "reauth", "out", "unknown", null] },
+              "lastCheckDetail": { "type": ["string", "null"] },
+              "confirmedState": { "enum": ["ok", "reauth", "out", null] },
+              "confirmedAt": { "type": ["string", "null"], "format": "date-time" },
+              "consecutiveUnknowns": { "type": "integer", "minimum": 0 },
+              "unknownSince": { "type": ["string", "null"], "format": "date-time" },
+              "stale": { "type": "boolean" }
+            }
+          }
+        },
+        "openPages": { "$ref": "#/$defs/openPageMap" },
+        "groups": { "$ref": "#/$defs/groupArray" },
+        "proxies": { "$ref": "#/$defs/proxyStateResult" },
+        "conversations": { "$ref": "#/$defs/conversationMap" },
+        "scheduler": { "$ref": "#/$defs/schedulerResult" },
+        "settings": { "$ref": "#/$defs/settingsResult" },
+        "operations": { "$ref": "#/$defs/operationArray" },
         "activeOperations": { "$ref": "#/$defs/operationArray" },
-        "historyAccounts": { "$ref": "#/$defs/historyAccountArray" }, "draining": { "type": "boolean" }
+        "historyAccounts": { "$ref": "#/$defs/historyAccountArray" },
+        "draining": { "type": "boolean" }
       }
     },
     "activityResult": {
-      "type": "object", "required": ["draining", "scheduler", "openPages", "operations", "blockers"],
-      "properties": { "draining": { "type": "boolean" }, "scheduler": { "type": "object" }, "openPages": { "type": "object" }, "operations": { "type": "array" }, "blockers": { "type": "array" } }
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["draining", "scheduler", "openPages", "operations", "blockers"],
+      "properties": {
+        "draining": { "type": "boolean" },
+        "scheduler": { "$ref": "#/$defs/schedulerResult" },
+        "openPages": { "$ref": "#/$defs/openPageMap" },
+        "operations": { "$ref": "#/$defs/operationArray" },
+        "blockers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "resourceId", "detail"],
+            "properties": {
+              "kind": { "enum": ["open-page", "operation", "account-busy", "chrome-reclaim-failed"] },
+              "resourceId": { "type": "string" },
+              "detail": { "$ref": "ipc-v1.schema.json#/$defs/jsonValue" }
+            }
+          }
+        }
+      }
     },
     "accountPatch": {
-      "type": "object", "additionalProperties": false,
+      "type": "object",
+      "additionalProperties": false,
       "properties": {
-        "note": { "type": "string" }, "groupId": { "type": ["string", "null"] }, "enabled": { "type": "boolean" },
-        "switchRule": { "enum": ["random", "sequential"] }, "minWindows": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "note": { "type": "string" },
+        "groupId": { "type": ["string", "null"] },
+        "enabled": { "type": "boolean" },
+        "switchRule": { "enum": ["random", "sequential"] },
+        "minWindows": { "type": "integer", "minimum": 1, "maximum": 100 },
         "maxWindows": { "type": "integer", "minimum": 1, "maximum": 100 }
       }
     },
     "accountCreateParams": { "$ref": "#/$defs/accountPatch" },
     "accountUpdateParams": {
-      "type": "object", "additionalProperties": false, "required": ["id", "patch"],
-      "properties": { "id": { "type": "string", "minLength": 1 }, "patch": { "$ref": "#/$defs/accountPatch" } }
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "patch"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "patch": { "$ref": "#/$defs/accountPatch" }
+      }
     },
     "accountRemoveParams": {
-      "type": "object", "additionalProperties": false, "required": ["id"],
-      "properties": { "id": { "type": "string", "minLength": 1 }, "profileAction": { "enum": ["detach", "archive", "purge"] } }
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "profileAction": { "enum": ["detach", "archive", "purge"] }
+      }
     },
     "loginParams": {
-      "type": "object", "additionalProperties": false, "required": ["accountId"],
-      "properties": { "accountId": { "type": "string", "minLength": 1 }, "force": { "type": "boolean" } }
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["accountId"],
+      "properties": {
+        "accountId": { "type": "string", "minLength": 1 },
+        "force": { "type": "boolean" }
+      }
     },
     "historyQueryParams": {
-      "type": "object", "additionalProperties": false, "required": ["accountId"],
-      "properties": { "accountId": { "type": "string", "minLength": 1 }, "limit": { "type": "integer", "minimum": 1, "maximum": 500 } }
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["accountId"],
+      "properties": {
+        "accountId": { "type": "string", "minLength": 1 },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 500 }
+      }
     },
     "groupCreateParams": {
-      "type": "object", "additionalProperties": false, "required": ["name"],
-      "properties": { "name": { "type": "string", "minLength": 1 }, "proxyId": { "type": ["string", "null"] }, "timezone": { "type": ["string", "null"] }, "locale": { "type": ["string", "null"] } }
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "proxyId": { "type": ["string", "null"] },
+        "timezone": { "type": ["string", "null"] },
+        "locale": { "type": ["string", "null"] }
+      }
     },
     "groupUpdateParams": {
-      "type": "object", "additionalProperties": false, "required": ["id", "patch"],
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "patch"],
       "properties": {
         "id": { "type": "string", "minLength": 1 },
         "patch": {
-          "type": "object", "additionalProperties": false,
-          "properties": { "name": { "type": "string" }, "proxyId": { "type": ["string", "null"] }, "timezone": { "type": ["string", "null"] }, "locale": { "type": ["string", "null"] } }
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "name": { "type": "string", "minLength": 1 },
+            "proxyId": { "type": ["string", "null"] },
+            "timezone": { "type": ["string", "null"] },
+            "locale": { "type": ["string", "null"] }
+          }
         }
       }
     },
     "subscriptionParams": {
-      "type": "object", "additionalProperties": false, "required": ["url"],
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["url"],
       "properties": { "url": { "type": "string", "minLength": 1 } }
     },
     "runtimeDirectoryParams": {
-      "type": "object", "additionalProperties": false, "minProperties": 1,
-      "properties": { "directory": { "type": "string", "minLength": 1 }, "clashVergeDir": { "type": "string", "minLength": 1 } }
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "directory": { "type": "string", "minLength": 1 },
+        "clashVergeDir": { "type": "string", "minLength": 1 }
+      }
     },
     "nodeEnabledParams": {
-      "type": "object", "additionalProperties": false, "required": ["id", "enabled"],
-      "properties": { "id": { "type": "string", "minLength": 1 }, "enabled": { "type": "boolean" } }
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "enabled"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "enabled": { "type": "boolean" }
+      }
     },
     "profileCleanParams": {
-      "type": "object", "additionalProperties": false,
-      "properties": { "scope": { "enum": ["all", "linked", "orphan"] }, "name": { "type": "string", "minLength": 1 } }
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "scope": { "enum": ["all", "linked", "orphan"] },
+        "name": { "type": "string", "minLength": 1 }
+      }
     },
     "nameParams": {
-      "type": "object", "additionalProperties": false, "required": ["name"],
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
       "properties": { "name": { "type": "string", "minLength": 1 } }
     },
     "conversationUpsertParams": {
-      "type": "object", "additionalProperties": false, "required": ["name", "set"],
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "set"],
       "properties": {
         "name": { "type": "string", "minLength": 1 },
-        "set": { "type": "object", "required": ["topic", "minRounds", "maxRounds"], "properties": { "topic": { "type": "string" }, "minRounds": { "type": "integer", "minimum": 0 }, "maxRounds": { "type": "integer", "minimum": 0 } } }
+        "set": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["topic", "minRounds", "maxRounds"],
+          "properties": {
+            "topic": { "type": "string" },
+            "minRounds": { "type": "integer", "minimum": 0 },
+            "maxRounds": { "type": "integer", "minimum": 0 }
+          }
+        }
       }
     },
     "settingsUpdateParams": {
-      "type": "object", "additionalProperties": false,
+      "type": "object",
+      "additionalProperties": false,
       "properties": {
         "patch": {
-          "type": "object", "additionalProperties": false,
+          "type": "object",
+          "additionalProperties": false,
           "properties": {
-            "intervalMinutes": { "type": "number", "minimum": 1 }, "jitterMinutes": { "type": "number", "minimum": 0 },
-            "headless": { "type": "boolean" }, "statusCheckMinutes": { "type": "number", "minimum": 1 },
-            "statusCheckOnStartup": { "type": "boolean" }, "openPageTimeoutMinutes": { "type": "number", "minimum": 0 },
+            "intervalMinutes": { "type": "number", "minimum": 1 },
+            "jitterMinutes": { "type": "number", "minimum": 0 },
+            "headless": { "type": "boolean" },
+            "statusCheckMinutes": { "type": "number", "minimum": 1 },
+            "statusCheckOnStartup": { "type": "boolean" },
+            "openPageTimeoutMinutes": { "type": "number", "minimum": 0 },
             "profileAutoCleanEnabled": { "type": "boolean" }
           }
         },
-        "intervalMinutes": { "type": "number", "minimum": 1 }, "jitterMinutes": { "type": "number", "minimum": 0 },
-        "headless": { "type": "boolean" }, "statusCheckMinutes": { "type": "number", "minimum": 1 },
-        "statusCheckOnStartup": { "type": "boolean" }, "openPageTimeoutMinutes": { "type": "number", "minimum": 0 },
+        "intervalMinutes": { "type": "number", "minimum": 1 },
+        "jitterMinutes": { "type": "number", "minimum": 0 },
+        "headless": { "type": "boolean" },
+        "statusCheckMinutes": { "type": "number", "minimum": 1 },
+        "statusCheckOnStartup": { "type": "boolean" },
+        "openPageTimeoutMinutes": { "type": "number", "minimum": 0 },
         "profileAutoCleanEnabled": { "type": "boolean" }
       }
     }

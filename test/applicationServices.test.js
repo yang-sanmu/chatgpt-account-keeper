@@ -430,6 +430,45 @@ test("long work returns an operation immediately and publishes lifecycle events"
   assert.ok(events.every((event, index) => index === 0 || event.seq > events[index - 1].seq));
 });
 
+test("group and conversation change events expose the exact UI delta payloads", async () => {
+  const runtime = fakeRuntime();
+  const services = new ApplicationServices({ runtime });
+  const groupEvents = [];
+  const conversationEvents = [];
+  services.events.subscribe((event) => {
+    if (event.event === "group.changed") groupEvents.push(event.payload);
+    if (event.event === "conversation.changed") conversationEvents.push(event.payload);
+  });
+
+  const created = await services.invoke("groups.create", {
+    name: "temporary",
+    proxyId: null,
+  });
+  const updated = await services.invoke("groups.update", {
+    id: created.id,
+    patch: { name: "renamed" },
+  });
+  await services.invoke("groups.remove", { id: created.id });
+
+  const conversation = { topic: "contract", minRounds: 1, maxRounds: 2 };
+  const saved = await services.invoke("conversations.upsert", {
+    name: "temporary",
+    set: conversation,
+  });
+  await services.invoke("conversations.remove", { name: "temporary" });
+
+  assert.deepEqual(groupEvents, [
+    created,
+    updated,
+    { id: created.id, removed: true },
+  ]);
+  assert.deepEqual(conversationEvents, [
+    { name: "temporary", set: saved },
+    { name: "temporary", removed: true },
+  ]);
+  services.dispose();
+});
+
 test("选择器自检默认只读，deep 为 true 时才允许真发消息", async () => {
   const calls = [];
   const runtime = fakeRuntime({
@@ -720,6 +759,22 @@ test("history preserves planned rounds and forward-compatible stop reasons", asy
   assert.equal(entry.stopReason, "future-reason");
 });
 
+test("history degrades non-string legacy fields instead of leaking arbitrary JSON", async () => {
+  const runtime = fakeRuntime({
+    readHistory: () => [{
+      time: { legacy: true },
+      error: { private: "raw" },
+      rounds: [{ question: { raw: true }, answer: 42, at: false }],
+    }],
+  });
+  const services = new ApplicationServices({ runtime });
+
+  const [entry] = await services.invoke("history.query", { accountId: "acc", limit: 10 });
+  assert.equal(entry.time, null);
+  assert.equal(entry.error, null);
+  assert.deepEqual(entry.rounds, [{ question: null, answer: null, at: null }]);
+});
+
 test("history resolves legacy topics from the configured context or prompt", async () => {
   const runtime = fakeRuntime({
     readHistory: () => [
@@ -799,6 +854,13 @@ test("scheduler account progress is published for every persisted change", async
     lastResultState: null,
   });
   assert.equal(seen.length, 1);
-  assert.equal(seen[0].nextAt, "2026-01-01T01:00:00.000Z");
+  assert.deepEqual(seen[0], {
+    accountId: "acc",
+    nextAt: "2026-01-01T01:00:00.000Z",
+    lastAt: null,
+    busy: false,
+    lastResultState: null,
+    lastResult: null,
+  });
   services.dispose();
 });

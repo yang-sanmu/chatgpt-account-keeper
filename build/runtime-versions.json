@@ -57,8 +57,5 @@
         "format": "gz"
       }
     }
-  },
-  "velopack": {
-    "version": "1.2.0"
   }
 }

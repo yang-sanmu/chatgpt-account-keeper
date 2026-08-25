@@ -117,6 +117,18 @@ function bootstrapPayload() {
 
 /// 与 src/profileManager.js 的 scan() 输出一致。
 function scanResult() {
+  const orphan = {
+    name: "profile-orphan",
+    linked: false,
+    accountIds: [],
+    accountLabels: [],
+    nonStandardReference: false,
+    busy: false,
+    bytes: 600_000_000,
+    files: 3_000,
+    cacheBytes: 100_000_000,
+    cacheFiles: 900,
+  };
   return {
     profiles: [
       {
@@ -131,20 +143,9 @@ function scanResult() {
         cacheBytes: 800_000_000,
         cacheFiles: 5_000,
       },
-      {
-        name: "profile-orphan",
-        linked: false,
-        accountIds: [],
-        accountLabels: [],
-        nonStandardReference: false,
-        busy: false,
-        bytes: 600_000_000,
-        files: 3_000,
-        cacheBytes: 100_000_000,
-        cacheFiles: 900,
-      },
+      orphan,
     ],
-    orphans: [],
+    orphans: [orphan],
     totals: {
       profiles: 2,
       linked: 1,
@@ -288,7 +289,7 @@ describe("Profile 扫描", () => {
         occurredAt: "2026-08-25T00:00:05Z",
         payload: {
           id: "op-clean-1",
-          kind: "profile-clean-cache",
+          kind: "profile-cache-clean",
           state: "succeeded",
           startedAt: "2026-08-25T00:00:00Z",
           updatedAt: "2026-08-25T00:00:05Z",
@@ -299,5 +300,130 @@ describe("Profile 扫描", () => {
     });
 
     expect(scanCalls, "Profile 操作完成后没有重新扫描").toBeGreaterThan(0);
+  });
+
+  it("同一操作先后收到 profile.changed 与 operation.changed 只触发一次后续扫描", async () => {
+    await mount();
+    scanCalls = 0;
+
+    // Agent 先发 profile.changed（旧式通知），随后发 operation.changed（终态）
+    await act(async () => {
+      emitAgentEvent?.({
+        name: "profile.changed",
+        seq: 5,
+        instanceId: "instance-1",
+        occurredAt: "2026-08-25T00:00:04Z",
+        payload: {
+          kind: "profile-cache-clean",
+          name: null,
+          result: {},
+        },
+      });
+    });
+
+    expect(scanCalls, "profile.changed 不应提前触发扫描").toBe(0);
+
+    await act(async () => {
+      emitAgentEvent?.({
+        name: "operation.changed",
+        seq: 6,
+        instanceId: "instance-1",
+        occurredAt: "2026-08-25T00:00:05Z",
+        payload: {
+          id: "op-clean-2",
+          kind: "profile-cache-clean",
+          state: "succeeded",
+          startedAt: "2026-08-25T00:00:00Z",
+          updatedAt: "2026-08-25T00:00:05Z",
+          blocksUpdate: false,
+          result: {},
+        },
+      });
+    });
+
+    expect(scanCalls, "operation.changed 终态应只触发恰好一次后续扫描").toBe(1);
+  });
+
+  it("带 sizeBytes/isOrphan 或缺少必需 totals 的伪扫描结果不得被当成有效 ProfileScanResult", async () => {
+    await mount();
+
+    // 1. 旧式猜测别名 (sizeBytes/isOrphan) 且缺少必需结构
+    await act(async () => {
+      emitAgentEvent?.({
+        name: "operation.changed",
+        seq: 7,
+        instanceId: "instance-1",
+        occurredAt: "2026-08-25T00:00:05Z",
+        payload: {
+          id: "op-scan-invalid-1",
+          kind: "profile-scan",
+          state: "succeeded",
+          startedAt: "2026-08-25T00:00:00Z",
+          updatedAt: "2026-08-25T00:00:05Z",
+          blocksUpdate: false,
+          result: {
+            profiles: [
+              {
+                name: "profile-legacy",
+                isOrphan: true,
+                sizeBytes: 1000,
+              },
+            ],
+            orphans: [],
+            totals: {
+              profiles: 1,
+              linked: 0,
+              orphans: 1,
+              bytes: 1000,
+              cacheBytes: 0,
+              orphanBytes: 1000,
+              archiveCount: 0,
+              archiveBytes: 0,
+              trashCount: 0,
+              trashBytes: 0,
+            },
+          },
+        },
+      });
+    });
+
+    expect(api?.profileScan, "带 sizeBytes/isOrphan 的伪数据不应被识别为有效 ProfileScanResult").toBeNull();
+
+    // 2. 缺少必需 totals 的结果
+    await act(async () => {
+      emitAgentEvent?.({
+        name: "operation.changed",
+        seq: 8,
+        instanceId: "instance-1",
+        occurredAt: "2026-08-25T00:00:06Z",
+        payload: {
+          id: "op-scan-invalid-2",
+          kind: "profile-scan",
+          state: "succeeded",
+          startedAt: "2026-08-25T00:00:00Z",
+          updatedAt: "2026-08-25T00:00:06Z",
+          blocksUpdate: false,
+          result: {
+            profiles: [
+              {
+                name: "profile-a",
+                linked: true,
+                accountIds: [],
+                accountLabels: [],
+                nonStandardReference: false,
+                busy: false,
+                bytes: 1000,
+                files: 10,
+                cacheBytes: 200,
+                cacheFiles: 2,
+              },
+            ],
+            orphans: [],
+          },
+        },
+      });
+    });
+
+    expect(api?.profileScan, "缺少必需 totals 不得被当成有效 ProfileScanResult（不能显示补零后的假数据）").toBeNull();
   });
 });

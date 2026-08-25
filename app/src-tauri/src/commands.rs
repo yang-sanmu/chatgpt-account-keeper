@@ -642,6 +642,14 @@ pub async fn install_update(
     {
         use tauri_plugin_updater::UpdaterExt;
 
+        if !self_update_supported() {
+            return Err(ApiError {
+                code: "UPDATE_UNSUPPORTED".into(),
+                message: "该安装方式由系统包管理器升级（apt / dnf），不能在应用内安装更新".into(),
+                retryable: false,
+            });
+        }
+
         let report = |stage: InstallStage, percent: Option<u8>| {
             let _ = app.emit(
                 events::UPDATE,

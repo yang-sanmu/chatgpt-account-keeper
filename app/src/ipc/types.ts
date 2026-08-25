@@ -1,5 +1,12 @@
-// 前端 IPC 类型契约与数据模型定义
 // 严格对齐 contracts/ipc-v1.schema.json 与 UI_BRIEF.md
+
+import type {
+  BootstrapResult,
+  HistoryAccountResult,
+  HistoryEntryResult,
+  Operation,
+  ProxyStateResult,
+} from "./generated";
 
 export type AppTheme = "dark" | "light" | "system";
 export type CloseBehavior = "ask" | "minimizeToTray" | "exitAll";
@@ -89,62 +96,13 @@ export interface GroupPatch {
   locale?: string | null;
 }
 
-/// 代理节点。字段名与 `src/proxyManager.js` 的 `getNodes()` 一致。
-///
-/// 注意测速结果有**两种形状**：这里是 `proxies.getState` 返回的
-/// `latencyMs / latencyOk / latencyMessage / latencyTestedAt`，而 `proxyNode.tested`
-/// 事件的 payload 是 `{ id, ok, delay, message, testedAt }`（来自 rememberLatency）。
-/// 两者必须显式转换，直接读事件里的 `latencyMs` 会永远拿到 undefined。
-export interface ProxyNode {
-  id: string;
-  name: string;
-  /// 订阅里缺字段时为 null，界面要能显示「—」而不是 "null:null"。
-  server: string | null;
-  port: number | null;
-  type: string | null;
-  enabled: boolean;
-  /// 订阅刷新后节点消失。仍留在列表里，但不能被分组引用。
-  missing: boolean;
-  latencyMs: number | null;
-  latencyOk: boolean | null;
-  latencyMessage: string | null;
-  latencyTestedAt: string | null;
-  /// 只有被分组实际引用且启用的节点才有边车监听端口；测速走独立临时进程。
-  localPort: number | null;
-}
+export type BootstrapSnapshot = BootstrapResult;
 
-/// `proxyNode.tested` 事件的 payload。与上面的节点字段名不同，见 ProxyNode 的说明。
-export interface ProxyNodeTestedPayload {
-  id: string;
-  ok?: boolean;
-  delay?: number | null;
-  message?: string | null;
-  testedAt?: string;
-}
-
-export interface ProxySubscription {
-  url?: string;
-  updatedAt?: string | null;
-  nodeCount?: number;
-}
-
-export interface ProxyRuntime {
-  directory?: string;
-  clashVergeDir?: string;
-}
-
-export interface ProxyStatus {
-  running: boolean;
-  localPort?: number;
-  error?: string | null;
-}
-
-export interface ProxyState {
-  nodes: ProxyNode[];
-  status: ProxyStatus;
-  subscription: ProxySubscription | null;
-  runtime: ProxyRuntime | null;
-}
+export type ProxyState = ProxyStateResult;
+export type ProxyNode = ProxyStateResult["nodes"][number];
+export type ProxyStatus = ProxyStateResult["status"];
+export type ProxySubscription = ProxyStateResult["subscription"];
+export type ProxyRuntime = ProxyStateResult["runtime"];
 
 export interface ConversationSet {
   topic: string;
@@ -167,6 +125,7 @@ export interface SchedulerAccountState {
   lastRunAt?: string | null;
   lastRunOk?: boolean | null;
   reason?: string | null;
+  busy?: boolean;
 }
 
 export interface SchedulerState {
@@ -177,15 +136,6 @@ export interface SchedulerState {
   message?: string;
 }
 
-export type OperationState =
-  | "queued"
-  | "running"
-  | "waiting_user"
-  | "succeeded"
-  | "failed"
-  | "timed_out"
-  | "cancelled";
-
 export interface ApiError {
   code: string;
   message: string;
@@ -193,52 +143,11 @@ export interface ApiError {
   details?: unknown;
 }
 
-export interface Operation {
-  id: string;
-  kind: string;
-  resourceId: string | null;
-  state: OperationState;
-  stage: string | null;
-  effectiveSource: "manual" | "scheduled" | "background" | null;
-  message: string | null;
-  progress: number | null;
-  startedAt: string;
-  updatedAt: string;
-  finishedAt: string | null;
-  result?: unknown;
-  error?: ApiError | null;
-  blocksUpdate: boolean;
-}
+export type OperationState = Operation["state"];
 
-export interface HistoryRound {
-  question: string | null;
-  answer: string | null;
-  at: string | null;
-}
-
-export interface HistoryEntry {
-  time: string | null;
-  ok: boolean | null;
-  setName: string | null;
-  topic: string | null;
-  totalRounds: number;
-  targetRounds: number | null;
-  stopReason: string | null;
-  error: string | null;
-  needReauth: boolean;
-  rounds: HistoryRound[];
-}
-
-export interface HistoryAccount {
-  accountId: string;
-  entryCount: number;
-  deleted: boolean;
-  lastAt: string | null;
-  lastOk: boolean | null;
-  note: string | null;
-  email: string | null;
-  gptName: string | null;
-}
+export type HistoryAccount = HistoryAccountResult;
+export type HistoryEntry = HistoryEntryResult;
+export type HistoryRound = HistoryEntryResult["rounds"][number];
 
 export interface QueueSnapshot {
   queuedTotal: number;
@@ -269,68 +178,6 @@ export type BrowserRunState =
   | "closing"
   | "closed"
   | "close_failed";
-
-export interface BrowserRun {
-  browserRunId: string;
-  accountId: string;
-  operationId: string | null;
-  purpose: BrowserRunPurpose;
-  effectiveSource: string | null;
-  profilePath: string | null;
-  rootPid: number | null;
-  rootStartTime: number | null;
-  startedAt: string;
-  state: BrowserRunState;
-  closeReason: string | null;
-  closeError: string | null;
-}
-
-export interface BrowserRunListResult {
-  active: BrowserRun[];
-  recent: BrowserRun[];
-  chromeOccupancy: number;
-  quarantined: unknown[];
-}
-
-/// 单个 Profile 目录。字段名与 `src/profileManager.js` 的 `scan()` 一致。
-export interface ProfileInfo {
-  name: string;
-  /// 是否被账号引用。未引用的是孤儿，可归档或永久删除。
-  linked: boolean;
-  accountIds: string[];
-  /// 账号的显示名（email / gptName / note / id 依次回退），直接用于界面。
-  accountLabels: string[];
-  /// 账号用了自定义 Profile 路径。删除这类目录要格外谨慎。
-  nonStandardReference: boolean;
-  /// 正在被任务占用或存在 Chrome 运行锁。此时不能清理。
-  busy: boolean;
-  bytes: number;
-  files: number;
-  cacheBytes: number;
-  cacheFiles: number;
-}
-
-/// `profiles.scan` 操作的结果。
-///
-/// 注意 `profiles.scan` 是**操作类方法**（契约里返回 operationResult），调用它只拿到一个
-/// 操作描述符；真正的扫描数据要等 `operation.changed` 里 `kind === "profile-scan"` 且
-/// `state === "succeeded"` 时从 `result` 取。
-export interface ProfileScanResult {
-  profiles: ProfileInfo[];
-  orphans: ProfileInfo[];
-  totals: {
-    profiles: number;
-    linked: number;
-    orphans: number;
-    bytes: number;
-    cacheBytes: number;
-    orphanBytes: number;
-    archiveCount: number;
-    archiveBytes: number;
-    trashCount: number;
-    trashBytes: number;
-  };
-}
 
 /// 退出进度。由 Rust 的 exit_all 逐阶段发出。
 export interface ExitProgress {
@@ -410,29 +257,36 @@ export interface UpdateStatus {
   canCancel?: boolean;
 }
 
-export interface BootstrapSnapshot {
-  instanceId: string;
-  revision: number;
-  accounts: unknown[];
-  statuses?: Record<string, unknown>;
-  openPages?: Record<string, boolean>;
-  groups: Group[];
-  proxies: ProxyState;
-  conversations: Record<string, ConversationSet>;
-  scheduler: SchedulerState;
-  settings: AgentSettings;
-  operations: Operation[];
-  activeOperations?: Operation[];
-  historyAccounts: HistoryAccount[];
-  draining: boolean;
-  protocol?: unknown;
-  agentVersion?: string;
-}
-
-export interface AgentEventEnvelope {
-  name: string;
-  seq?: number;
-  instanceId?: string;
-  occurredAt?: string;
-  payload: unknown;
-}
+export type {
+  IpcMethod,
+  IpcParams,
+  IpcResult,
+  OperationMethod,
+  AgentEventEnvelope,
+  Operation,
+  IpcError,
+  ErrorCode,
+  ProfileInfo,
+  ProfileScanResult,
+  ProxyNodeTestedPayload,
+  ProfileChangedPayload,
+  GroupChangedPayload,
+  ConversationChangedPayload,
+  SchedulerAccountChangedPayload,
+  AccountResult,
+  AccountArray,
+  GroupResult,
+  GroupArray,
+  HistoryAccountResult,
+  HistoryAccountArray,
+  HistoryEntryResult,
+  HistoryEntryArray,
+  ProxyStateResult,
+  SchedulerResult,
+  SettingsResult,
+  BootstrapResult,
+  QueueSnapshotResult,
+  BrowserRun,
+  BrowserRunListResult,
+  BrowserRunCloseResult,
+} from "./generated";

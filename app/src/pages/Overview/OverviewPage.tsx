@@ -28,8 +28,8 @@ export const OverviewPage: React.FC = () => {
     setLoading(true);
     try {
       const [queueRes, runsRes] = await Promise.all([
-        agentCall<QueueSnapshot>("queue.getSnapshot").catch(() => null),
-        agentCall<BrowserRunListResult>("browserRuns.list").catch(() => null),
+        agentCall("queue.getSnapshot", {}).catch(() => null),
+        agentCall("browserRuns.list", {}).catch(() => null),
       ]);
       if (queueRes) setQueueSnapshot(queueRes);
       if (runsRes) setBrowserRuns(runsRes);

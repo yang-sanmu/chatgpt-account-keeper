@@ -11,18 +11,20 @@ export function verifyReleaseVersion(expectedVersion, root = repositoryRoot) {
   if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(expectedVersion ?? "")) {
     throw new Error(`Invalid release version: ${expectedVersion ?? ""}`);
   }
-  const packageJson = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
-  const packageLock = JSON.parse(fs.readFileSync(path.join(root, "package-lock.json"), "utf8"));
-  const project = fs.readFileSync(
-    path.join(root, "desktop", "src", "GptAccountKeeper.Desktop", "GptAccountKeeper.Desktop.csproj"),
-    "utf8",
+  const appRoot = path.join(root, "app");
+  const packageJson = JSON.parse(fs.readFileSync(path.join(appRoot, "package.json"), "utf8"));
+  const packageLock = JSON.parse(fs.readFileSync(path.join(appRoot, "package-lock.json"), "utf8"));
+  const tauriConfig = JSON.parse(
+    fs.readFileSync(path.join(appRoot, "src-tauri", "tauri.conf.json"), "utf8"),
   );
-  const projectVersion = project.match(/<Version>([^<]+)<\/Version>/)?.[1];
+  const cargoToml = fs.readFileSync(path.join(appRoot, "src-tauri", "Cargo.toml"), "utf8");
+  const cargoVersion = readCargoPackageVersion(cargoToml);
   const versions = {
-    "package.json": packageJson.version,
-    "package-lock.json": packageLock.version,
-    "package-lock root": packageLock.packages?.[""]?.version,
-    "desktop csproj": projectVersion,
+    "app/package.json": packageJson.version,
+    "app/package-lock.json": packageLock.version,
+    "app/package-lock root": packageLock.packages?.[""]?.version,
+    "app/src-tauri/tauri.conf.json": tauriConfig.version,
+    "app/src-tauri/Cargo.toml": cargoVersion,
   };
   const mismatches = Object.entries(versions).filter(([, version]) => version !== expectedVersion);
   if (mismatches.length > 0) {
@@ -32,6 +34,18 @@ export function verifyReleaseVersion(expectedVersion, root = repositoryRoot) {
     );
   }
   return versions;
+}
+
+function readCargoPackageVersion(cargoToml) {
+  const lines = cargoToml.split(/\r?\n/);
+  const packageIndex = lines.findIndex((line) => line.trim() === "[package]");
+  if (packageIndex < 0) return undefined;
+  for (const line of lines.slice(packageIndex + 1)) {
+    if (/^\s*\[[^\]]+\]\s*$/.test(line)) return undefined;
+    const version = line.match(/^\s*version\s*=\s*"([^"]+)"\s*(?:#.*)?$/)?.[1];
+    if (version) return version;
+  }
+  return undefined;
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))) {

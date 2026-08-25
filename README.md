@@ -7,13 +7,14 @@ ChatGPT 多账号的桌面管理与后台自动对话工具。每个账号使用
 ## 架构
 
 管理端正在从 Avalonia 迁移到 Rust + Tauri（见 [迁移计划](docs/TAURI_MIGRATION_PLAN.md)）。
-两个客户端目前并存：`desktop/` 是当前可发布的 Avalonia 客户端，`app/` 是新的 Tauri
-客户端，可用之前不发布。Agent 与 IPC v1 契约对两者完全相同。
+两个客户端目前并存：`desktop/` 是已公开的 0.1.x Avalonia 客户端，`app/` 是下一条
+0.2.x Tauri 版本线。Tauri 的仓库内分发门禁已经落地，但生产更新密钥、四平台 Draft
+和真机更新验收完成前仍不公开。Agent 与 IPC v1 契约对两者完全相同。
 
 ```text
 管理端
-desktop/  Avalonia 12 · .NET 10 NativeAOT · VeloPack   ← 当前发布
-app/      Tauri 2 · Rust · React                       ← 迁移目标
+desktop/  Avalonia 12 · .NET 10 NativeAOT · VeloPack   ← 已发布 0.1.x
+app/      Tauri 2 · Rust · React                       ← 下一版 0.2.x
                     │
         Named Pipe / Unix Domain Socket
         IPC v1 · 协议 1.3 · 50 方法 / 18 事件
@@ -83,7 +84,7 @@ cargo run --example containment_spike   # 关闭 job 句柄必须回收整棵进
 cargo run --example agent_handshake     # 用真 Agent 跑通 hello / bootstrap / accounts.list
 ```
 
-发布 NativeAOT（将 RID 换成 `linux-x64`、`osx-arm64` 或 `osx-x64` 可在对应原生宿主构建）：
+旧 0.1.x Avalonia 的 NativeAOT 构建（仅维护旧版本时使用）：
 
 ```powershell
 dotnet publish desktop/src/GptAccountKeeper.Desktop/GptAccountKeeper.Desktop.csproj `
@@ -129,23 +130,24 @@ Canonical JSON Schema 位于 `contracts/ipc-v1.schema.json`（消息信封/共�
 
 `.github/workflows/windows-release.yml` 会：
 
-1. 在 Windows x64、Linux x64、macOS arm64/x64 原生 runner 上运行完整测试和 NativeAOT publish。
+1. 用一个 Tauri 前端/Rust cargo 门禁和四平台 Node 测试矩阵验证源码。
 2. 下载固定版本的 Node 与 mihomo 并校验 SHA-256。
 3. 使用 `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1` 安装生产依赖。
 4. 拒绝 Chromium、`ms-playwright` 和旧 `public/` 管理页进入产物。
 5. 用私有 Node 对 staged Agent 执行 IPC/SQLite 启动烟测。
 6. 将项目许可证、第三方声明、隐私和源码说明写入安装包的 `licenses/`。
-7. 通过 VeloPack 生成 Windows 安装器、Linux AppImage 与 macOS `.pkg`/Portable `.app`，并额外生成已公证 DMG。
+7. 在四个原生 runner 上执行 `tauri build`，生成 Windows NSIS、两种 macOS DMG、
+   Linux AppImage/deb/rpm 以及各自的 updater `.sig`。
 8. 分别执行 Authenticode、Apple Developer ID/公证/stapling、Linux Minisign 门禁。
-9. 汇总四个独立更新通道、四份 SBOM、项目与 mihomo 对应源码及 `SHA256SUMS.release.txt` 到同一个 Draft Release。
+9. 生成只含四个允许目标的 `latest.json`，再汇总 SBOM、项目与 mihomo 对应源码及
+   `SHA256SUMS.release.txt` 到同一个 Draft Release。
 
 固定发行标识：
 
 - 显示名：`ChatGPT Account Keeper`
-- VeloPack Pack ID：`GptAccountKeeper.Desktop`
 - Bundle ID：`io.github.yang-sanmu.gptaccountkeeper`
 
-更新源是公开的 [GitHub Releases](https://github.com/yang-sanmu/chatgpt-account-keeper/releases)，客户端不含 GitHub Token。VeloPack 草稿不会被客户端看到，人工发布前应完成 N-1 → N 安装更新验收。
+更新源是公开的 [GitHub Releases](https://github.com/yang-sanmu/chatgpt-account-keeper/releases)，客户端不含 GitHub Token。GitHub Draft 不会被客户端看到；公开前必须完成候选安装与真实 Tauri N → N+1 更新验收。
 
 ### 签名发布门禁
 
@@ -159,7 +161,8 @@ Canonical JSON Schema 位于 `contracts/ipc-v1.schema.json`（消息信封/共�
 - **[本地 Windows 检查流程](docs/RELEASE_LOCAL.md)** —— 只用于 Windows 包诊断，不能替代四平台 Draft 发布。
 - **[N-1 → N 验收](docs/RELEASE_VERIFY.md)** —— 两条路径共用的升级验收清单。
 
-只有远端四平台流程能创建 Draft Release；显式执行 `-Mode PublishDraft` 后版本才会进入客户端的稳定更新通道。
+只有远端四平台流程能创建 Draft Release；真实更新验收后显式执行
+`-Mode PublishDraft -UpdaterVerified`，版本才会进入客户端的稳定更新通道。
 
 ## 过渡期旧入口
 

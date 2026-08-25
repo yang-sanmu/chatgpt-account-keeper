@@ -13,6 +13,10 @@ param(
 
     [switch] $NMinusOneVerified,
 
+    # Required when making the Draft public. Covers the real Tauri updater run
+    # plus the deb/rpm no-self-update and Linux compatibility checks.
+    [switch] $UpdaterVerified,
+
     [string] $Repository = 'yang-sanmu/chatgpt-account-keeper',
 
     [string] $Ref = 'main',
@@ -20,7 +24,7 @@ param(
     [string] $CandidateOutputDirectory,
 
     # Required when Candidate/Release starts a build. The Markdown is embedded
-    # in every VeloPack feed and shown in the desktop update prompt.
+    # in latest.json and shown in the Tauri update prompt.
     [string] $ReleaseNotesFile
 )
 
@@ -29,7 +33,6 @@ $ErrorActionPreference = 'Stop'
 
 $workflow = 'windows-release.yml'
 $tag = "v$Version"
-$script:ReplaceExistingDraft = $false
 $repositoryRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $releaseNotes = ''
 
@@ -119,9 +122,7 @@ function Invoke-NativeCommand {
 function Assert-ReleaseSourceReady {
     param(
         [Parameter(Mandatory = $true)]
-        [string] $GitHubCli,
-
-        [switch] $AllowExistingTag
+        [string] $GitHubCli
     )
 
     $status = Invoke-NativeCommand -FilePath 'git.exe' -ArgumentList @('status', '--porcelain') -CaptureOutput
@@ -147,24 +148,15 @@ function Assert-ReleaseSourceReady {
         -CaptureOutput `
         -AllowFailure
     if ($existingRelease.ExitCode -eq 0) {
-        # A leftover draft is recoverable: re-uploading replaces its assets and
-        # nothing has reached update clients yet. A public release is not.
-        $isDraft = ($existingRelease.Output | ConvertFrom-Json).isDraft
-        if (-not ($AllowExistingTag -and $isDraft)) {
-            throw "Release $tag already exists. Use a new version number."
-        }
-        Write-Warning "Draft release $tag already exists; its assets will be replaced."
-        $script:ReplaceExistingDraft = $true
+        throw "Release $tag already exists. Delete the failed Draft or use a new version number."
     }
 
-    if (-not $AllowExistingTag) {
-        $existingTag = Invoke-NativeCommand `
-            -FilePath 'git.exe' `
-            -ArgumentList @('ls-remote', '--tags', 'origin', "refs/tags/$tag") `
-            -CaptureOutput
-        if (-not [string]::IsNullOrWhiteSpace($existingTag.Output)) {
-            throw "Tag $tag already exists on origin. Use a new version number."
-        }
+    $existingTag = Invoke-NativeCommand `
+        -FilePath 'git.exe' `
+        -ArgumentList @('ls-remote', '--tags', 'origin', "refs/tags/$tag") `
+        -CaptureOutput
+    if (-not [string]::IsNullOrWhiteSpace($existingTag.Output)) {
+        throw "Tag $tag already exists on origin. Use a new version number."
     }
 }
 
@@ -224,152 +216,35 @@ function Invoke-ReleaseWorkflow {
 function Get-RequiredAssetName {
     $runtimeVersions = Get-Content (Join-Path $repositoryRoot 'build\runtime-versions.json') -Raw | ConvertFrom-Json
     return @(
-        "GptAccountKeeper.Desktop-$Version-full.nupkg",
-        'GptAccountKeeper.Desktop-win-Setup.exe',
-        'GptAccountKeeper.Desktop-win-Portable.zip',
-        'RELEASES',
-        'releases.win.json',
-        "GptAccountKeeper.Desktop-$Version-win-x64.spdx.json",
+        "ChatGPT-Account-Keeper_${Version}_windows_x86_64-setup.exe",
+        "ChatGPT-Account-Keeper_${Version}_windows_x86_64-setup.exe.sig",
+        "ChatGPT-Account-Keeper_${Version}_win-x64-agent.cdx.json",
 
-        "GptAccountKeeper.Desktop-$Version-osx-arm64-full.nupkg",
-        'GptAccountKeeper.Desktop-osx-arm64-Setup.pkg',
-        'GptAccountKeeper.Desktop-osx-arm64-Portable.zip',
-        "GptAccountKeeper.Desktop-$Version-osx-arm64.dmg",
-        'RELEASES-osx-arm64',
-        'releases.osx-arm64.json',
-        "GptAccountKeeper.Desktop-$Version-osx-arm64.spdx.json",
+        "ChatGPT-Account-Keeper_${Version}_darwin_aarch64.dmg",
+        "ChatGPT-Account-Keeper_${Version}_darwin_aarch64.app.tar.gz",
+        "ChatGPT-Account-Keeper_${Version}_darwin_aarch64.app.tar.gz.sig",
+        "ChatGPT-Account-Keeper_${Version}_osx-arm64-agent.cdx.json",
 
-        "GptAccountKeeper.Desktop-$Version-osx-x64-full.nupkg",
-        'GptAccountKeeper.Desktop-osx-x64-Setup.pkg',
-        'GptAccountKeeper.Desktop-osx-x64-Portable.zip',
-        "GptAccountKeeper.Desktop-$Version-osx-x64.dmg",
-        'RELEASES-osx-x64',
-        'releases.osx-x64.json',
-        "GptAccountKeeper.Desktop-$Version-osx-x64.spdx.json",
+        "ChatGPT-Account-Keeper_${Version}_darwin_x86_64.dmg",
+        "ChatGPT-Account-Keeper_${Version}_darwin_x86_64.app.tar.gz",
+        "ChatGPT-Account-Keeper_${Version}_darwin_x86_64.app.tar.gz.sig",
+        "ChatGPT-Account-Keeper_${Version}_osx-x64-agent.cdx.json",
 
-        "GptAccountKeeper.Desktop-$Version-linux-x64-full.nupkg",
-        'GptAccountKeeper.Desktop-linux-x64.AppImage',
-        'GptAccountKeeper.Desktop-linux-x64.AppImage.minisig',
-        'RELEASES-linux-x64',
-        'releases.linux-x64.json',
-        'releases.linux-x64.json.minisig',
-        "GptAccountKeeper.Desktop-$Version-linux-x64.spdx.json",
+        "ChatGPT-Account-Keeper_${Version}_linux_x86_64.AppImage",
+        "ChatGPT-Account-Keeper_${Version}_linux_x86_64.AppImage.sig",
+        "ChatGPT-Account-Keeper_${Version}_linux_x86_64.AppImage.minisig",
+        "ChatGPT-Account-Keeper_${Version}_linux_x86_64.deb",
+        "ChatGPT-Account-Keeper_${Version}_linux_x86_64.rpm",
+        "ChatGPT-Account-Keeper_${Version}_linux-x64-agent.cdx.json",
         'SHA256SUMS.linux-x64.txt',
         'SHA256SUMS.linux-x64.txt.minisig',
         'minisign.pub',
 
         "chatgpt-account-keeper-$Version-source.zip",
         "mihomo-v$($runtimeVersions.mihomo.version)-source.zip",
+        'latest.json',
         'SHA256SUMS.release.txt'
     )
-}
-
-# Uploads artifacts produced locally by build-local-release.ps1. Creates the tag
-# and a draft Release, so nothing reaches update clients until PublishDraft runs.
-function Send-LocalBuild {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string] $GitHubCli
-    )
-
-    $releaseRoot = Join-Path $repositoryRoot 'artifacts\Releases'
-    $complianceRoot = Join-Path $repositoryRoot 'artifacts\compliance'
-    foreach ($directory in @($releaseRoot, $complianceRoot)) {
-        if (-not (Test-Path -LiteralPath $directory)) {
-            throw "${directory} does not exist. Run scripts\build-local-release.ps1 -Version $Version first."
-        }
-    }
-
-    # Only assets for this exact version may ship. A stale delta or full package
-    # left over from an earlier build would otherwise be published silently.
-    $candidates = @(
-        Get-ChildItem $releaseRoot -File | Where-Object {
-            $_.Name -in @(
-                'GptAccountKeeper.Desktop-win-Setup.exe',
-                'GptAccountKeeper.Desktop-win-Portable.zip',
-                'RELEASES',
-                'releases.win.json',
-                'assets.win.json'
-            ) -or $_.Name -like "*$Version*"
-        }
-        Get-ChildItem $complianceRoot -File
-    ) | Sort-Object FullName -Unique
-
-    $assetNames = @($candidates | ForEach-Object { $_.Name })
-    $missing = @(Get-RequiredAssetName | Where-Object { $_ -notin $assetNames })
-    if ($missing.Count -gt 0) {
-        throw "The local build is missing required assets: $($missing -join ', ')"
-    }
-
-    # Only project-produced files carry the release version. Third-party source
-    # archives (mihomo) carry their own upstream version and must not be treated
-    # as leftovers from an earlier build.
-    $stray = @($candidates | Where-Object {
-        ($_.Name -like 'GptAccountKeeper.Desktop-*' -or $_.Name -like 'chatgpt-account-keeper-*') -and
-        $_.Name -match '\d+\.\d+\.\d+' -and
-        $_.Name -notlike "*$Version*"
-    })
-    if ($stray.Count -gt 0) {
-        throw "artifacts contain files from another version: $(($stray | ForEach-Object { $_.Name }) -join ', '). Rebuild to clear them."
-    }
-
-    $setup = $candidates | Where-Object { $_.Name -eq 'GptAccountKeeper.Desktop-win-Setup.exe' } | Select-Object -First 1
-    $signature = (Get-AuthenticodeSignature -LiteralPath $setup.FullName).Status
-    Write-Host "Installer signature: ${signature} (unsigned is expected)"
-    Write-Host "Uploading $($candidates.Count) asset(s) for $tag :"
-    $candidates | ForEach-Object { Write-Host ("  {0,-46} {1,8:N1} MB" -f $_.Name, ($_.Length / 1MB)) }
-
-    if (-not $PSCmdlet.ShouldProcess("$Repository $tag", 'Create tag and draft GitHub Release from local artifacts')) {
-        return
-    }
-
-    $existingTag = Invoke-NativeCommand `
-        -FilePath 'git.exe' `
-        -ArgumentList @('ls-remote', '--tags', 'origin', "refs/tags/$tag") `
-        -CaptureOutput
-    if ([string]::IsNullOrWhiteSpace($existingTag.Output)) {
-        Invoke-NativeCommand -FilePath 'git.exe' -ArgumentList @('tag', '-a', $tag, '-m', "ChatGPT Account Keeper $Version") | Out-Null
-        Invoke-NativeCommand -FilePath 'git.exe' -ArgumentList @('push', 'origin', $tag) | Out-Null
-        Write-Host "Pushed tag $tag"
-    } else {
-        Write-Host "Tag $tag already exists on origin; reusing it."
-    }
-
-    $notes = @(
-        '本版本采用 GNU AGPL-3.0-only，安装包内附许可证、第三方组件声明、隐私说明与对应源码说明（`licenses/` 目录，也可在设置页「关于与许可」打开）。',
-        '',
-        '**安装包未经数字签名。** Windows 首次运行可能提示「未知发布者」，需点击「更多信息 → 仍要运行」。可用 `SHA256SUMS.release.txt` 核对下载完整性。',
-        '',
-        '附带项目与 mihomo 对应源码归档及 SPDX SBOM。'
-    ) -join [Environment]::NewLine
-    $notesFile = Join-Path ([IO.Path]::GetTempPath()) "keeper-notes-$Version.md"
-    [IO.File]::WriteAllText($notesFile, $notes, [Text.UTF8Encoding]::new($false))
-    try {
-        if ($script:ReplaceExistingDraft) {
-            $arguments = @(
-                'release', 'upload', $tag,
-                '--repo', $Repository,
-                '--clobber'
-            ) + @($candidates | ForEach-Object { $_.FullName })
-        } else {
-            $arguments = @(
-                'release', 'create', $tag,
-                '--repo', $Repository,
-                '--title', "ChatGPT Account Keeper $Version",
-                '--draft',
-                '--notes-file', $notesFile
-            ) + @($candidates | ForEach-Object { $_.FullName })
-        }
-        Invoke-NativeCommand -FilePath $GitHubCli -ArgumentList $arguments | Out-Null
-    }
-    finally {
-        Remove-Item -LiteralPath $notesFile -Force -ErrorAction SilentlyContinue
-    }
-
-    Write-Host ''
-    Write-Host "Draft created: https://github.com/$Repository/releases/tag/$tag"
-    Write-Host 'Verify an installed N-1 -> N upgrade, then run:'
-    Write-Host "  .\scripts\publish-windows-release.ps1 -Version $Version -Mode PublishDraft"
 }
 
 function Publish-ReleaseDraft {
@@ -405,7 +280,7 @@ function Publish-ReleaseDraft {
     Write-Host "Target commit: $($release.targetCommitish)"
     Write-Host "Assets: $($assetNames -join ', ')"
 
-    $setup = @($release.assets | Where-Object { $_.name -eq 'GptAccountKeeper.Desktop-win-Setup.exe' })
+    $setup = @($release.assets | Where-Object { $_.name -eq "ChatGPT-Account-Keeper_${Version}_windows_x86_64-setup.exe" })
     if ($setup.Count -eq 1) {
         Write-Host ''
         Write-Host 'All workflow-produced release candidates passed their platform signing gates.'
@@ -422,12 +297,21 @@ function Publish-ReleaseDraft {
     Write-Host "Published: https://github.com/$Repository/releases/tag/$tag"
 }
 
-$attestingModes = @('Release', 'UploadDraft')
+$attestingModes = @('Release')
+if ($Mode -eq 'UploadDraft') {
+    throw 'UploadDraft is no longer supported: a Windows-only local build cannot satisfy the four-platform release gate. Use -Mode Release.'
+}
 if ($Mode -in $attestingModes -and -not $NMinusOneVerified) {
     throw "$Mode mode requires -NMinusOneVerified after the installed previous version has been upgraded to this candidate with Agent restart and data intact."
 }
 if ($Mode -notin $attestingModes -and $NMinusOneVerified) {
     throw "-NMinusOneVerified is only valid with -Mode $($attestingModes -join ' or ')."
+}
+if ($Mode -eq 'PublishDraft' -and -not $UpdaterVerified) {
+    throw 'PublishDraft requires -UpdaterVerified after Windows, macOS and AppImage have completed a real N to N+1 updater run.'
+}
+if ($Mode -ne 'PublishDraft' -and $UpdaterVerified) {
+    throw '-UpdaterVerified is only valid with -Mode PublishDraft.'
 }
 
 $githubCli = Resolve-GitHubCli
@@ -439,10 +323,6 @@ try {
     if ($Mode -eq 'PublishDraft') {
         Publish-ReleaseDraft -GitHubCli $githubCli
         return
-    }
-
-    if ($Mode -eq 'UploadDraft') {
-        throw 'UploadDraft is no longer supported: a Windows-only local build cannot satisfy the four-platform release gate. Use -Mode Release.'
     }
 
     $releaseNotes = Read-ReleaseNotes
@@ -470,7 +350,7 @@ try {
             -ArgumentList @(
                 'run', 'download', $runId,
                 '--repo', $Repository,
-                '--name', "GptAccountKeeper.Desktop-all-$Version",
+                '--name', "ChatGPT-Account-Keeper-all-$Version",
                 '--dir', $candidateRoot
             ) | Out-Null
         Write-Host "Candidate downloaded to: $candidateRoot"
@@ -483,7 +363,7 @@ try {
         -Verified $true
     if ($null -ne $runId) {
         Write-Host "Draft created for $tag. Review it, then run:"
-        Write-Host ".\scripts\publish-windows-release.ps1 -Version $Version -Mode PublishDraft"
+        Write-Host ".\scripts\publish-windows-release.ps1 -Version $Version -Mode PublishDraft -UpdaterVerified"
     }
 }
 finally {

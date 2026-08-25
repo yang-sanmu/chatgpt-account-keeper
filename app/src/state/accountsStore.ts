@@ -393,7 +393,7 @@ export function handleSingleAccountChanged(
   };
 }
 
-// 行为 3 实现：状态变更增量事件（如巡检结果）只更新该卡片状态
+// 行为 3 实现：状态变更增量事件（如巡检结果、调度排期）只更新该卡片状态
 export function handleSingleAccountStatusChanged(
   state: AccountsState,
   payload: {
@@ -402,8 +402,10 @@ export function handleSingleAccountStatusChanged(
     state?: string;
     loggedIn?: boolean;
     stale?: boolean;
-    statusCheckedAt?: string;
-    checkedAt?: string;
+    statusCheckedAt?: string | null;
+    checkedAt?: string | null;
+    nextRunAt?: string | null;
+    lastRunAt?: string | null;
     lastRunOk?: boolean | null;
     lastRunReason?: string | null;
     statusDetail?: string | null;
@@ -438,23 +440,51 @@ export function handleSingleAccountStatusChanged(
     status: nextStatus,
     stale: payload.stale !== undefined ? payload.stale : existing.baseline.stale,
     statusCheckedAt:
-      payload.statusCheckedAt ?? payload.checkedAt ?? existing.baseline.statusCheckedAt,
+      payload.statusCheckedAt !== undefined
+        ? payload.statusCheckedAt
+        : payload.checkedAt !== undefined
+        ? payload.checkedAt
+        : existing.baseline.statusCheckedAt,
+    nextRunAt:
+      payload.nextRunAt !== undefined ? payload.nextRunAt : existing.baseline.nextRunAt,
+    lastRunAt:
+      payload.lastRunAt !== undefined ? payload.lastRunAt : existing.baseline.lastRunAt,
     lastRunOk:
       payload.lastRunOk !== undefined ? payload.lastRunOk : existing.baseline.lastRunOk,
     lastRunReason:
-      payload.lastRunReason ?? payload.statusDetail ?? existing.baseline.lastRunReason,
+      payload.lastRunReason !== undefined
+        ? payload.lastRunReason
+        : payload.statusDetail !== undefined
+        ? payload.statusDetail
+        : existing.baseline.lastRunReason,
     pageOpen:
       payload.pageOpen !== undefined ? payload.pageOpen : existing.baseline.pageOpen,
     rotationDone:
-      payload.rotationDone ?? payload.rotationWindowsDone ?? existing.baseline.rotationDone,
+      payload.rotationDone !== undefined
+        ? payload.rotationDone
+        : payload.rotationWindowsDone !== undefined
+        ? payload.rotationWindowsDone
+        : existing.baseline.rotationDone,
     rotationTarget:
-      payload.rotationTarget ?? payload.rotationWindowsTarget ?? existing.baseline.rotationTarget,
+      payload.rotationTarget !== undefined
+        ? payload.rotationTarget
+        : payload.rotationWindowsTarget !== undefined
+        ? payload.rotationWindowsTarget
+        : existing.baseline.rotationTarget,
     rotationTopic:
       payload.rotationTopic !== undefined ? payload.rotationTopic : existing.baseline.rotationTopic,
     exitNode:
-      payload.exitNode ?? payload.proxyName ?? existing.baseline.exitNode,
+      payload.exitNode !== undefined
+        ? payload.exitNode
+        : payload.proxyName !== undefined
+        ? payload.proxyName
+        : existing.baseline.exitNode,
     exitNodeMissing:
-      payload.exitNodeMissing ?? payload.proxyMissing ?? existing.baseline.exitNodeMissing,
+      payload.exitNodeMissing !== undefined
+        ? payload.exitNodeMissing
+        : payload.proxyMissing !== undefined
+        ? payload.proxyMissing
+        : existing.baseline.exitNodeMissing,
   };
 
   const nextEffective = computeEffectiveAccount(nextBaseline, existing.draft);

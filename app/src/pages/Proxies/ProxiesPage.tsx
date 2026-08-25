@@ -7,7 +7,7 @@
 import React, { useState } from "react";
 import { useApp } from "../../state/AppContext";
 import { agentCall, newCommandId } from "../../ipc/bridge";
-import type { Group, GroupPatch, ProxyNode } from "../../ipc/types";
+import type { Group, ProxyNode } from "../../ipc/types";
 import { toast } from "../../state/toastStore";
 import { Modal } from "../../components/Common/Modal";
 import { ConfirmDialog } from "../../components/Common/ConfirmDialog";
@@ -20,7 +20,7 @@ import {
 } from "../../components/Common/Icons";
 
 export const ProxiesPage: React.FC = () => {
-  const { groups, proxies } = useApp();
+  const { groups, proxies, runOperation } = useApp();
 
   // 分组模态框状态：明确区分 create 和 edit
   const [groupModalState, setGroupModalState] = useState<{
@@ -84,18 +84,33 @@ export const ProxiesPage: React.FC = () => {
     setGroupSubmitting(true);
     try {
       const cid = await newCommandId();
-      const patch: GroupPatch = {
-        name: groupNameInput.trim(),
-        proxyId: groupProxyInput || null,
-        timezone: groupTzInput.trim() || null,
-        locale: groupLocaleInput.trim() || null,
-      };
 
       if (groupModalState.mode === "create") {
-        await agentCall("groups.create", patch, cid);
+        await agentCall(
+          "groups.create",
+          {
+            name: groupNameInput.trim(),
+            proxyId: groupProxyInput || null,
+            timezone: groupTzInput.trim() || null,
+            locale: groupLocaleInput.trim() || null,
+          },
+          cid
+        );
         toast.success("分组已创建");
       } else if (groupModalState.targetGroup) {
-        await agentCall("groups.update", { id: groupModalState.targetGroup.id, patch }, cid);
+        await agentCall(
+          "groups.update",
+          {
+            id: groupModalState.targetGroup.id,
+            patch: {
+              name: groupNameInput.trim(),
+              proxyId: groupProxyInput || null,
+              timezone: groupTzInput.trim() || null,
+              locale: groupLocaleInput.trim() || null,
+            },
+          },
+          cid
+        );
         toast.success("分组已更新");
       }
       setGroupModalState((prev) => ({ ...prev, isOpen: false }));
@@ -126,8 +141,7 @@ export const ProxiesPage: React.FC = () => {
     }
     setSubLoading(true);
     try {
-      const cid = await newCommandId();
-      await agentCall("proxies.importSubscription", { url: subUrlInput.trim() }, cid);
+      await runOperation("proxies.importSubscription", { url: subUrlInput.trim() });
       toast.success("订阅已成功导入并解析节点");
       setSubModalOpen(false);
       setSubUrlInput("");
@@ -152,8 +166,7 @@ export const ProxiesPage: React.FC = () => {
   // 切换节点启用状态
   const handleToggleNode = async (node: ProxyNode) => {
     try {
-      const cid = await newCommandId();
-      await agentCall("proxies.setNodeEnabled", { id: node.id, enabled: !node.enabled }, cid);
+      await runOperation("proxies.setNodeEnabled", { id: node.id, enabled: !node.enabled });
       toast.success(`节点已${!node.enabled ? "启用" : "停用"}`);
     } catch (err) {
       toast.error("切换节点状态失败", err);
@@ -299,11 +312,11 @@ export const ProxiesPage: React.FC = () => {
                     color: proxies.status.running ? "var(--color-success)" : "var(--color-warning)",
                   }}
                 >
-                  {proxies.status.running ? `Mihomo 运行中 (本地端口: ${proxies.status.localPort ?? 7890})` : "Mihomo 未启动"}
+                  {proxies.status.running ? `Mihomo 运行中 (本地端口: ${proxies.status.basePort ?? 7890})` : "Mihomo 未启动"}
                 </span>
               </div>
               <p style={{ fontSize: "12px", color: "var(--text-muted)", marginTop: "2px" }}>
-                {proxies.subscription?.url
+                {proxies.subscription
                   ? `已绑定订阅 (${proxies.nodes.length} 个节点，上次更新: ${proxies.subscription.updatedAt || "-"})`
                   : "尚未导入代理订阅，当前仅支持直连模式。"}
               </p>
@@ -314,7 +327,7 @@ export const ProxiesPage: React.FC = () => {
                 <span>导入订阅</span>
               </button>
 
-              {proxies.subscription?.url && (
+              {proxies.subscription && (
                 <button onClick={handleRefreshSubscription} style={{ fontSize: "12px" }}>
                   <IconRefresh size={12} />
                   <span>更新订阅</span>

@@ -299,8 +299,12 @@ function publicHistoryEntry(entry, conversations = {}) {
   const configuredTopic = setName ? conversations?.[setName]?.topic : null;
   const topic = [raw.topic, configuredTopic, raw.prompt]
     .find((value) => typeof value === "string" && value.trim()) ?? null;
+  const time = [raw.time, raw.finishedAt]
+    .find((value) => typeof value === "string" && value.trim()) ?? null;
+  const error = [raw.reason, raw.error]
+    .find((value) => typeof value === "string" && value.trim()) ?? null;
   return {
-    time: raw.time ?? raw.finishedAt ?? null,
+    time,
     ok: raw.ok == null ? null : !!raw.ok,
     setName,
     topic,
@@ -315,15 +319,21 @@ function publicHistoryEntry(entry, conversations = {}) {
     stopReason: typeof raw.stopReason === "string" && raw.stopReason.trim()
       ? raw.stopReason.trim()
       : null,
-    error: raw.reason ?? raw.error ?? null,
+    error,
     needReauth: !!raw.needReauth,
     rounds: rounds
       .filter((round) => round && typeof round === "object")
-      .map((round) => ({
-        question: round.q ?? round.question ?? null,
-        answer: round.a ?? round.answer ?? round.reply ?? null,
-        at: round.at ?? null,
-      })),
+      .map((round) => {
+        const question = [round.q, round.question]
+          .find((value) => typeof value === "string") ?? null;
+        const answer = [round.a, round.answer, round.reply]
+          .find((value) => typeof value === "string") ?? null;
+        return {
+          question,
+          answer,
+          at: typeof round.at === "string" ? round.at : null,
+        };
+      }),
   };
 }
 

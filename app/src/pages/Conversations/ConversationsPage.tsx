@@ -86,9 +86,24 @@ export const ConversationsPage: React.FC = () => {
       await agentCall("conversations.upsert", { name: trimmedName, set: newSet }, cid1);
 
       if (isRenaming) {
-        const cid2 = await newCommandId();
-        await agentCall("conversations.remove", { name: modalState.originalName }, cid2);
-        toast.success(`会话集已重命名为「${trimmedName}」`);
+        // 第二步单独 catch。
+        //
+        // upsert 成功而 remove 失败时，磁盘上**两个**会话集同时存在，而用户看到的只是
+        // 一句「保存会话集失败」——他会以为什么都没发生，于是重试或放弃，两种选择都会
+        // 留下一个多出来的会话集在调度里继续被引用。这里必须说清当前的真实状态。
+        try {
+          const cid2 = await newCommandId();
+          await agentCall("conversations.remove", { name: modalState.originalName }, cid2);
+          toast.success(`会话集已重命名为「${trimmedName}」`);
+        } catch (removeError) {
+          toast.error(
+            `新会话集「${trimmedName}」已创建，但旧的「${modalState.originalName}」删除失败，` +
+              `现在两个都存在。请手动删除旧的那个，否则它会继续参与调度。`,
+            removeError
+          );
+          // 不关弹窗：让用户看着当前状态决定下一步，而不是回到一个看不出发生了什么的列表。
+          return;
+        }
       } else {
         toast.success(modalState.mode === "create" ? "会话集已创建" : "会话集已更新");
       }

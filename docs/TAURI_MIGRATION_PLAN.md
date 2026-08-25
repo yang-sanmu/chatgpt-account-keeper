@@ -507,6 +507,39 @@ deb 与 rpm 各装一次并确认**没有**发起更新检查；AppImage 在干�
 - **不做移动端。** 这个产品要驱动本机真实 Chrome。
 - **deb/rpm 不做自更新**，见 §四。
 
+## 九之二、迁移完成后的独立任务
+
+这些不属于本迁移，但已经有足够证据支撑它们值得做。
+
+### 从契约生成 TypeScript 类型（有四次实证）
+
+**问题**：前端的 TS interface 是手写的，而 `contracts/ipc-v1.methods.schema.json` 只约束
+方法名和信封，payload 形状大多是 `{"type":"object"}` 或 `{"type":"array"}` 这类松约束
+（例如 `proxyStateResult.nodes` 只声明是数组）。猜错字段名不会有任何东西报错，且症状
+总是「界面上一片空白／某个值永远不出现」，而不是一个能指到原因的错误。
+
+**已发生四次**，都是同一形状：
+
+| 位置 | 猜的字段 | 真实字段 | 症状 |
+| --- | --- | --- | --- |
+| `inspect_legacy` | `accountCount` / `profileCount` / `totalSizeBytes` / `valid` | `counts.{accounts,profiles,…}` / `totalProfileBytes` / `ok` | 28 账号的项目预览成全 0 |
+| `Operation.state` | 多了 `interrupted` | 契约只有 7 个值 | 三元链落到「排队中」，终止任务像还在跑 |
+| `proxyNode.tested` | `latencyMs` / `error` | `delay` / `message` / `ok` | 测速延迟从不出现在节点行 |
+| `profiles.scan` | `sizeBytes` / `isOrphan` / `linkedAccountId`，且当成同步返回值 | `bytes` / `linked` / `accountLabels`，结果在 `operation.changed` | 47 个 Profile 显示「无 Profile」 |
+
+**做法**：先把 53 个 `$defs` 写实（这是 Agent 侧工作，`publicAccount`、`getNodes`、
+`scan` 等投影函数是权威来源），再用 `json-schema-to-typescript` 之类从 schema 生成
+`app/src/ipc/generated.ts`，并加一个 CI 门禁断言生成结果与提交的一致。
+
+**顺带能消掉一类隐患**：哪些方法是「操作类」（返回 operationResult，真实数据走
+`operation.changed`）目前只存在于 `contractValidator.js` 的 `METHOD_CONTRACTS` 表里，
+前端无从得知。生成类型时把这个区分一起带出来，`profiles.scan` 那种错误就成了编译错误。
+
+### chrome-launcher 移植到 Rust
+
+`tools/chrome-launcher`（1193 行 C# AOT）由 Agent 启动而非管理端，本迁移不动它。但只要
+它还在，构建就仍然需要 .NET SDK——删掉 `desktop/` 之后这会是唯一的 .NET 依赖。
+
 ## 十、已知风险
 
 | 风险 | 影响 | 缓解 |

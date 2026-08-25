@@ -54,11 +54,21 @@ struct BootstrapPointer {
     data_root: String,
 }
 
-fn is_development() -> bool {
-    matches!(
-        std::env::var(DEVELOPMENT_ENVIRONMENT_VARIABLE).as_deref(),
-        Ok("1") | Ok("true") | Ok("TRUE") | Ok("yes") | Ok("YES")
-    )
+/// 是否使用开发数据目录（`GptAccountKeeper-dev`）。
+///
+/// debug 构建默认为真。`npm run tauri dev` 不会设任何环境变量，如果只看环境变量，
+/// `cargo run` 出来的调试版会连上**安装版**的数据目录、启动安装版的 Agent、对安装版的
+/// SQLite 写入——调试一次就可能弄坏日常在用的数据。
+///
+/// 环境变量仍然优先，两个方向都支持：调试时设 `0` 可以刻意接安装版数据（用来复现只在
+/// 真实数据上出现的问题），发布版设 `1` 可以跑一个隔离的沙箱。
+pub fn is_development() -> bool {
+    match std::env::var(DEVELOPMENT_ENVIRONMENT_VARIABLE).as_deref() {
+        Ok("1") | Ok("true") | Ok("TRUE") | Ok("yes") | Ok("YES") => true,
+        Ok("0") | Ok("false") | Ok("FALSE") | Ok("no") | Ok("NO") => false,
+        // 未设置：按构建类型决定。
+        _ => cfg!(debug_assertions),
+    }
 }
 
 #[cfg(not(windows))]
@@ -284,6 +294,40 @@ fn normalize(path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_debug_build_defaults_to_the_development_data_directory() {
+        // 回归测试。`npm run tauri dev` 不设任何环境变量；只看环境变量的话，调试版会连上
+        // 安装版的数据目录并对它的 SQLite 写入——调试一次就可能弄坏日常在用的数据。
+        std::env::remove_var(DEVELOPMENT_ENVIRONMENT_VARIABLE);
+        assert_eq!(
+            is_development(),
+            cfg!(debug_assertions),
+            "未设环境变量时应跟随构建类型"
+        );
+    }
+
+    #[test]
+    fn the_environment_variable_overrides_the_build_type_in_both_directions() {
+        // 两个方向都要能覆盖：调试时接安装版数据用来复现只在真实数据上出现的问题，
+        // 发布版跑沙箱用来验证首次启动流程。
+        std::env::set_var(DEVELOPMENT_ENVIRONMENT_VARIABLE, "0");
+        assert!(!is_development());
+        std::env::set_var(DEVELOPMENT_ENVIRONMENT_VARIABLE, "1");
+        assert!(is_development());
+        std::env::remove_var(DEVELOPMENT_ENVIRONMENT_VARIABLE);
+    }
+
+    #[test]
+    fn development_and_production_never_share_a_data_directory() {
+        // 两个模式必须落在不同目录，否则「隔离的开发数据」这个前提不成立。
+        let (dev_config, dev_data, dev_cache, dev_state) = platform_roots(true).unwrap();
+        let (prod_config, prod_data, prod_cache, prod_state) = platform_roots(false).unwrap();
+        assert_ne!(dev_data, prod_data);
+        assert_ne!(dev_config, prod_config);
+        assert_ne!(dev_cache, prod_cache);
+        assert_ne!(dev_state, prod_state);
+    }
 
     #[test]
     fn a_relative_data_root_is_rejected() {

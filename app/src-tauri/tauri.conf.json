@@ -26,13 +26,6 @@
     ],
     "security": {
       "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: asset: http://asset.localhost; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
-    },
-    "trayIcon": {
-      "id": "keeper-tray",
-      "iconPath": "icons/tray.png",
-      "iconAsTemplate": true,
-      "tooltip": "ChatGPT Account Keeper",
-      "menuOnLeftClick": false
     }
   },
   "bundle": {

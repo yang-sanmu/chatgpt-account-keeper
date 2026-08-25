@@ -21,21 +21,12 @@ import { ProfilesPage } from "./pages/Profiles/ProfilesPage";
 import { HistoryPage } from "./pages/History/HistoryPage";
 import { SettingsPage } from "./pages/Settings/SettingsPage";
 
-const MainShell: React.FC = () => {
-  const {
-    startupInfo,
-    isInitializing,
-    activeTab,
-    activeLogin,
-    closeActiveLogin,
-    updateModalState,
-    installAppUpdate,
-    closeUpdateModal,
-    closeModalOpen,
-    handleMinimizeToTray,
-    handleExitAll,
-    closeCloseModal,
-  } = useApp();
+/// 页面内容：加载中、首次启动向导，或八页 Shell。
+///
+/// 全局浮层**不在**这里。它们必须挂在这个组件之外，因为这里会提前 return —— 关闭确认框
+/// 曾经因此在首次启动页上不存在，导致窗口点关闭毫无反应，只能去任务管理器结束进程。
+const PageContent: React.FC = () => {
+  const { startupInfo, isInitializing, activeTab } = useApp();
 
   // 启动加载中占位
   if (isInitializing) {
@@ -111,10 +102,32 @@ const MainShell: React.FC = () => {
         </main>
       </div>
 
-      {/* 全局 Toast 通知容器 */}
+    </div>
+  );
+};
+
+/// 全局浮层。
+///
+/// 与 PageContent 同级而不是嵌在里面：PageContent 在加载中和首次启动时会提前 return，
+/// 嵌进去的浮层就会在那两种状态下不存在。关闭确认框缺席的后果是窗口关不掉 —— Rust 侧
+/// 对 CloseRequested 调了 prevent_close()，把决定权完全交给前端。
+const GlobalOverlays: React.FC = () => {
+  const {
+    activeLogin,
+    closeActiveLogin,
+    updateModalState,
+    installAppUpdate,
+    closeUpdateModal,
+    closeModalOpen,
+    handleMinimizeToTray,
+    handleExitAll,
+    closeCloseModal,
+  } = useApp();
+
+  return (
+    <>
       <ToastContainer />
 
-      {/* 登录进度跟随模态框 */}
       <LoginProgressModal
         isOpen={activeLogin !== null}
         onClose={closeActiveLogin}
@@ -124,7 +137,6 @@ const MainShell: React.FC = () => {
         operation={activeLogin?.operation ?? null}
       />
 
-      {/* 窗口关闭二次确认模态框 */}
       <CloseConfirmModal
         isOpen={closeModalOpen}
         onClose={closeCloseModal}
@@ -132,7 +144,6 @@ const MainShell: React.FC = () => {
         onExitAll={handleExitAll}
       />
 
-      {/* 自更新检查与安装模态框 */}
       <UpdateModal
         isOpen={updateModalState.isOpen}
         onClose={closeUpdateModal}
@@ -140,14 +151,15 @@ const MainShell: React.FC = () => {
         onInstall={installAppUpdate}
         installing={updateModalState.installing}
       />
-    </div>
+    </>
   );
 };
 
 export const App: React.FC = () => {
   return (
     <AppProvider>
-      <MainShell />
+      <PageContent />
+      <GlobalOverlays />
     </AppProvider>
   );
 };

@@ -8,7 +8,6 @@ use std::path::Path;
 use sha2::{Digest, Sha256};
 
 const ENDPOINT_ENVIRONMENT_VARIABLE: &str = "GPTACCOUNTKEEPER_AGENT_ENDPOINT";
-const DEVELOPMENT_ENVIRONMENT_VARIABLE: &str = "GPTACCOUNTKEEPER_DEVELOPMENT";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Transport {
@@ -66,11 +65,13 @@ fn short_hash(value: &str) -> String {
     hex::encode(&digest[..8])
 }
 
+/// 复用 paths 的判定，不要在这里再写一份。
+///
+/// 两份实现一旦不一致，就会出现「用开发数据目录 + 生产 IPC 通道」这种组合：调试版连上
+/// 安装版仍在后台运行的 Agent，而那个 Agent 操作的是另一个数据目录。hello 里的数据根
+/// 一致性校验会拒掉它，但表现出来只是一句连接失败，指不到真正原因。
 fn is_development() -> bool {
-    matches!(
-        std::env::var(DEVELOPMENT_ENVIRONMENT_VARIABLE).as_deref(),
-        Ok("1") | Ok("true") | Ok("TRUE")
-    )
+    crate::paths::is_development()
 }
 
 /// `sockaddr_un.sun_path` 的硬上限：Darwin 104 字节，Linux 108（含结尾 NUL）。

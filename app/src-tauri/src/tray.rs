@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
-use tauri::tray::{TrayIconBuilder, TrayIconEvent};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager};
 
 pub struct TrayHandles {
@@ -67,9 +67,21 @@ pub fn build(app: &AppHandle) -> tauri::Result<Arc<TrayHandles>> {
             }
         })
         .on_tray_icon_event(|tray, event| {
-            // Linux 上不会触发这个事件（托盘只有右键菜单），所以「打开管理界面」
-            // 必须同时存在于菜单里，不能只靠左键。
-            if let TrayIconEvent::Click { .. } = event {
+            // 只响应**左键抬起**。
+            //
+            // `TrayIconEvent::Click` 对任何按键都会触发，包括右键——原来不加区分地
+            // 显示窗口，结果右键点托盘直接跳出应用程序而菜单永远弹不出来。
+            //
+            // 判 Up 而不是 Down：按下就激活会在用户拖动图标时也触发。
+            //
+            // Linux 上这个事件根本不触发（托盘只有右键菜单），所以「打开管理界面」
+            // 必须同时存在于菜单里，不能只靠点击图标。
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
                 show_main_window(tray.app_handle());
             }
         })

@@ -27,8 +27,22 @@ pub fn run() {
 
     // 同一数据目录的第二个实例只把已有窗口带到前台，然后退出。
     // 不同数据目录可以共存（开发模式与安装模式）。
+    //
+    // 这里要说清楚为什么打印一行：`npm run tauri dev` 会把这次正常退出显示成
+    // `process didn't exit successfully`，然后 CLI 自己也退出，而**先前那个实例仍在
+    // 运行**——看起来就是「命令行莫名跳出但程序还开着」。没有这行提示，用户无从判断
+    // 到底是崩了还是被单实例挡回来了。
     let Some(guard) = instance::try_acquire(&paths.data_directory) else {
-        instance::signal_existing(&paths.data_directory);
+        let activated = instance::signal_existing(&paths.data_directory);
+        println!(
+            "已有实例正在使用该数据目录（{}），已{}并退出本次启动。",
+            paths.data_directory.display(),
+            if activated {
+                "将其窗口带到前台"
+            } else {
+                "尝试通知它"
+            }
+        );
         return;
     };
 

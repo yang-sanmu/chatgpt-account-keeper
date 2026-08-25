@@ -29,6 +29,8 @@ pub mod events {
     pub const MIGRATION: &str = "keeper://migration";
     /// 更新状态。
     pub const UPDATE: &str = "keeper://update";
+    /// 退出进度。Agent 的关闭是 16 步、上限 20 秒的流程，必须让用户看到在做什么。
+    pub const EXIT: &str = "keeper://exit";
 }
 
 pub struct AppState {
@@ -41,6 +43,8 @@ pub struct AppState {
     pub staged_update: tokio::sync::Mutex<Option<StagedUpdate>>,
     /// 「退出全部」进行中：抑制重连，否则退出会把 Agent 又拉起来。
     pub suppress_reconnect: std::sync::atomic::AtomicBool,
+    /// 退出流程已经开始。用户在等待期间反复点击不该叠出多条关闭流程。
+    pub exiting: std::sync::atomic::AtomicBool,
     notifications: mpsc::UnboundedSender<Notification>,
 }
 
@@ -66,6 +70,7 @@ impl AppState {
             prompts: tokio::sync::Mutex::new(prompts),
             staged_update: tokio::sync::Mutex::new(None),
             suppress_reconnect: std::sync::atomic::AtomicBool::new(false),
+            exiting: std::sync::atomic::AtomicBool::new(false),
             notifications,
         }
     }

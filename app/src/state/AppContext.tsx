@@ -12,9 +12,12 @@ import type {
   ConnectionSnapshot,
   ConversationSet,
   DesktopSettings,
+  ExitProgress,
   Group,
   HistoryAccount,
   Operation,
+  ProfileInfo,
+  ProfileScanResult,
   ProxyState,
   QueueSnapshot,
   SchedulerState,
@@ -109,6 +112,9 @@ export interface AppContextValue {
   historyAccounts: HistoryAccount[];
   browserRuns: BrowserRunListResult | null;
   queueSnapshot: QueueSnapshot | null;
+  profileScan: ProfileScanResult | null;
+  profileScanning: boolean;
+  requestProfileScan: () => Promise<void>;
   draining: boolean;
 
   activeLogin: ActiveLoginState | null;
@@ -124,6 +130,8 @@ export interface AppContextValue {
   closeUpdateModal: () => void;
 
   closeModalOpen: boolean;
+  exitProgress: ExitProgress | null;
+  forceExitAll: () => void;
   handleMinimizeToTray: (remember: boolean) => Promise<void>;
   handleExitAll: (remember: boolean) => Promise<void>;
   closeCloseModal: () => void;
@@ -172,6 +180,73 @@ export type AccountActions = Pick<
 >;
 
 const AccountActionsContext = createContext<AccountActions | null>(null);
+
+/// 把 profile-scan 的操作结果窄化成 ProfileScanResult。
+///
+/// 字段名以 src/profileManager.js 的 scan() 为准：`bytes` / `cacheBytes` / `linked`，
+/// 不是 `sizeBytes` / `cacheSizeBytes` / `isOrphan`。
+function normalizeProfileScan(raw: unknown): ProfileScanResult | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const source = raw as Record<string, unknown>;
+  if (!Array.isArray(source.profiles)) return null;
+
+  const narrowProfile = (value: unknown): ProfileInfo | null => {
+    if (typeof value !== "object" || value === null) return null;
+    const entry = value as Record<string, unknown>;
+    const name = typeof entry.name === "string" ? entry.name : null;
+    if (!name) return null;
+    const numeric = (key: string): number =>
+      typeof entry[key] === "number" && Number.isFinite(entry[key]) ? (entry[key] as number) : 0;
+    const strings = (key: string): string[] =>
+      Array.isArray(entry[key])
+        ? (entry[key] as unknown[]).filter((item): item is string => typeof item === "string")
+        : [];
+    return {
+      name,
+      linked: entry.linked === true,
+      accountIds: strings("accountIds"),
+      accountLabels: strings("accountLabels"),
+      nonStandardReference: entry.nonStandardReference === true,
+      busy: entry.busy === true,
+      bytes: numeric("bytes"),
+      files: numeric("files"),
+      cacheBytes: numeric("cacheBytes"),
+      cacheFiles: numeric("cacheFiles"),
+    };
+  };
+
+  const profiles = source.profiles
+    .map(narrowProfile)
+    .filter((profile): profile is ProfileInfo => profile !== null);
+  const totalsSource =
+    typeof source.totals === "object" && source.totals !== null
+      ? (source.totals as Record<string, unknown>)
+      : {};
+  const total = (key: string, fallback: number): number =>
+    typeof totalsSource[key] === "number" && Number.isFinite(totalsSource[key])
+      ? (totalsSource[key] as number)
+      : fallback;
+  const orphans = profiles.filter((profile) => !profile.linked);
+  const sum = (items: ProfileInfo[], field: "bytes" | "cacheBytes"): number =>
+    items.reduce((accumulated, item) => accumulated + item[field], 0);
+
+  return {
+    profiles,
+    orphans,
+    totals: {
+      profiles: total("profiles", profiles.length),
+      linked: total("linked", profiles.length - orphans.length),
+      orphans: total("orphans", orphans.length),
+      bytes: total("bytes", sum(profiles, "bytes")),
+      cacheBytes: total("cacheBytes", sum(profiles, "cacheBytes")),
+      orphanBytes: total("orphanBytes", sum(orphans, "bytes")),
+      archiveCount: total("archiveCount", 0),
+      archiveBytes: total("archiveBytes", 0),
+      trashCount: total("trashCount", 0),
+      trashBytes: total("trashBytes", 0),
+    },
+  };
+}
 
 interface BulkFailure {
   id: string;
@@ -233,10 +308,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [historyAccounts, setHistoryAccounts] = useState<HistoryAccount[]>([]);
   const [browserRuns, setBrowserRuns] = useState<BrowserRunListResult | null>(null);
   const [queueSnapshot, setQueueSnapshot] = useState<QueueSnapshot | null>(null);
+  const [profileScan, setProfileScan] = useState<ProfileScanResult | null>(null);
+  /// 扫描进行中。42 个账号的 Profile 目录可能几 GB，必须让用户看到在扫。
+  const [profileScanning, setProfileScanning] = useState(false);
   const [draining, setDraining] = useState(false);
 
   const [activeLogin, setActiveLogin] = useState<ActiveLoginState | null>(null);
   const [closeModalOpen, setCloseModalOpen] = useState(false);
+  const [exitProgress, setExitProgress] = useState<ExitProgress | null>(null);
   const [updateModalState, setUpdateModalState] = useState<UpdateModalState>({
     isOpen: false,
     status: null,
@@ -327,6 +406,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, []);
 
+  /// 启动时的更新检查。返回是否发现了可安装的新版本。
+  ///
+  /// 与手动检查的区别：手动检查无论结果如何都弹窗（否则用户点了按钮什么都不发生），
+  /// 启动检查只在**真的有更新**时弹。每次启动都弹一句「已是最新版本」是噪音。
+  ///
+  /// 也不能让它挡住启动：网络不通时 check_update 会返回 error 状态，那时照常继续，
+  /// 只是不打扰用户。
+  const checkUpdateBeforeScheduler = useCallback(async (): Promise<boolean> => {
+    try {
+      const status = await checkUpdate();
+      if (status.state !== "available") return false;
+      setUpdateModalState({ isOpen: true, status, installing: false });
+      return true;
+    } catch {
+      // 启动期的更新检查失败不该产生一个用户此刻无法处理的错误提示。
+      return false;
+    }
+  }, []);
+
   // 安装更新
   const installAppUpdate = useCallback(async () => {
     try {
@@ -359,6 +457,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         break;
     }
   }, [startScheduler, stopScheduler, checkAppUpdate]);
+
+  /// 请求一次 Profile 扫描。
+  ///
+  /// 只提交操作，结果由 operation.changed 送回来（profiles.scan 是操作类方法）。
+  const requestProfileScan = useCallback(async () => {
+    setProfileScanning(true);
+    try {
+      const cid = await newCommandId();
+      await agentCall("profiles.scan", {}, cid);
+    } catch (err) {
+      setProfileScanning(false);
+      toast.error("扫描 Profile 目录失败", err);
+    }
+  }, []);
 
   // 窗口关闭请求处理
   const handleCloseRequested = useCallback(() => {
@@ -533,6 +645,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             }
             return current;
           });
+
+          // profile-scan 的结果就是扫描数据本身。
+          //
+          // profiles.scan 是操作类方法（契约返回 operationResult），调用它只拿到一个操作
+          // 描述符——原来 Profile 页直接 await 那个返回值并去里面找 profiles 数组，永远
+          // 找不到，于是 42 个账号的机器上显示「无 Profile」且没有加载指示（loading 早已
+          // 置回 false）。真正的数据在这里。
+          if (op.kind === "profile-scan") {
+            if (op.state === "succeeded") {
+              setProfileScan(normalizeProfileScan(op.result));
+              setProfileScanning(false);
+            } else if (op.state === "failed" || op.state === "timed_out" || op.state === "cancelled") {
+              setProfileScanning(false);
+            }
+          } else if (
+            op.state === "succeeded" &&
+            op.kind.startsWith("profile-")
+          ) {
+            // 其它 Profile 操作改变了磁盘状态，必须重新扫描才知道新的占用。
+            void requestProfileScan();
+          }
         }
         break;
       }
@@ -577,8 +710,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           const conn = await connectAgent(true);
           setConnection(conn);
 
+          // 启动顺序：先检查更新，再决定是否启动调度。
+          //
+          // 反过来会造成一个真实的坏状态：调度已经拉起 Chrome 在跑对话，此时检查到新
+          // 版本，用户点「立即更新」，而安装流程的第一步预检会因为「有任务在运行」直接
+          // 被拒——用户只能先手动停调度、等任务收尾、再来一次。更新检查是只读的、几百
+          // 毫秒的网络请求，让它先跑完不会推迟什么。
+          //
+          // 发现更新时**不自动启动调度**：这时屏幕上有一个待用户决定的更新提示，先把
+          // 机器拉进「有任务在跑」的状态只会让那个决定变得更难执行。
+          const updateFound = await checkUpdateBeforeScheduler();
+
           if (info.settings.autoStartScheduler) {
-            agentCall("scheduler.start", {}, await newCommandId()).catch(() => {});
+            if (updateFound) {
+              toast.info("发现新版本，已暂缓自动启动调度；安装更新或忽略后可手动启动");
+            } else {
+              agentCall("scheduler.start", {}, await newCommandId()).catch(() => {});
+            }
           }
         }
       } catch (err) {
@@ -601,6 +749,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       },
       onTrayAction: handleTrayAction,
       onCloseRequested: handleCloseRequested,
+      onExitProgress: setExitProgress,
     }).then((un) => {
       unlisteners = un;
     });
@@ -610,7 +759,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return () => {
       for (const un of unlisteners) un();
     };
-  }, [handleBootstrapPayload, handleAgentEvent, handleTrayAction, handleCloseRequested]);
+  }, [
+    handleBootstrapPayload,
+    handleAgentEvent,
+    handleTrayAction,
+    handleCloseRequested,
+    checkUpdateBeforeScheduler,
+  ]);
+
+  /// 用户在等待期间选择不再等待。跳过有序关闭，直接回收进程树。
+  const forceExitAll = useCallback(() => {
+    exitAll(true).catch((err) => toast.error("强制退出失败", err));
+  }, []);
 
   // 手动触发全量快照同步
   const manualRefreshBootstrap = useCallback(async () => {
@@ -951,6 +1111,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       historyAccounts,
       browserRuns,
       queueSnapshot,
+      profileScan,
+      profileScanning,
+      requestProfileScan,
       draining,
       activeLogin,
       closeActiveLogin,
@@ -963,6 +1126,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     installAppUpdate,
     closeUpdateModal,
     closeModalOpen,
+    exitProgress,
+    forceExitAll,
     handleMinimizeToTray,
     handleExitAll,
       closeCloseModal,
@@ -1006,6 +1171,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       historyAccounts,
       browserRuns,
       queueSnapshot,
+      profileScan,
+      profileScanning,
+      requestProfileScan,
       draining,
       activeLogin,
       closeActiveLogin,
@@ -1018,6 +1186,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       installAppUpdate,
       closeUpdateModal,
       closeModalOpen,
+      exitProgress,
+      forceExitAll,
+      exitProgress,
+      forceExitAll,
       handleMinimizeToTray,
       handleExitAll,
       closeCloseModal,

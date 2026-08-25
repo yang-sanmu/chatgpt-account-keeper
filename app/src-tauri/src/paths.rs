@@ -54,20 +54,44 @@ struct BootstrapPointer {
     data_root: String,
 }
 
+/// 环境变量是否显式指定了开发模式。`None` 表示未指定，由调用方决定默认值。
+fn development_override() -> Option<bool> {
+    match std::env::var(DEVELOPMENT_ENVIRONMENT_VARIABLE).as_deref() {
+        Ok("1") | Ok("true") | Ok("TRUE") | Ok("yes") | Ok("YES") => Some(true),
+        Ok("0") | Ok("false") | Ok("FALSE") | Ok("no") | Ok("NO") => Some(false),
+        _ => None,
+    }
+}
+
 /// 是否使用开发数据目录（`GptAccountKeeper-dev`）。
 ///
-/// debug 构建默认为真。`npm run tauri dev` 不会设任何环境变量，如果只看环境变量，
-/// `cargo run` 出来的调试版会连上**安装版**的数据目录、启动安装版的 Agent、对安装版的
-/// SQLite 写入——调试一次就可能弄坏日常在用的数据。
+/// 顺序有讲究，三条都有具体理由：
 ///
-/// 环境变量仍然优先，两个方向都支持：调试时设 `0` 可以刻意接安装版数据（用来复现只在
-/// 真实数据上出现的问题），发布版设 `1` 可以跑一个隔离的沙箱。
+/// 1. **环境变量最优先**，两个方向都支持。发布版设 `1` 可以跑一个隔离沙箱来验证首次
+///    启动流程；调试版设 `0` 可以刻意接安装版数据。
+/// 2. **release 构建**永远用生产目录。
+/// 3. **debug 构建**优先用开发目录，但**只有当它已经建过库**。
+///
+/// 第 3 条的取舍：只看构建类型的话，一台已经有 42 个账号在生产目录的机器上，`tauri dev`
+/// 会打开一个空的开发目录并停在欢迎页——想调试真实数据必须每次手设环境变量。反过来，
+/// 无条件用生产目录则会让调试写坏日常在用的库。以「开发目录是否已初始化」作为判据，
+/// 两种用法都能自然工作：想要隔离沙箱就先在开发目录里建一次库（或设环境变量），
+/// 否则就接着用真实数据。
 pub fn is_development() -> bool {
-    match std::env::var(DEVELOPMENT_ENVIRONMENT_VARIABLE).as_deref() {
-        Ok("1") | Ok("true") | Ok("TRUE") | Ok("yes") | Ok("YES") => true,
-        Ok("0") | Ok("false") | Ok("FALSE") | Ok("no") | Ok("NO") => false,
-        // 未设置：按构建类型决定。
-        _ => cfg!(debug_assertions),
+    if let Some(explicit) = development_override() {
+        return explicit;
+    }
+    if !cfg!(debug_assertions) {
+        return false;
+    }
+    development_data_root_initialized()
+}
+
+/// 开发数据目录里是否已经有数据库。
+fn development_data_root_initialized() -> bool {
+    match platform_roots(true) {
+        Ok((_, data_root, _, _)) => data_root.join("keeper.db").is_file(),
+        Err(_) => false,
     }
 }
 
@@ -296,15 +320,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_debug_build_defaults_to_the_development_data_directory() {
-        // 回归测试。`npm run tauri dev` 不设任何环境变量；只看环境变量的话，调试版会连上
-        // 安装版的数据目录并对它的 SQLite 写入——调试一次就可能弄坏日常在用的数据。
+    fn a_debug_build_uses_the_development_directory_only_when_it_has_data() {
+        // 两个都要成立，否则会各自造成一种坏体验：
+        // - 无条件用生产目录：调试会写坏日常在用的库。
+        // - 无条件用开发目录：一台已有 42 个账号的机器上 `tauri dev` 停在欢迎页。
         std::env::remove_var(DEVELOPMENT_ENVIRONMENT_VARIABLE);
+        let has_dev_data = development_data_root_initialized();
         assert_eq!(
             is_development(),
-            cfg!(debug_assertions),
-            "未设环境变量时应跟随构建类型"
+            cfg!(debug_assertions) && has_dev_data,
+            "未设环境变量时应看构建类型 + 开发目录是否已建库"
         );
+    }
+
+    #[test]
+    fn a_release_build_never_uses_the_development_directory_by_default() {
+        std::env::remove_var(DEVELOPMENT_ENVIRONMENT_VARIABLE);
+        if !cfg!(debug_assertions) {
+            assert!(!is_development());
+        }
     }
 
     #[test]

@@ -292,14 +292,53 @@ export interface BrowserRunListResult {
   quarantined: unknown[];
 }
 
+/// 单个 Profile 目录。字段名与 `src/profileManager.js` 的 `scan()` 一致。
 export interface ProfileInfo {
   name: string;
-  path: string;
-  sizeBytes: number;
-  isOrphan: boolean;
-  linkedAccountId?: string | null;
-  cacheSizeBytes?: number;
-  lastUsedAt?: string | null;
+  /// 是否被账号引用。未引用的是孤儿，可归档或永久删除。
+  linked: boolean;
+  accountIds: string[];
+  /// 账号的显示名（email / gptName / note / id 依次回退），直接用于界面。
+  accountLabels: string[];
+  /// 账号用了自定义 Profile 路径。删除这类目录要格外谨慎。
+  nonStandardReference: boolean;
+  /// 正在被任务占用或存在 Chrome 运行锁。此时不能清理。
+  busy: boolean;
+  bytes: number;
+  files: number;
+  cacheBytes: number;
+  cacheFiles: number;
+}
+
+/// `profiles.scan` 操作的结果。
+///
+/// 注意 `profiles.scan` 是**操作类方法**（契约里返回 operationResult），调用它只拿到一个
+/// 操作描述符；真正的扫描数据要等 `operation.changed` 里 `kind === "profile-scan"` 且
+/// `state === "succeeded"` 时从 `result` 取。
+export interface ProfileScanResult {
+  profiles: ProfileInfo[];
+  orphans: ProfileInfo[];
+  totals: {
+    profiles: number;
+    linked: number;
+    orphans: number;
+    bytes: number;
+    cacheBytes: number;
+    orphanBytes: number;
+    archiveCount: number;
+    archiveBytes: number;
+    trashCount: number;
+    trashBytes: number;
+  };
+}
+
+/// 退出进度。由 Rust 的 exit_all 逐阶段发出。
+export interface ExitProgress {
+  stage: "connecting" | "draining" | "waiting" | "forcing" | "done";
+  message: string;
+  elapsedSeconds: number;
+  /// 是否已经可以提供「强制结束」。开始几秒内刻意为 false，避免诱导用户跳过 checkpoint。
+  canForce: boolean;
 }
 
 export interface DataRootCheck {

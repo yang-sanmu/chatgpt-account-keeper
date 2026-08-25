@@ -72,4 +72,5 @@ export const TAURI_EVENTS = {
   UPDATE: "keeper://update",
   TRAY_ACTION: "keeper://tray-action",
   CLOSE_REQUESTED: "keeper://close-requested",
+  EXIT: "keeper://exit",
 } as const;

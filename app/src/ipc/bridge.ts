@@ -12,6 +12,7 @@ import type {
   DataRootCheck,
   DesktopSettings,
   LegacyCounts,
+  ExitProgress,
   LegacyInspection,
   LegacyProfileLock,
   MigrationProgress,
@@ -118,9 +119,9 @@ export async function saveSettings(next: DesktopSettings): Promise<void> {
 }
 
 // 停止 Agent 并安全退出应用
-export async function exitAll(): Promise<void> {
+export async function exitAll(force = false): Promise<void> {
   try {
-    await invoke<void>("exit_all");
+    await invoke<void>("exit_all", { force });
   } catch (error) {
     throw normalizeApiError(error);
   }
@@ -378,6 +379,7 @@ export async function listenTauriEvents(handlers: {
   onUpdate?: (update: UpdateStatus) => void;
   onTrayAction?: (action: string) => void;
   onCloseRequested?: () => void;
+  onExitProgress?: (progress: ExitProgress) => void;
 }): Promise<UnlistenFn[]> {
   const unlisteners: UnlistenFn[] = [];
 
@@ -425,6 +427,14 @@ export async function listenTauriEvents(handlers: {
     unlisteners.push(
       await listen<string>(TAURI_EVENTS.TRAY_ACTION, (e) => {
         handlers.onTrayAction?.(e.payload);
+      })
+    );
+  }
+
+  if (handlers.onExitProgress) {
+    unlisteners.push(
+      await listen<ExitProgress>(TAURI_EVENTS.EXIT, (event) => {
+        handlers.onExitProgress?.(event.payload);
       })
     );
   }

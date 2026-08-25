@@ -171,10 +171,61 @@ pub async fn save_settings(
 ///
 /// 先尝试接回已有 Agent，但**绝不为了退出而启动一个新的**。数据库存在只说明目录初始化
 /// 过，不代表后台还有 Agent 在跑。
-#[tauri::command]
-pub async fn exit_all(app: AppHandle, state: State<'_, Arc<AppState>>) -> Result<(), ApiError> {
-    state.suppress_reconnect.store(true, Ordering::Release);
+/// 退出进度。
+///
+/// Agent 的关闭是一个 16 步、整体上限 20 秒的流程（见 src/agent/shutdownSequence.js）。
+/// 第 8 步要等 handler 与维护 Worker 收敛——Profile 扫描正在跑时那一步就会耗掉数秒。
+/// 不上报进度的话「退出全部」看起来像没反应，用户会反复点击。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExitProgress {
+    pub stage: String,
+    pub message: String,
+    /// 已经进行的秒数，用于让界面显示「已等待 N 秒」而不是一个假的百分比。
+    pub elapsed_seconds: u64,
+    /// 是否已经可以安全强制结束。
+    pub can_force: bool,
+}
 
+fn report_exit(
+    app: &AppHandle,
+    stage: &str,
+    message: &str,
+    started: std::time::Instant,
+    can_force: bool,
+) {
+    let _ = app.emit(
+        events::EXIT,
+        ExitProgress {
+            stage: stage.to_string(),
+            message: message.to_string(),
+            elapsed_seconds: started.elapsed().as_secs(),
+            can_force,
+        },
+    );
+}
+
+#[tauri::command]
+pub async fn exit_all(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+    force: Option<bool>,
+) -> Result<(), ApiError> {
+    // 幂等：用户在等待期间反复点「退出全部」不该叠出多条关闭流程。第一次调用已经把
+    // Agent 推进了 draining，重复发 system.shutdown 只会让日志更难读。
+    if state.exiting.swap(true, Ordering::AcqRel) && force != Some(true) {
+        return Ok(());
+    }
+    state.suppress_reconnect.store(true, Ordering::Release);
+    let started = std::time::Instant::now();
+
+    report_exit(
+        &app,
+        "connecting",
+        "正在确认后台 Agent 状态",
+        started,
+        false,
+    );
     if !state.connection.is_connected().await {
         let snapshot = state
             .connection
@@ -182,12 +233,37 @@ pub async fn exit_all(app: AppHandle, state: State<'_, Arc<AppState>>) -> Result
             .await;
         if !snapshot.connected {
             // 没有 Agent 在跑，直接退。
+            report_exit(
+                &app,
+                "done",
+                "后台没有运行中的 Agent，正在退出",
+                started,
+                false,
+            );
             state.launcher.reclaim_current();
             app.exit(0);
             return Ok(());
         }
     }
 
+    // force=true 是用户在等待过程中主动选择的「不再等待」。它跳过有序关闭，直接关 job
+    // 句柄让 KILL_ON_JOB_CLOSE 回收整棵进程树——数据库可能没有 checkpoint，但进程树
+    // 一定干净，不会留下孤儿 Chrome。
+    if force == Some(true) {
+        report_exit(&app, "forcing", "正在强制结束后台进程树", started, false);
+        state.connection.disconnect().await;
+        state.launcher.reclaim_current();
+        app.exit(0);
+        return Ok(());
+    }
+
+    report_exit(
+        &app,
+        "draining",
+        "正在请求 Agent 收尾：取消排队任务、关闭 Chrome 窗口",
+        started,
+        false,
+    );
     let _ = state
         .connection
         .call_internal(
@@ -199,11 +275,24 @@ pub async fn exit_all(app: AppHandle, state: State<'_, Arc<AppState>>) -> Result
 
     // 等 IPC 真的断开。超时也继续退出：不能因为第三方浏览器驱动迟迟不放句柄就把
     // 窗口锁成永远关不上。Agent 自身有有界清理和最终退出保障。
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    //
+    // 上限取 20 秒对齐 Agent 的 OVERALL_TIMEOUT_MS：比它短会在 Agent 仍在正常收尾时
+    // 就放弃，比它长则是白等。
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
     while state.connection.is_connected().await && std::time::Instant::now() < deadline {
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        // 3 秒后才提供「强制退出」：更早给出会诱导用户在正常的 1-2 秒收尾期就跳过
+        // SQLite checkpoint。
+        report_exit(
+            &app,
+            "waiting",
+            "正在等待 Agent 释放数据库与 Profile 句柄",
+            started,
+            started.elapsed() >= std::time::Duration::from_secs(3),
+        );
     }
 
+    report_exit(&app, "done", "资源已释放，正在退出", started, false);
     state.connection.disconnect().await;
     state.launcher.reclaim_current();
     app.exit(0);

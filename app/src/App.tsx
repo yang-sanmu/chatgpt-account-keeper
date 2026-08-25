@@ -9,6 +9,7 @@ import { ToastContainer } from "./components/Toast/ToastContainer";
 import { LoginProgressModal } from "./components/Modals/LoginProgressModal";
 import { CloseConfirmModal } from "./components/Modals/CloseConfirmModal";
 import { UpdateModal } from "./components/Modals/UpdateModal";
+import { ExitProgressModal } from "./components/Modals/ExitProgressModal";
 import { FirstRunWizard } from "./pages/FirstRun/FirstRunWizard";
 
 // 八个业务功能页面
@@ -122,6 +123,8 @@ const GlobalOverlays: React.FC = () => {
     handleMinimizeToTray,
     handleExitAll,
     closeCloseModal,
+    exitProgress,
+    forceExitAll,
   } = useApp();
 
   return (
@@ -151,6 +154,9 @@ const GlobalOverlays: React.FC = () => {
         onInstall={installAppUpdate}
         installing={updateModalState.installing}
       />
+
+      {/* 退出进度。它自己判断 progress 是否为 null，不需要额外的 isOpen。 */}
+      <ExitProgressModal progress={exitProgress} onForceExit={forceExitAll} />
     </>
   );
 };

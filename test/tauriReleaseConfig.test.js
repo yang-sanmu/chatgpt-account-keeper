@@ -35,5 +35,8 @@ test("updater configuration uses the stable HTTPS endpoint and an inline public-
     "https://github.com/yang-sanmu/chatgpt-account-keeper/releases/latest/download/latest.json",
   );
   assert.equal(typeof config.plugins.updater.pubkey, "string");
-  assert.ok(config.plugins.updater.pubkey.length > 0);
+  assert.doesNotMatch(config.plugins.updater.pubkey, /PLACEHOLDER/i);
+  const decoded = Buffer.from(config.plugins.updater.pubkey, "base64").toString("utf8");
+  assert.match(decoded, /^untrusted comment: minisign public key: [0-9A-F]{16}\n/);
+  assert.match(decoded, /\nRW[A-Za-z0-9+/=]+\n$/);
 });

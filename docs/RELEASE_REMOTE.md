@@ -25,7 +25,7 @@ npm run tauri signer generate -- -w D:\offline-backup\gpt-account-keeper-updater
 3. 将密码保存为 TAURI_SIGNING_PRIVATE_KEY_PASSWORD。
 4. 私钥与密码分别离线备份并实际验证可以读取。不要把私钥放进仓库、.env 或发布资产。
 
-仓库当前仍有 PLACEHOLDER_REPLACED_AT_M5 时，工作流会在构建前直接失败。
+工作流会在公钥为空或仍是占位符时于构建前直接失败。
 
 ### 2. 配置平台签名 Secrets
 

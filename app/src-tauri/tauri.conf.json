@@ -75,7 +75,7 @@
     "updater": {
       "active": true,
       "dialog": false,
-      "pubkey": "PLACEHOLDER_REPLACED_AT_M5",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDFFMjgzQUY2NzhBNTRGMzIKUldReVQ2VjQ5am9vSGkxUWJIUm1JVi9wU201MjFiZ2lBSk5lVUF1azZBTVp2WkswcE9rcTdUZEkK",
       "endpoints": [
         "https://github.com/yang-sanmu/chatgpt-account-keeper/releases/latest/download/latest.json"
       ]

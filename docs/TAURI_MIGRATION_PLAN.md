@@ -473,8 +473,10 @@ payload 字段漂移，也不能区分“操作已入队”和“操作已完成
 - [x] `tauri.conf.json`：`bundle.targets`、`createUpdaterArtifacts`、NSIS
   `installMode: currentUser`、Linux deb/rpm depends；发布时通过
   `tauri.release.conf.json` 映射生成的 resources，普通 cargo 门禁不依赖本地二进制。
-- [ ] 用 CLI 生成生产签名密钥对，把公钥替换进 `plugins.updater.pubkey`，私钥/密码存入
-  仓库 Secret 并**分别离线备份**。工作流在占位符或缺私钥时 fail-closed。
+- [x] 用 CLI 生成生产 updater 签名密钥对，把公钥替换进
+  `plugins.updater.pubkey`。工作流在公钥为空或仍是占位符时 fail-closed。
+- [ ] 将 updater 私钥/密码存入仓库 Secrets 并**分别离线备份、实际验证可读取**；
+  工作流在任一 Secret 缺失时 fail-closed。
 - [x] 改造 `scripts/stage-release.mjs`：输出只含 Tauri `$RESOURCE` 下的 agent/licenses，
   不再复制旧 Desktop publish 目录。
 - [x] 改造 `scripts/verify-package.mjs`：路径规则跟着新布局改；禁止 chromium /
@@ -494,8 +496,8 @@ AppImage 各一次**（macOS 与 AppImage 要确认 `install()` 后的显式重�
 deb 与 rpm 各装一次并确认**没有**发起更新检查；AppImage 在干净 Ubuntu 22.04 与一台
 较新发行版上各起一次。
 
-2026-08-25 仓库内门禁已落地并通过本地单元/配置验证；生产密钥、公钥替换、四平台
-workflow 实跑与上述真机验收仍是外部门禁，未完成前不得把 M5 标为完成。
+2026-08-26 生产 updater 密钥已生成、公钥已接入；私钥/密码 Secrets 与分离备份、四平台
+workflow 实跑及上述真机验收仍是外部门禁，未完成前不得把 M5 标为完成。
 
 ### M6 · 删除 `desktop/`
 

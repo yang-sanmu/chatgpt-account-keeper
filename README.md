@@ -8,8 +8,9 @@ ChatGPT 多账号的桌面管理与后台自动对话工具。每个账号使用
 
 管理端正在从 Avalonia 迁移到 Rust + Tauri（见 [迁移计划](docs/TAURI_MIGRATION_PLAN.md)）。
 两个客户端目前并存：`desktop/` 是已公开的 0.1.x Avalonia 客户端，`app/` 是下一条
-0.2.x Tauri 版本线。Tauri 的仓库内分发门禁已经落地，但生产更新密钥、四平台 Draft
-和真机更新验收完成前仍不公开。Agent 与 IPC v1 契约对两者完全相同。
+0.2.x Tauri 版本线。Tauri 的仓库内分发门禁和生产 updater 公钥已经落地，但 updater
+私钥/密码 Secrets、平台签名、四平台 Draft 和真机更新验收完成前仍不公开。Agent 与
+IPC v1 契约对两者完全相同。
 
 ```text
 管理端

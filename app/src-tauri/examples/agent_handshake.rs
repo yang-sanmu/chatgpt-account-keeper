@@ -35,6 +35,7 @@ fn isolated_paths(root: &Path) -> AppPaths {
         agent_log_file: root.join("state/agent.log"),
         migration_progress_file: root.join("state/migration-progress.json"),
         is_development: true,
+        allows_source_agent: true,
         bootstrap_warning: None,
     }
 }

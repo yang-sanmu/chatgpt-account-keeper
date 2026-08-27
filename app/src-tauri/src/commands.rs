@@ -394,7 +394,7 @@ pub async fn inspect_legacy(
 ) -> Result<serde_json::Value, ApiError> {
     let probe = crate::agent::resources::resolve_command(
         state.launcher.resource_root(),
-        state.paths.is_development,
+        state.paths.allows_source_agent,
     )
     .and_then(|command| {
         crate::agent::resources::find_migration_probe(&command).map(|probe| (command, probe))

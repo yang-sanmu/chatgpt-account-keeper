@@ -43,6 +43,8 @@ pub struct AppPaths {
     pub agent_log_file: PathBuf,
     pub migration_progress_file: PathBuf,
     pub is_development: bool,
+    /// 是否允许从源码树解析 Agent、并使用 PATH 上的 node。见 `allows_source_agent()`。
+    pub allows_source_agent: bool,
     /// 引导文件损坏时的告警。回落到默认目录，但必须让用户看到原因。
     pub bootstrap_warning: Option<String>,
 }
@@ -93,6 +95,30 @@ fn development_data_root_initialized() -> bool {
         Ok((_, data_root, _, _)) => data_root.join("keeper.db").is_file(),
         Err(_) => false,
     }
+}
+
+/// 是否允许从源码树解析 Agent 入口、并回落到 PATH 上的 node。
+///
+/// **这必须与 `is_development()` 分开判断。** 两者曾是同一个布尔值，而它们回答的是两个
+/// 无关的问题：
+///
+/// - `is_development()`：用哪个**数据目录**。它以「开发数据目录是否已建库」为判据，
+///   于是在只有生产数据的机器上返回 false —— 这是刻意的，为了让 `tauri dev` 能调真实数据。
+/// - 这里：能不能用**源码树里的 Agent**。`cargo run` 出来的 exe 旁边不存在 `agent/runtime/node.exe`
+///   （那是打包时才注入的资源），所以一个 debug 构建除了源码树没有别的 Agent 可用。
+///
+/// 合成一个布尔值的后果是真实的：上面那台机器上 `npm run tauri dev` 会以「发布模式」去
+/// 解析 Agent，只找 `target/debug/agent/…`，找不到就 `CommandNotFound`，界面于是永远
+/// 停在未连接，每个发起调用的页面各刷一串 `AGENT_NOT_CONNECTED`。
+///
+/// 判据是构建类型，不是数据目录：release 构建绝不碰源码树和 PATH 的 node（那等于让用户
+/// 机器上任意 Node 版本参与运行），debug 构建则只有源码树可用。环境变量仍然优先，两个
+/// 方向都支持。
+pub fn allows_source_agent() -> bool {
+    if let Some(explicit) = development_override() {
+        return explicit;
+    }
+    cfg!(debug_assertions)
 }
 
 #[cfg(not(windows))]
@@ -206,6 +232,7 @@ impl AppPaths {
             cache_directory: cache_root,
             state_directory: state_root,
             is_development: development,
+            allows_source_agent: allows_source_agent(),
             bootstrap_warning,
         })
     }
@@ -319,11 +346,21 @@ fn normalize(path: &Path) -> PathBuf {
 mod tests {
     use super::*;
 
+    /// 环境变量是进程全局的，而 cargo 在同一进程里并发跑测试。没有这把锁，一个用例
+    /// 设 `=1` 的瞬间另一个正好读它，两边都会随机失败，而失败信息指向被读的那个断言。
+    static ENVIRONMENT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn lock_environment() -> std::sync::MutexGuard<'static, ()> {
+        // 中毒只说明另一个用例 panic 过；这把锁不保护任何不变量，继续用就行。
+        ENVIRONMENT_LOCK.lock().unwrap_or_else(|error| error.into_inner())
+    }
+
     #[test]
     fn a_debug_build_uses_the_development_directory_only_when_it_has_data() {
         // 两个都要成立，否则会各自造成一种坏体验：
         // - 无条件用生产目录：调试会写坏日常在用的库。
         // - 无条件用开发目录：一台已有 42 个账号的机器上 `tauri dev` 停在欢迎页。
+        let _guard = lock_environment();
         std::env::remove_var(DEVELOPMENT_ENVIRONMENT_VARIABLE);
         let has_dev_data = development_data_root_initialized();
         assert_eq!(
@@ -334,7 +371,52 @@ mod tests {
     }
 
     #[test]
+    fn a_debug_build_may_use_the_source_agent_even_when_it_uses_production_data() {
+        // 回归测试。这两个判断曾是同一个布尔值，而它们回答的是两个无关的问题。
+        //
+        // 一台只有生产数据的机器上 is_development() 为 false（刻意的：让 tauri dev 能调
+        // 真实数据），如果 Agent 解析也跟着它，debug 构建就会去找 target/debug/agent/…
+        // 里根本不存在的随包 Agent，CommandNotFound，界面永远未连接，每个页面各刷一串
+        // AGENT_NOT_CONNECTED。
+        let _guard = lock_environment();
+        std::env::remove_var(DEVELOPMENT_ENVIRONMENT_VARIABLE);
+        assert_eq!(
+            allows_source_agent(),
+            cfg!(debug_assertions),
+            "源码 Agent 的可用性只取决于构建类型，与数据目录无关"
+        );
+        if cfg!(debug_assertions) && !development_data_root_initialized() {
+            assert!(!is_development(), "前提不成立：开发数据目录竟然已建库");
+            assert!(
+                allows_source_agent(),
+                "debug 构建即使用生产数据目录，也必须仍能解析源码树里的 Agent"
+            );
+        }
+    }
+
+    #[test]
+    fn a_release_build_never_allows_the_source_agent() {
+        // 发布路径上用源码树的 Agent 或 PATH 的 node 等于让任意 Node 版本参与运行。
+        let _guard = lock_environment();
+        std::env::remove_var(DEVELOPMENT_ENVIRONMENT_VARIABLE);
+        if !cfg!(debug_assertions) {
+            assert!(!allows_source_agent());
+        }
+    }
+
+    #[test]
+    fn the_environment_variable_also_overrides_source_agent_resolution_in_both_directions() {
+        let _guard = lock_environment();
+        std::env::set_var(DEVELOPMENT_ENVIRONMENT_VARIABLE, "0");
+        assert!(!allows_source_agent());
+        std::env::set_var(DEVELOPMENT_ENVIRONMENT_VARIABLE, "1");
+        assert!(allows_source_agent());
+        std::env::remove_var(DEVELOPMENT_ENVIRONMENT_VARIABLE);
+    }
+
+    #[test]
     fn a_release_build_never_uses_the_development_directory_by_default() {
+        let _guard = lock_environment();
         std::env::remove_var(DEVELOPMENT_ENVIRONMENT_VARIABLE);
         if !cfg!(debug_assertions) {
             assert!(!is_development());
@@ -345,6 +427,7 @@ mod tests {
     fn the_environment_variable_overrides_the_build_type_in_both_directions() {
         // 两个方向都要能覆盖：调试时接安装版数据用来复现只在真实数据上出现的问题，
         // 发布版跑沙箱用来验证首次启动流程。
+        let _guard = lock_environment();
         std::env::set_var(DEVELOPMENT_ENVIRONMENT_VARIABLE, "0");
         assert!(!is_development());
         std::env::set_var(DEVELOPMENT_ENVIRONMENT_VARIABLE, "1");

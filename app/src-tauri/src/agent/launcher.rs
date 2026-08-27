@@ -147,7 +147,10 @@ impl Launcher {
         endpoint: &Endpoint,
         legacy_root: Option<&Path>,
     ) -> Result<LaunchOutcome, LaunchError> {
-        let command = resolve_command(&self.resource_root, self.paths.is_development)
+        // 用 allows_source_agent 而不是 is_development：后者回答的是「用哪个数据目录」，
+        // 在只有生产数据的机器上为 false，会让 debug 构建按发布布局去找一个不存在的
+        // 随包 Agent。见 paths::allows_source_agent 的说明。
+        let command = resolve_command(&self.resource_root, self.paths.allows_source_agent)
             .ok_or(LaunchError::CommandNotFound)?;
 
         std::fs::create_dir_all(&self.paths.state_directory)?;
@@ -233,6 +236,7 @@ mod tests {
             agent_log_file: root.join("state/agent.log"),
             migration_progress_file: root.join("state/migration-progress.json"),
             is_development: false,
+            allows_source_agent: false,
             bootstrap_warning: None,
         }
     }

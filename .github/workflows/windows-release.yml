@@ -93,12 +93,6 @@ jobs:
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
       WINDOWS_SIGNING_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_BASE64 }}
       WINDOWS_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_PASSWORD }}
-      APPLE_CERTIFICATE: ${{ secrets.MACOS_APP_CERTIFICATE_BASE64 }}
-      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_P12_PASSWORD }}
-      APPLE_SIGNING_IDENTITY: ${{ secrets.MACOS_APP_IDENTITY }}
-      APPLE_ID: ${{ secrets.APPLE_ID }}
-      APPLE_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
       LINUX_MINISIGN_SECRET_KEY_BASE64: ${{ secrets.LINUX_MINISIGN_SECRET_KEY_BASE64 }}
       LINUX_MINISIGN_PASSWORD: ${{ secrets.LINUX_MINISIGN_PASSWORD }}
       LINUX_MINISIGN_PUBLIC_KEY: ${{ secrets.LINUX_MINISIGN_PUBLIC_KEY }}
@@ -132,7 +126,7 @@ jobs:
         timeout-minutes: 10
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends build-essential curl file libssl-dev libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libfuse2 patchelf rpm xdg-utils minisign
+          sudo apt-get install -y --no-install-recommends build-essential curl file libssl-dev libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libfuse2 patchelf rpm xdg-utils
 
       - name: Install Agent and Tauri frontend dependencies
         run: |
@@ -222,8 +216,15 @@ jobs:
         if: startsWith(matrix.rid, 'osx-')
         id: apple_signing
         shell: bash
+        env:
+          MACOS_APP_CERTIFICATE_BASE64: ${{ secrets.MACOS_APP_CERTIFICATE_BASE64 }}
+          MACOS_P12_PASSWORD: ${{ secrets.MACOS_P12_PASSWORD }}
+          MACOS_APP_IDENTITY: ${{ secrets.MACOS_APP_IDENTITY }}
+          APPLE_ACCOUNT_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_DEVELOPER_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          values=("$APPLE_CERTIFICATE" "$APPLE_CERTIFICATE_PASSWORD" "$APPLE_SIGNING_IDENTITY" "$APPLE_ID" "$APPLE_PASSWORD" "$APPLE_TEAM_ID")
+          values=("$MACOS_APP_CERTIFICATE_BASE64" "$MACOS_P12_PASSWORD" "$MACOS_APP_IDENTITY" "$APPLE_ACCOUNT_ID" "$APPLE_APP_SPECIFIC_PASSWORD" "$APPLE_DEVELOPER_TEAM_ID")
           configured=0
           for value in "${values[@]}"; do
             [[ -n "$value" ]] && configured=$((configured + 1))
@@ -235,6 +236,13 @@ jobs:
           mkdir -p artifacts
           if [[ "$configured" -eq 6 ]]; then
             printf '{}\n' > artifacts/platform-signing.conf.json
+            printf '%s\n' \
+              "APPLE_CERTIFICATE=$MACOS_APP_CERTIFICATE_BASE64" \
+              "APPLE_CERTIFICATE_PASSWORD=$MACOS_P12_PASSWORD" \
+              "APPLE_SIGNING_IDENTITY=$MACOS_APP_IDENTITY" \
+              "APPLE_ID=$APPLE_ACCOUNT_ID" \
+              "APPLE_PASSWORD=$APPLE_APP_SPECIFIC_PASSWORD" \
+              "APPLE_TEAM_ID=$APPLE_DEVELOPER_TEAM_ID" >> "$GITHUB_ENV"
             echo 'signed=true' >> "$GITHUB_OUTPUT"
           else
             printf '{"bundle":{"macOS":{"signingIdentity":"-"}}}\n' > artifacts/platform-signing.conf.json
@@ -347,13 +355,22 @@ jobs:
             echo 'signed=false' >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          minisign_version=0.12
+          minisign_archive="$RUNNER_TEMP/minisign-$minisign_version-linux.tar.gz"
+          minisign_bin="$RUNNER_TEMP/minisign-linux/x86_64/minisign"
+          curl --fail --location --retry 3 --retry-delay 2 \
+            "https://github.com/jedisct1/minisign/releases/download/$minisign_version/minisign-$minisign_version-linux.tar.gz" \
+            --output "$minisign_archive"
+          printf '%s  %s\n' '9a599b48ba6eb7b1e80f12f36b94ceca7c00b7a5173c95c3efc88d9822957e73' "$minisign_archive" | sha256sum --check -
+          tar -xzf "$minisign_archive" -C "$RUNNER_TEMP"
+          chmod +x "$minisign_bin"
           key="$RUNNER_TEMP/gpt-account-keeper.minisign.key"
           printf '%s' "$LINUX_MINISIGN_SECRET_KEY_BASE64" | base64 --decode > "$key"
           appimage=$(find artifacts/release-assets -maxdepth 1 -type f -name '*.AppImage' -print -quit)
-          printf '%s\n' "$LINUX_MINISIGN_PASSWORD" | minisign -S -s "$key" -m "$appimage" -x "$appimage.minisig"
-          printf '%s\n' "$LINUX_MINISIGN_PASSWORD" | minisign -S -s "$key" -m artifacts/release-assets/SHA256SUMS.linux-x64.txt -x artifacts/release-assets/SHA256SUMS.linux-x64.txt.minisig
-          minisign -V -P "$LINUX_MINISIGN_PUBLIC_KEY" -m "$appimage" -x "$appimage.minisig"
-          minisign -V -P "$LINUX_MINISIGN_PUBLIC_KEY" -m artifacts/release-assets/SHA256SUMS.linux-x64.txt -x artifacts/release-assets/SHA256SUMS.linux-x64.txt.minisig
+          printf '%s\n' "$LINUX_MINISIGN_PASSWORD" | "$minisign_bin" -S -s "$key" -m "$appimage" -x "$appimage.minisig"
+          printf '%s\n' "$LINUX_MINISIGN_PASSWORD" | "$minisign_bin" -S -s "$key" -m artifacts/release-assets/SHA256SUMS.linux-x64.txt -x artifacts/release-assets/SHA256SUMS.linux-x64.txt.minisig
+          "$minisign_bin" -V -P "$LINUX_MINISIGN_PUBLIC_KEY" -m "$appimage" -x "$appimage.minisig"
+          "$minisign_bin" -V -P "$LINUX_MINISIGN_PUBLIC_KEY" -m artifacts/release-assets/SHA256SUMS.linux-x64.txt -x artifacts/release-assets/SHA256SUMS.linux-x64.txt.minisig
           printf 'untrusted comment: ChatGPT Account Keeper Minisign public key\n%s\n' "$LINUX_MINISIGN_PUBLIC_KEY" > artifacts/release-assets/minisign.pub
           printf 'Minisign signatures verified.\n' > artifacts/release-assets/SIGNED-linux-x64.txt
           rm -f "$key"

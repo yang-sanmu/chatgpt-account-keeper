@@ -79,7 +79,27 @@ test("Draft creation requires N-1 verification and every platform signing marker
   }
   assert.match(releaseSource, /xcrun stapler validate/);
   assert.match(releaseSource, /Get-AuthenticodeSignature/);
-  assert.match(releaseSource, /minisign -V/);
+  assert.match(releaseSource, /"\$minisign_bin" -V/);
+});
+
+test("Linux only installs the pinned Minisign tool when signing is configured", () => {
+  const steps = release.jobs.build.steps;
+  const prerequisites = steps.find((step) => step.name === "Install Linux Tauri bundler prerequisites");
+  const signing = steps.find((step) => step.name === "Detect and apply Linux Minisign");
+  assert.doesNotMatch(prerequisites.run, /\bminisign\b/i);
+  assert.ok(signing.run.indexOf("minisign_version=0.12") > signing.run.indexOf('if [[ "$configured" -eq 0 ]]'));
+  assert.match(signing.run, /9a599b48ba6eb7b1e80f12f36b94ceca7c00b7a5173c95c3efc88d9822957e73/);
+  assert.match(signing.run, /sha256sum --check/);
+});
+
+test("unsigned Apple candidates do not expose empty certificate variables to the bundler", () => {
+  const apple = release.jobs.build.steps.find(
+    (step) => step.name === "Configure Apple signing and notarization",
+  );
+  assert.equal(release.jobs.build.env.APPLE_CERTIFICATE, undefined);
+  assert.equal(apple.env.MACOS_APP_CERTIFICATE_BASE64, "${{ secrets.MACOS_APP_CERTIFICATE_BASE64 }}");
+  assert.match(apple.run, /APPLE_CERTIFICATE=\$MACOS_APP_CERTIFICATE_BASE64/);
+  assert.match(apple.run, /APPLE_SIGNING_IDENTITY=-/);
 });
 
 test("local dispatcher downloads the Tauri aggregate and requires updater attestation to publish", () => {

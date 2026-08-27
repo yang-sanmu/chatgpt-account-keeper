@@ -374,7 +374,7 @@ export function normalizeAccount(raw: unknown): Account {
 }
 
 // 统一监听各种 Tauri 事件
-export async function listenTauriEvents(handlers: {
+export async function subscribeTauriEvents(handlers: {
   onBootstrap?: (snapshot: BootstrapSnapshot) => void;
   onAgentEvent?: (event: AgentEventEnvelope) => void;
   onConnection?: (conn: ConnectionSnapshot) => void;

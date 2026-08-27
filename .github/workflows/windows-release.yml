@@ -413,17 +413,17 @@ jobs:
         shell: bash
         run: |
           root=artifacts/assets
-          test -s "$root/ChatGPT-Account-Keeper_$VERSION_windows_x86_64-setup.exe"
-          test -s "$root/ChatGPT-Account-Keeper_$VERSION_windows_x86_64-setup.exe.sig"
+          test -s "$root/ChatGPT-Account-Keeper_${VERSION}_windows_x86_64-setup.exe"
+          test -s "$root/ChatGPT-Account-Keeper_${VERSION}_windows_x86_64-setup.exe.sig"
           for arch in aarch64 x86_64; do
-            test -s "$root/ChatGPT-Account-Keeper_$VERSION_darwin_$arch.dmg"
-            test -s "$root/ChatGPT-Account-Keeper_$VERSION_darwin_$arch.app.tar.gz"
-            test -s "$root/ChatGPT-Account-Keeper_$VERSION_darwin_$arch.app.tar.gz.sig"
+            test -s "$root/ChatGPT-Account-Keeper_${VERSION}_darwin_$arch.dmg"
+            test -s "$root/ChatGPT-Account-Keeper_${VERSION}_darwin_$arch.app.tar.gz"
+            test -s "$root/ChatGPT-Account-Keeper_${VERSION}_darwin_$arch.app.tar.gz.sig"
           done
-          test -s "$root/ChatGPT-Account-Keeper_$VERSION_linux_x86_64.AppImage"
-          test -s "$root/ChatGPT-Account-Keeper_$VERSION_linux_x86_64.AppImage.sig"
-          test -s "$root/ChatGPT-Account-Keeper_$VERSION_linux_x86_64.deb"
-          test -s "$root/ChatGPT-Account-Keeper_$VERSION_linux_x86_64.rpm"
+          test -s "$root/ChatGPT-Account-Keeper_${VERSION}_linux_x86_64.AppImage"
+          test -s "$root/ChatGPT-Account-Keeper_${VERSION}_linux_x86_64.AppImage.sig"
+          test -s "$root/ChatGPT-Account-Keeper_${VERSION}_linux_x86_64.deb"
+          test -s "$root/ChatGPT-Account-Keeper_${VERSION}_linux_x86_64.rpm"
           test "$(find "$root" -maxdepth 1 -type f -name '*-agent.cdx.json' | wc -l | tr -d ' ')" = 4
 
       - name: Create source archives and latest.json
@@ -433,7 +433,7 @@ jobs:
           git archive --format=zip --prefix="chatgpt-account-keeper-$VERSION/" --output="artifacts/assets/chatgpt-account-keeper-$VERSION-source.zip" HEAD
           mihomo_version=$(node -p "require('./build/runtime-versions.json').mihomo.version")
           curl --fail --location --retry 3 "https://github.com/MetaCubeX/mihomo/archive/refs/tags/v$mihomo_version.zip" --output "artifacts/assets/mihomo-v$mihomo_version-source.zip"
-          node scripts/write-latest-json.mjs --version "$VERSION" --notes-file artifacts/release-notes.md --base-url "https://github.com/$GITHUB_REPOSITORY/releases/download/v$VERSION" --windows "artifacts/assets/ChatGPT-Account-Keeper_$VERSION_windows_x86_64-setup.exe" --darwin-arm64 "artifacts/assets/ChatGPT-Account-Keeper_$VERSION_darwin_aarch64.app.tar.gz" --darwin-x64 "artifacts/assets/ChatGPT-Account-Keeper_$VERSION_darwin_x86_64.app.tar.gz" --linux-appimage "artifacts/assets/ChatGPT-Account-Keeper_$VERSION_linux_x86_64.AppImage" --output artifacts/assets/latest.json
+          node scripts/write-latest-json.mjs --version "$VERSION" --notes-file artifacts/release-notes.md --base-url "https://github.com/$GITHUB_REPOSITORY/releases/download/v$VERSION" --windows "artifacts/assets/ChatGPT-Account-Keeper_${VERSION}_windows_x86_64-setup.exe" --darwin-arm64 "artifacts/assets/ChatGPT-Account-Keeper_${VERSION}_darwin_aarch64.app.tar.gz" --darwin-x64 "artifacts/assets/ChatGPT-Account-Keeper_${VERSION}_darwin_x86_64.app.tar.gz" --linux-appimage "artifacts/assets/ChatGPT-Account-Keeper_${VERSION}_linux_x86_64.AppImage" --output artifacts/assets/latest.json
           (
             cd artifacts/assets
             find . -maxdepth 1 -type f ! -name 'SHA256SUMS.release.txt' ! -name 'SIGNED-*.txt' ! -name 'UNSIGNED-*.txt' -printf '%P\0' |

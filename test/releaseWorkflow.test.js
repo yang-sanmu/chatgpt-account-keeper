@@ -102,6 +102,12 @@ test("unsigned Apple candidates do not expose empty certificate variables to the
   assert.match(apple.run, /APPLE_SIGNING_IDENTITY=-/);
 });
 
+test("aggregate filenames delimit the Bash version variable before suffixes", () => {
+  const aggregateCommands = release.jobs.aggregate.steps.map((step) => step.run ?? "").join("\n");
+  assert.doesNotMatch(aggregateCommands, /\$VERSION_/);
+  assert.match(aggregateCommands, /ChatGPT-Account-Keeper_\$\{VERSION\}_windows_x86_64-setup\.exe/);
+});
+
 test("local dispatcher downloads the Tauri aggregate and requires updater attestation to publish", () => {
   assert.match(publishScript, /ChatGPT-Account-Keeper-all-\$Version/);
   assert.match(publishScript, /PublishDraft requires -UpdaterVerified/);

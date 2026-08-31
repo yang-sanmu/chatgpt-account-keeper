@@ -22,13 +22,17 @@
 
 :root {
   /* ---- 浅色（默认值写在这里，深色在 .dark 里覆盖）---- */
-  --surface-app: oklch(0.982 0.002 264);
-  --surface-panel: oklch(1 0 0);
+  /* 五级表面必须真的可区分。
+     这里原先 panel / raised / overlay 三级都是 oklch(1 0 0) 纯白，浅色下卡片浮在底板上、
+     弹窗浮在卡片上都只靠一条细边框撑层次，整屏发白。深色那套有完整梯度，浅色不能是
+     它的残缺版。方向与深色相反：越往上越白，底板反而压暗一点。 */
+  --surface-app: oklch(0.966 0.004 264);
+  --surface-panel: oklch(0.992 0.002 264);
   --surface-raised: oklch(1 0 0);
   --surface-overlay: oklch(1 0 0);
-  --surface-sunken: oklch(0.968 0.003 264);
-  --surface-hover: oklch(0.955 0.004 264);
-  --surface-active: oklch(0.936 0.006 264);
+  --surface-sunken: oklch(0.941 0.005 264);
+  --surface-hover: oklch(0.947 0.006 264);
+  --surface-active: oklch(0.923 0.008 264);
 
   --content-primary: oklch(0.22 0.014 264);
   --content-secondary: oklch(0.46 0.014 264);
@@ -166,6 +170,35 @@
     -apple-system, "PingFang SC", "Microsoft YaHei UI", sans-serif;
   --font-mono: "Cascadia Code", "JetBrains Mono", ui-monospace, "SFMono-Regular",
     Consolas, monospace;
+
+  /*
+    显式字号阶梯。覆盖 Tailwind 默认值，因为默认 text-sm = 14px 比这里的正文基准 13px
+    还大 —— 界面上有 20 多处用 text-sm 渲染「次要」文字，结果次要信息比正文更醒目，
+    整屏没有主次。
+
+    每一档对应一个角色，一个角色只有一个答案：
+      2xs 10px  角标、极密的表格附注
+      xs  11px  次要说明、时间戳、字段标签
+      sm  12px  密集区的正文（表格行、列表项）
+      base 13px 正文基准
+      lg  15px  卡片标题、区块小标题
+      xl  18px  页面标题
+      2xl 22px  仪表盘的大数字
+  */
+  --text-2xs: 0.625rem;
+  --text-2xs--line-height: 1.4;
+  --text-xs: 0.6875rem;
+  --text-xs--line-height: 1.45;
+  --text-sm: 0.75rem;
+  --text-sm--line-height: 1.5;
+  --text-base: 0.8125rem;
+  --text-base--line-height: 1.55;
+  --text-lg: 0.9375rem;
+  --text-lg--line-height: 1.4;
+  --text-xl: 1.125rem;
+  --text-xl--line-height: 1.35;
+  --text-2xl: 1.375rem;
+  --text-2xl--line-height: 1.2;
 }
 
 @layer base {
@@ -237,5 +270,24 @@
   /* 等宽数字：状态计数与延迟值在刷新时不该左右跳动。 */
   .tabular {
     font-variant-numeric: tabular-nums;
+  }
+
+  /* 仪表盘大数字。
+     不用 text-2xl：那个名字和 Tailwind 内置的 --container-2xl 撞车，@theme 里的字号覆盖
+     不生效。指标数字只有一个用途，给它一个专名反而更清楚。 */
+  .metric {
+    font-size: 1.375rem;
+    line-height: 1.15;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
+
+  .metric-lg {
+    font-size: 1.75rem;
+    line-height: 1.1;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.015em;
   }
 }

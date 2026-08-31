@@ -42,7 +42,7 @@ function ErrorDetail({ message, code }: { message: string; code: string }): Reac
           void navigator.clipboard?.writeText(code);
         }}
         title="点击复制错误码"
-        className="rounded-chip border border-line bg-sunken px-1.5 py-0.5 font-mono text-[11px] text-secondary transition-colors hover:bg-hover hover:text-primary"
+        className="rounded-chip border border-line bg-sunken px-1.5 py-0.5 font-mono text-xs text-secondary transition-colors hover:bg-hover hover:text-primary"
       >
         {code}
       </button>

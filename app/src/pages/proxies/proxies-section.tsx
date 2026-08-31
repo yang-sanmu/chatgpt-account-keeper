@@ -9,7 +9,8 @@ import { Badge } from "@/components/ui/badge";
 import { DownloadCloud, RefreshCw, Activity, Link2, Loader2, Play } from "lucide-react";
 import { notify } from "@/lib/notify";
 import { cn } from "@/lib/utils";
-import { formatRelative } from "@/lib/format";
+import { RelativeTime } from "@/components/ui/relative-time";
+import { formatDateTime } from "@/lib/format";
 import { agentCall, newCommandId } from "@/ipc/bridge";
 
 export function ProxiesSection() {
@@ -84,10 +85,10 @@ export function ProxiesSection() {
     if (ok === false) return <span className="text-danger">失败</span>;
     if (ms === null) return <span className="text-muted">—</span>;
     
-    let colorClass = "text-danger"; // fallback
+    let colorClass = "text-danger";
     if (ms < 200) colorClass = "text-ok";
     else if (ms < 500) colorClass = "text-warn";
-    else colorClass = "text-warn brightness-75"; // darker warn for higher latency
+    else colorClass = "text-danger";
     
     return <span className={cn("tabular", colorClass)}>{ms} ms</span>;
   };
@@ -98,7 +99,7 @@ export function ProxiesSection() {
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3">
-        <h2 className="text-lg font-medium text-primary">代理节点与订阅</h2>
+        <h2 className="text-lg font-semibold tracking-tight text-primary">代理节点与订阅</h2>
         <Badge variant="outline" className="font-normal border-subtle bg-sunken flex gap-1.5 items-center">
           <StatusDot status={mihomoState} label={mihomoLabel} />
           {proxies.status.running && (
@@ -141,7 +142,7 @@ export function ProxiesSection() {
                     {proxies.subscription.host}
                   </span>
                   <span className="text-xs text-muted">
-                    最后更新: {proxies.subscription.updatedAt ? formatRelative(proxies.subscription.updatedAt) : "—"}
+                    最后更新: <RelativeTime value={proxies.subscription.updatedAt} fallback="—" />
                   </span>
                 </div>
               ) : (
@@ -207,7 +208,7 @@ export function ProxiesSection() {
                       <td className="px-4 py-2 text-secondary tabular">
                         {node.localPort || "—"}
                       </td>
-                      <td className="px-4 py-2" title={node.latencyTestedAt ? `测于: ${formatRelative(node.latencyTestedAt)}\n${node.latencyMessage || ""}` : ""}>
+                      <td className="px-4 py-2" title={node.latencyTestedAt ? `测于: ${formatDateTime(node.latencyTestedAt, { seconds: true })}\n${node.latencyMessage || ""}` : ""}>
                         {formatLatency(node.latencyMs, node.latencyOk)}
                       </td>
                       <td className="px-4 py-2 text-right">

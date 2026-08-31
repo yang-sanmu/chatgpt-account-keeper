@@ -50,7 +50,7 @@ export function ExitProgressDialog() {
         </AlertDialogHeader>
 
         <div className="flex flex-col gap-2 py-2">
-          <div className="flex items-center gap-2 text-[13px]">
+          <div className="flex items-center gap-2 text-base">
             <span className="flex-1 text-primary">
               {progress?.message ?? stageLabel}
             </span>

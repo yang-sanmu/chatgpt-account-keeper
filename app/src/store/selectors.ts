@@ -4,9 +4,10 @@
 // 一个不小心返回新对象的 selector 就会让某个页面每次事件都重渲染，而这种退化在功能上
 // 看不出来。集中在一个文件里，至少能一眼看完所有订阅面。
 
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useKeeperStore } from "./keeperStore";
+import { displayEmail, shortId } from "@/lib/format";
 import {
   isFilterActive,
   selectVisibleAccounts,
@@ -68,7 +69,8 @@ export function useAccountActions() {
       checkSelectors: state.checkAccountSelectors,
       startLogin: state.startLogin,
       togglePage: state.toggleAccountPage,
-      openHistory: state.openHistoryFor,
+      /// 卡片上的「历史」按钮开抽屉，不跳页 —— 看一眼记录不该把用户从账号页赶走。
+      openHistory: state.openHistoryDrawer,
     }))
   );
 }
@@ -125,6 +127,53 @@ export function useActiveOperations(): Operation[] {
   );
 }
 
+/// 正在跑任务的账号 → 那个任务。
+///
+/// 账号卡片要在有任务在跑时醒目显示并说明在跑什么。数据来自 operations 里的非终态记录：
+/// 它们的 resourceId 就是账号 id。
+///
+/// 返回 Map 而不是让每张卡片自己 filter：28 张卡片各扫一遍 operations 是 28×N 次比较，
+/// 而这里算一次给所有卡片用。
+export function useRunningOperationsByAccount(): ReadonlyMap<string, Operation> {
+  const operations = useKeeperStore((state) => state.operations);
+
+  return useMemo(() => {
+    const running = new Map<string, Operation>();
+    for (const operation of operations) {
+      if (
+        operation.state !== "queued" &&
+        operation.state !== "running" &&
+        operation.state !== "waiting_user"
+      ) {
+        continue;
+      }
+      const accountId = operation.resourceId;
+      if (!accountId) continue;
+      // 同一账号可能有多条在途（例如刷新状态排在立即运行后面）。保留**最新**的那条：
+      // operations 是新的在前，所以先写入的就是最新的，后面的不覆盖。
+      if (!running.has(accountId)) running.set(accountId, operation);
+    }
+    return running;
+  }, [operations]);
+}
+
+/// 单个账号是否正在跑任务。卡片用它，订阅粒度到那一条。
+export function useAccountRunningOperation(accountId: string): Operation | undefined {
+  return useKeeperStore((state) => {
+    for (const operation of state.operations) {
+      if (
+        operation.resourceId === accountId &&
+        (operation.state === "queued" ||
+          operation.state === "running" ||
+          operation.state === "waiting_user")
+      ) {
+        return operation;
+      }
+    }
+    return undefined;
+  });
+}
+
 export function useNav() {
   return useKeeperStore(
     useShallow((state) => ({
@@ -153,6 +202,33 @@ export function useDesktopSettings() {
       settings: state.desktopSettings,
       update: state.updateDesktopSettings,
     }))
+  );
+}
+
+/// 按 id 取账号的显示标签。
+///
+/// 任务列表、Chrome 运行明细、历史侧栏都只拿到账号 id，而 id 对用户没有意义 —— 他认得的是
+/// 邮箱。这个 hook 返回一个查表函数，调用方按需查，避免每个列表各写一遍回退链。
+///
+/// 回退顺序：邮箱 → 备注 → 短 id。账号已被删除时返回短 id 并标记 known=false，让调用方
+/// 能显示「已删除的账号」而不是假装那个 id 是个正常账号。
+export function useAccountLabeler(): (id: string | null | undefined) => {
+  label: string;
+  known: boolean;
+} {
+  const records = useKeeperStore((state) => state.accounts);
+  const revealed = useKeeperStore((state) => state.emailsRevealed);
+
+  return useCallback(
+    (id) => {
+      if (!id) return { label: "—", known: false };
+      const account = records[id]?.effective;
+      if (!account) return { label: shortId(id), known: false };
+      if (account.email) return { label: displayEmail(account.email, revealed), known: true };
+      if (account.note.trim().length > 0) return { label: account.note, known: true };
+      return { label: shortId(id), known: true };
+    },
+    [records, revealed]
   );
 }
 

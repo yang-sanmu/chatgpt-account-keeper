@@ -45,6 +45,7 @@ function account(overrides: Partial<Account> = {}): Account {
     lastRunAt: null,
     lastRunOk: null,
     pageOpen: false,
+    running: false,
     ...overrides,
   };
 }
@@ -167,20 +168,20 @@ describe("规则 3：增量事件只动那一条记录", () => {
 
   it("一条状态事件后，其余记录保持同一引用", () => {
     const { records, ids } = seed(many);
-    const next = applyAccountStatus(records, "acc-7", { status: "waf" });
+    const next = applyAccountStatus(records, "acc-7", { status: "out" });
 
     const movedIds = ids.filter((id) => records[id] !== next[id]);
     expect(movedIds).toEqual(["acc-7"]);
-    expect(next["acc-7"]?.effective.status).toBe("waf");
+    expect(next["acc-7"]?.effective.status).toBe("out");
   });
 
   it("状态事件不改变草稿", () => {
     let { records } = seed(many);
     records = applyDraft(records, "acc-3", { note: "正在编辑" });
-    records = applyAccountStatus(records, "acc-3", { status: "needs_login" });
+    records = applyAccountStatus(records, "acc-3", { status: "reauth" });
 
     expect(records["acc-3"]?.effective.note).toBe("正在编辑");
-    expect(records["acc-3"]?.effective.status).toBe("needs_login");
+    expect(records["acc-3"]?.effective.status).toBe("reauth");
   });
 
   it("没有实际变化的状态事件返回原引用", () => {
@@ -196,12 +197,12 @@ describe("规则 3：增量事件只动那一条记录", () => {
 
     const { records: after, isNew } = applyAccountChanged(
       records,
-      account({ id: "acc-2", status: "needs_login", note: "服务端的备注" })
+      account({ id: "acc-2", status: "reauth", note: "服务端的备注" })
     );
 
     expect(isNew).toBe(false);
     expect(after["acc-2"]?.effective.note).toBe("编辑中");
-    expect(after["acc-2"]?.effective.status).toBe("needs_login");
+    expect(after["acc-2"]?.effective.status).toBe("reauth");
     expect(after["acc-9"]).toBe(before["acc-9"]);
   });
 
@@ -222,10 +223,10 @@ describe("规则 3：增量事件只动那一条记录", () => {
 describe("规则 3 的另一半：增量事件后重新应用筛选", () => {
   it("筛选「仅需登录」时，状态转 ok 的那张卡从可见列表消失", () => {
     const seeded = seed([
-      account({ id: "acc-1", status: "needs_login" }),
-      account({ id: "acc-2", status: "needs_login" }),
+      account({ id: "acc-1", status: "reauth" }),
+      account({ id: "acc-2", status: "reauth" }),
     ]);
-    const filter = { ...DEFAULT_ACCOUNT_FILTER, status: "needs_login" as const };
+    const filter = { ...DEFAULT_ACCOUNT_FILTER, status: "reauth" as const };
 
     expect(
       selectVisibleAccounts(seeded.records, seeded.ids, filter).map((r) => r.effective.id)

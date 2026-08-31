@@ -21,8 +21,8 @@ export function GroupsSection() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-medium text-primary">账号分组</h2>
-        <Button onClick={() => setDialogState({ mode: "create" })} variant="outline" size="sm">
+        <h2 className="text-lg font-semibold tracking-tight text-primary">账号分组</h2>
+        <Button onClick={() => setDialogState({ mode: "create" })} variant="default" size="sm">
           <Plus className="size-4 mr-2" />
           新建分组
         </Button>

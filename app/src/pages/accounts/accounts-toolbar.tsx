@@ -9,6 +9,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Eye, EyeOff, Plus, X } from "lucide-react";
 import { AccountStatusFilter } from "@/store/accountModel";
 import { SwitchRule } from "@/ipc/types";
@@ -62,8 +63,8 @@ export function AccountsToolbar({ onCreateClick }: AccountsToolbarProps) {
         <SelectContent>
           <SelectItem value="all">全部状态</SelectItem>
           <SelectItem value="ok">正常</SelectItem>
-          <SelectItem value="needs_login">需要登录</SelectItem>
-          <SelectItem value="waf">风控隔离</SelectItem>
+          <SelectItem value="reauth">需重新登录</SelectItem>
+          <SelectItem value="out">未登录</SelectItem>
           <SelectItem value="stale">待复核</SelectItem>
           <SelectItem value="node_missing">节点已失效</SelectItem>
           <SelectItem value="disabled">已停用</SelectItem>
@@ -93,22 +94,30 @@ export function AccountsToolbar({ onCreateClick }: AccountsToolbarProps) {
       )}
 
       <div className="ml-auto flex items-center gap-2">
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => setEmailsRevealed(!emailsRevealed)}
-          className="h-9"
-        >
-          {emailsRevealed ? (
-            <>
-              <EyeOff className="mr-1.5" /> 隐藏邮箱
-            </>
-          ) : (
-            <>
-              <Eye className="mr-1.5" /> 展示邮箱
-            </>
-          )}
-        </Button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setEmailsRevealed(!emailsRevealed)}
+              className="h-9"
+              aria-label={emailsRevealed ? "点击隐藏完整邮箱" : "点击展示完整邮箱"}
+            >
+              {emailsRevealed ? (
+                <>
+                  <Eye className="mr-1.5 size-4" /> 邮箱已显示
+                </>
+              ) : (
+                <>
+                  <EyeOff className="mr-1.5 size-4" /> 邮箱已隐藏
+                </>
+              )}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>
+            {emailsRevealed ? "点击隐藏完整邮箱" : "点击展示完整邮箱"}
+          </TooltipContent>
+        </Tooltip>
         <Button variant="default" size="sm" onClick={onCreateClick} className="h-9">
           <Plus className="mr-1.5" /> 新建账号
         </Button>

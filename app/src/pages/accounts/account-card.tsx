@@ -19,7 +19,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -36,13 +35,27 @@ import {
   ChevronDown,
   Loader2,
 } from "lucide-react";
-import { useAccountRecord, useAccountActions } from "@/store/selectors";
+import {
+  useAccountRecord,
+  useAccountActions,
+  useAccountRunningOperation,
+} from "@/store/selectors";
 import { useKeeperStore } from "@/store/keeperStore";
-import { displayEmail, formatRelative, formatDateTime, shortId } from "@/lib/format";
+import { RelativeTime } from "@/components/ui/relative-time";
+import { displayEmail, shortId } from "@/lib/format";
+import { describeOperation } from "@/lib/operation-labels";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import type { SwitchRule } from "@/ipc/types";
 import type { AccountDraft } from "@/store/accountModel";
-import { describeAccountStatus } from "./account-status";
+import { describeAccountStatus, statusNeedsAttention } from "./account-status";
+
+/// 卡片内容区的固定高度（未展开「详细配置」时）。
+///
+/// 容纳 4 项基础信息（分组与出口 32px、轮换进度 26px、下次运行/在途任务 48px、切换规则 32px）
+/// 加上底部折叠按钮(28px)、元素间距(4 * 8px = 32px)与下内边距(12px)。
+/// 定高确保网格中所有卡片高度严格一致，避免单行错误信息或字段差异导致网格参差不齐；
+/// 仅当用户主动展开「详细配置」时才切换为自适应高度撑开。
+const CARD_BODY_COLLAPSED_CLASS = "h-[210px]";
 
 interface AccountCardProps {
   id: string;
@@ -51,18 +64,39 @@ interface AccountCardProps {
 
 export const AccountCard = React.memo(({ id, onDelete }: AccountCardProps) => {
   const record = useAccountRecord(id);
+  const runningOp = useAccountRunningOperation(id);
   const actions = useAccountActions();
   const selected = useKeeperStore((s) => s.selectedAccountIds.has(id));
   const toggle = useKeeperStore((s) => s.toggleAccountSelected);
   const emailsRevealed = useKeeperStore((s) => s.emailsRevealed);
   const groups = useKeeperStore((s) => s.groups);
   const [expanded, setExpanded] = React.useState(false);
+  const [pendingAction, setPendingAction] = React.useState<string | null>(null);
 
   if (!record) return null;
 
   const acc = record.effective;
   const dirty = record.dirtyFields.size > 0;
   const inFlight = record.inFlight !== null;
+
+  const isWaitingUser = runningOp?.state === "waiting_user";
+  // acc.running 是 Agent 给的权威占用标记（契约的 accountResult.running）。
+  //
+  // 单靠 operations 会漏掉一种情况：前端刚连上，而调度早就在跑这个账号了 —— 那次运行的
+  // operation 记录不在前端手里，卡片会显示成空闲，用户点「立即运行」得到一个 RESOURCE_BUSY。
+  const isRunning = runningOp?.state === "running" || (acc.running && !isWaitingUser);
+  const isQueued = runningOp?.state === "queued";
+  const opMeta = runningOp ? describeOperation(runningOp.kind, Boolean(runningOp.resourceId)) : null;
+
+  const handleActionClick = async (actionKey: string, fn: () => Promise<void>) => {
+    if (pendingAction) return;
+    setPendingAction(actionKey);
+    try {
+      await fn();
+    } finally {
+      setPendingAction(null);
+    }
+  };
 
   const handleGroupChange = (val: string) => {
     const groupId = val === "none" ? null : val;
@@ -105,36 +139,61 @@ export const AccountCard = React.memo(({ id, onDelete }: AccountCardProps) => {
   });
 
   return (
-    <Card className={cn(
-      "flex flex-col transition-colors",
-      dirty && "border-accent ring-1 ring-accent"
-    )}>
-      <CardHeader className="pb-2">
-        <div className="flex items-center gap-3">
-          <Checkbox 
-            checked={selected} 
-            onCheckedChange={() => toggle(id)} 
+    <Card
+      className={cn(
+        "flex flex-col transition-colors",
+        dirty
+          ? "border-accent ring-1 ring-accent"
+          : isWaitingUser
+          ? "border-warn ring-1 ring-warn/60"
+          : isRunning
+          ? "border-accent/60 ring-1 ring-accent/30"
+          : isQueued
+          ? "border-line"
+          : ""
+      )}
+    >
+      <CardHeader className="shrink-0 p-3 pb-2">
+        <div className="flex items-center gap-2.5">
+          <Checkbox
+            checked={selected}
+            onCheckedChange={() => toggle(id)}
             aria-label="选择账号"
           />
-          <div className="flex-1 min-w-0">
+          <div className="min-w-0 flex-1">
             <CardTitle className="truncate text-base" title={acc.email || "未登录"}>
               {displayEmail(acc.email, emailsRevealed)}
             </CardTitle>
           </div>
-          {acc.gptName && <Badge variant="outline">{acc.gptName}</Badge>}
+          {acc.gptName && (
+            <Badge variant="outline" className="max-w-24 shrink-0 truncate text-2xs">
+              {acc.gptName}
+            </Badge>
+          )}
         </div>
-        <div className="flex items-center justify-between mt-2">
-          <StatusDot status={status.dot} label={status.label} />
-          <span 
-            className="text-xs text-muted tabular" 
-            title={formatDateTime(acc.statusCheckedAt)}
-          >
-            {formatRelative(acc.statusCheckedAt)}
-          </span>
+        <div className="mt-1.5 flex items-center justify-between gap-2">
+          {/* 状态文案也要能截断：status 在契约里是开放字符串，Agent 新增一个较长的状态
+              就会把卡头顶成两行，定高就白定了。 */}
+          <StatusDot
+            status={status.dot}
+            label={status.label}
+            className="min-w-0 [&>span]:truncate"
+          />
+          <RelativeTime
+            value={acc.statusCheckedAt}
+            className="shrink-0 text-xs text-muted"
+          />
         </div>
       </CardHeader>
 
-      <CardContent className="flex flex-col gap-3 pb-3">
+      {/* overflow-hidden 是定高的一部分：没有它，任何算漏的内容会直接溢出卡片边框，
+          看起来比参差不齐更糟。 */}
+      <CardContent
+        className={cn(
+          "flex flex-col gap-2 overflow-hidden p-3 pt-0 pb-3",
+          expanded ? "h-auto min-h-[210px]" : CARD_BODY_COLLAPSED_CLASS
+        )}
+      >
         {/* 分组与出口节点 */}
         <div className="flex items-center gap-2">
           <div className="flex-1">
@@ -179,18 +238,75 @@ export const AccountCard = React.memo(({ id, onDelete }: AccountCardProps) => {
           />
         </div>
 
-        {/* 下次运行 */}
-        <div className="flex flex-col gap-1 rounded-sm bg-sunken p-2">
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-muted">下次运行</span>
-            <span className="text-xs text-primary tabular" title={formatDateTime(acc.nextRunAt)}>
-              {formatRelative(acc.nextRunAt)}
-            </span>
-          </div>
-          {acc.lastRunOk === false && acc.lastRunReason && (
-            <div className="text-xs text-danger mt-1 bg-danger-soft p-1 rounded-sm">
-              失败: {acc.lastRunReason}
+        {/* 下次运行 / 运行中任务状态块（定高保形） */}
+        <div
+          className={cn(
+            "flex flex-col justify-center rounded-sm py-1.5 px-2 min-h-[48px] transition-colors",
+            isWaitingUser
+              ? "bg-warn-soft border border-warn/30"
+              : isRunning
+              ? "bg-accent-soft border border-accent/20"
+              : "bg-sunken"
+          )}
+        >
+          {runningOp || isRunning ? (
+            <div className="space-y-1">
+              <div className="flex items-center justify-between gap-1.5">
+                <div className="flex items-center gap-1.5 min-w-0">
+                  {isWaitingUser ? (
+                    <span className="size-1.5 rounded-full bg-warn animate-pulse shrink-0" />
+                  ) : isRunning ? (
+                    <span className="size-1.5 rounded-full bg-accent animate-pulse shrink-0" />
+                  ) : (
+                    <span className="size-1.5 rounded-full bg-muted shrink-0" />
+                  )}
+                  <span
+                    className={cn(
+                      "text-xs font-medium truncate",
+                      isWaitingUser ? "text-warn" : isRunning ? "text-accent" : "text-secondary"
+                    )}
+                  >
+                    {isWaitingUser
+                      ? `需人工介入 · ${opMeta?.action ?? "登录"}`
+                      : isQueued
+                      ? `排队 · ${opMeta?.action ?? "任务"}`
+                      : (opMeta?.action ?? "正在运行")}
+                  </span>
+                </div>
+                {typeof runningOp?.progress === "number" && (
+                  <span className="text-2xs font-mono tabular text-secondary shrink-0">
+                    {Math.round(runningOp.progress * 100)}%
+                  </span>
+                )}
+              </div>
+              <div
+                className="truncate text-2xs text-secondary"
+                title={runningOp?.stage || runningOp?.message || "进行中"}
+              >
+                {runningOp?.stage
+                  ? `阶段: ${runningOp.stage}`
+                  : (runningOp?.message ?? "调度已占用此账号")}
+              </div>
             </div>
+          ) : (
+            <>
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-muted">下次运行</span>
+                <RelativeTime
+                  value={acc.nextRunAt}
+                  className="text-xs text-primary"
+                />
+              </div>
+              {acc.lastRunOk === false && acc.lastRunReason ? (
+                <div
+                  tabIndex={0}
+                  title={`失败: ${acc.lastRunReason}`}
+                  className="text-2xs text-danger mt-1 bg-danger-soft px-1.5 py-0.5 rounded-sm truncate cursor-help focus-visible:ring-1"
+                >
+                  失败: {acc.lastRunReason}
+                </div>
+              ) : null}
+            </>
           )}
         </div>
 
@@ -214,14 +330,14 @@ export const AccountCard = React.memo(({ id, onDelete }: AccountCardProps) => {
         </div>
 
         {/* 详细配置 折叠区 */}
-        <Collapsible open={expanded} onOpenChange={setExpanded}>
+        <Collapsible open={expanded} onOpenChange={setExpanded} className="mt-auto">
           <CollapsibleTrigger asChild>
-            <Button variant="ghost" size="sm" className="w-full h-7 text-xs text-muted mt-1 gap-1">
+            <Button variant="ghost" size="sm" className="w-full h-7 text-xs text-muted gap-1">
               {expanded ? "收起详细配置" : "展开详细配置"}
               <ChevronDown className={cn("size-3 transition-transform", expanded && "rotate-180")} />
             </Button>
           </CollapsibleTrigger>
-          <CollapsibleContent className="space-y-3 pt-2">
+          <CollapsibleContent className="space-y-2.5 pt-2">
             <div className="space-y-1.5">
               <Label htmlFor={`note-${id}`} className="text-xs text-muted">
                 备注
@@ -284,7 +400,7 @@ export const AccountCard = React.memo(({ id, onDelete }: AccountCardProps) => {
 
       <div className="mt-auto">
         {dirty ? (
-          <div className="flex items-center justify-end gap-2 p-3 bg-accent-soft border-t border-accent/20 rounded-b-panel">
+          <div className="flex items-center justify-end gap-2 p-2.5 bg-accent-soft border-t border-accent/20 rounded-b-panel">
             <span className="text-xs text-accent mr-auto">未保存的更改</span>
             <Button variant="ghost" size="sm" onClick={handleDiscard} disabled={inFlight} className="h-7 text-xs">
               放弃
@@ -297,81 +413,122 @@ export const AccountCard = React.memo(({ id, onDelete }: AccountCardProps) => {
         ) : (
           <CardFooter className="p-2 border-t border-subtle bg-sunken/50 justify-between">
             <div className="flex gap-0.5">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button variant="ghost" size="icon-sm" onClick={() => actions.startLogin(id, false)} aria-label="登录">
-                    <LogIn className="size-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>登录</TooltipContent>
-              </Tooltip>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                disabled={pendingAction !== null}
+                onClick={() => handleActionClick("login", () => actions.startLogin(id, false))}
+                aria-label="登录"
+                title="登录"
+              >
+                {pendingAction === "login" ? (
+                  <Loader2 className="size-4 animate-spin text-accent" />
+                ) : (
+                  <LogIn className="size-4" />
+                )}
+              </Button>
 
-              {(acc.status === "needs_login" || acc.status === "waf" || acc.lastRunOk === false) && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button variant="ghost" size="icon-sm" onClick={() => actions.startLogin(id, true)} aria-label="强制重登">
-                      <KeyRound className="size-4 text-warn" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>强制重登</TooltipContent>
-                </Tooltip>
+              {(statusNeedsAttention(acc.status) || acc.lastRunOk === false) && (
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  disabled={pendingAction !== null}
+                  onClick={() => handleActionClick("forceLogin", () => actions.startLogin(id, true))}
+                  aria-label="强制重登"
+                  title="强制重登"
+                >
+                  {pendingAction === "forceLogin" ? (
+                    <Loader2 className="size-4 animate-spin text-warn" />
+                  ) : (
+                    <KeyRound className="size-4 text-warn" />
+                  )}
+                </Button>
               )}
 
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button variant="ghost" size="icon-sm" onClick={() => actions.togglePage(id, acc.pageOpen)} aria-label={acc.pageOpen ? "关闭网页" : "打开网页"}>
-                    {acc.pageOpen ? <MonitorX className="size-4 text-info" /> : <AppWindow className="size-4" />}
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>{acc.pageOpen ? "关闭网页" : "打开网页"}</TooltipContent>
-              </Tooltip>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                disabled={pendingAction !== null}
+                onClick={() => handleActionClick("togglePage", () => actions.togglePage(id, acc.pageOpen))}
+                aria-label={acc.pageOpen ? "关闭网页" : "打开网页"}
+                title={acc.pageOpen ? "关闭网页" : "打开网页"}
+              >
+                {pendingAction === "togglePage" ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : acc.pageOpen ? (
+                  <MonitorX className="size-4 text-info" />
+                ) : (
+                  <AppWindow className="size-4" />
+                )}
+              </Button>
               
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button variant="ghost" size="icon-sm" onClick={() => actions.runNow(id)} aria-label="立即运行">
-                    <Play className="size-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>立即运行</TooltipContent>
-              </Tooltip>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                disabled={pendingAction !== null}
+                onClick={() => handleActionClick("runNow", () => actions.runNow(id))}
+                aria-label="立即运行"
+                title="立即运行"
+              >
+                {pendingAction === "runNow" ? (
+                  <Loader2 className="size-4 animate-spin text-accent" />
+                ) : (
+                  <Play className="size-4" />
+                )}
+              </Button>
               
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button variant="ghost" size="icon-sm" onClick={() => actions.refreshStatus(id)} aria-label="刷新状态">
-                    <RefreshCw className="size-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>刷新状态</TooltipContent>
-              </Tooltip>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                disabled={pendingAction !== null}
+                onClick={() => handleActionClick("refreshStatus", () => actions.refreshStatus(id))}
+                aria-label="刷新状态"
+                title="刷新状态"
+              >
+                {pendingAction === "refreshStatus" ? (
+                  <Loader2 className="size-4 animate-spin text-accent" />
+                ) : (
+                  <RefreshCw className="size-4" />
+                )}
+              </Button>
               
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button variant="ghost" size="icon-sm" onClick={() => actions.checkSelectors(id)} aria-label="检查选择器">
-                    <Scan className="size-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>检查选择器</TooltipContent>
-              </Tooltip>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                disabled={pendingAction !== null}
+                onClick={() => handleActionClick("checkSelectors", () => actions.checkSelectors(id))}
+                aria-label="检查选择器"
+                title="检查选择器"
+              >
+                {pendingAction === "checkSelectors" ? (
+                  <Loader2 className="size-4 animate-spin text-accent" />
+                ) : (
+                  <Scan className="size-4" />
+                )}
+              </Button>
             </div>
             
             <div className="flex gap-0.5">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button variant="ghost" size="icon-sm" onClick={() => actions.openHistory(id)} aria-label="历史记录">
-                    <History className="size-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>历史记录</TooltipContent>
-              </Tooltip>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={() => actions.openHistory(id)}
+                aria-label="历史记录"
+                title="历史记录"
+              >
+                <History className="size-4" />
+              </Button>
               
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button variant="ghost" size="icon-sm" onClick={() => onDelete(id, acc.email || shortId(id))} className="text-danger hover:text-danger-content hover:bg-danger" aria-label="删除">
-                    <Trash2 className="size-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>删除</TooltipContent>
-              </Tooltip>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={() => onDelete(id, acc.email || shortId(id))}
+                className="text-danger hover:text-danger-content hover:bg-danger"
+                aria-label="删除"
+                title="删除"
+              >
+                <Trash2 className="size-4" />
+              </Button>
             </div>
           </CardFooter>
         )}

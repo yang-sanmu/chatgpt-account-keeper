@@ -10,6 +10,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Card, CardHeader, CardTitle, CardContent, CardFooter } from "@/components/ui/card";
 import { formatBytes } from "@/lib/format";
 import { notify } from "@/lib/notify";
+import { cn } from "@/lib/utils";
 import {
   HardDrive,
   Eraser,
@@ -45,7 +46,7 @@ export function ProfilesPage() {
 
   if (failed) {
     return (
-      <Page className="p-6">
+      <Page>
         <PageHeader title="Profile" description="管理浏览器用户数据与缓存" />
         <PageBody className="pb-20">
           <EmptyState
@@ -148,104 +149,94 @@ export function ProfilesPage() {
   const list = scan ? (showOrphansOnly ? scan.orphans : [...scan.profiles, ...scan.orphans]) : [];
 
   return (
-    <Page className="p-6">
+    <Page>
       <PageHeader
         title="Profile"
         description="管理浏览器用户数据，清理缓存或删除不再关联的孤儿数据"
-      >
-        <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={() => void request()} disabled={scanning}>
-            <RefreshCw className={`mr-2 size-4 ${scanning ? "animate-spin" : ""}`} />
+        actions={
+          <Button variant="outline" size="sm" onClick={() => void request()} disabled={scanning} className="h-8 text-xs gap-1.5">
+            <RefreshCw className={cn("size-3.5", scanning && "animate-spin")} />
             扫描
           </Button>
-        </div>
-      </PageHeader>
+        }
+      />
 
       <PageBody className="pb-20 space-y-6">
-        {/* Totals Header */}
-        <div className="grid grid-cols-4 gap-4">
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted">总数</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{scan?.totals.profiles || 0}</div>
-            </CardContent>
+        {/* Pure Metrics Row */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <Card className="p-4">
+            <div className="text-xs font-medium text-muted mb-1">Profile 总数</div>
+            <div className="metric text-primary">{scan?.totals.profiles ?? 0}</div>
           </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted">占用空间</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold tabular">
-                {scan ? formatBytes(scan.totals.bytes) : "—"}
-              </div>
-            </CardContent>
+          <Card className="p-4">
+            <div className="text-xs font-medium text-muted mb-1">占用空间</div>
+            <div className="metric tabular text-primary">
+              {scan ? formatBytes(scan.totals.bytes) : "—"}
+            </div>
           </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted">可清理缓存</CardTitle>
-            </CardHeader>
-            <CardContent className="flex items-center justify-between">
-              <div className="text-2xl font-bold tabular text-info">
-                {scan ? formatBytes(scan.totals.cacheBytes) : "—"}
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => handleBulkAction("clean")}
-                disabled={runningBulk || !scan || scan.totals.cacheBytes === 0}
-              >
-                清理全部缓存
-              </Button>
-            </CardContent>
+          <Card className="p-4">
+            <div className="text-xs font-medium text-muted mb-1">可清理缓存</div>
+            <div className="metric tabular text-info">
+              {scan ? formatBytes(scan.totals.cacheBytes) : "—"}
+            </div>
           </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted">孤儿数据</CardTitle>
-            </CardHeader>
-            <CardContent className="flex items-center justify-between">
-              <div className="text-2xl font-bold text-warn">
-                {scan?.totals.orphans || 0}
-              </div>
-              <div className="flex gap-1">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  title="归档全部孤儿"
-                  onClick={() => setActionDialog({ kind: "archive-all" })}
-                  disabled={runningBulk || !scan || scan.totals.orphans === 0}
-                >
-                  <ArchiveRestore className="size-4" />
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="text-danger hover:text-danger-content hover:bg-danger"
-                  title="彻底删除全部孤儿"
-                  onClick={() => setActionDialog({ kind: "purge-all" })}
-                  disabled={runningBulk || !scan || scan.totals.orphans === 0}
-                >
-                  <Trash2 className="size-4" />
-                </Button>
-              </div>
-            </CardContent>
+          <Card className="p-4">
+            <div className="text-xs font-medium text-muted mb-1">孤儿 Profile</div>
+            <div className="metric tabular text-warn">
+              {scan?.totals.orphans ?? 0}
+            </div>
           </Card>
         </div>
 
-        <div className="flex items-center justify-between">
+        {/* Action Toolbar */}
+        <div className="flex flex-wrap items-center justify-between gap-4 p-3 rounded-panel border border-subtle bg-panel">
           <div className="flex items-center gap-2">
             <Switch
               id="show-orphans"
               checked={showOrphansOnly}
               onCheckedChange={setShowOrphansOnly}
             />
-            <Label htmlFor="show-orphans">仅显示孤儿 Profile</Label>
+            <Label htmlFor="show-orphans" className="text-xs text-secondary cursor-pointer">
+              仅显示孤儿 Profile
+            </Label>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => handleBulkAction("clean")}
+              disabled={runningBulk || !scan || scan.totals.cacheBytes === 0}
+              className="h-8 text-xs gap-1.5"
+            >
+              {runningBulk ? <Loader2 className="size-3.5 animate-spin" /> : <Eraser className="size-3.5" />}
+              清理全部缓存
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setActionDialog({ kind: "archive-all" })}
+              disabled={runningBulk || !scan || scan.totals.orphans === 0}
+              className="h-8 text-xs gap-1.5"
+            >
+              <ArchiveRestore className="size-3.5" />
+              归档全部孤儿
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 text-xs gap-1.5 text-danger hover:text-danger-content hover:bg-danger"
+              onClick={() => setActionDialog({ kind: "purge-all" })}
+              disabled={runningBulk || !scan || scan.totals.orphans === 0}
+            >
+              <Trash2 className="size-3.5" />
+              彻底删除全部孤儿
+            </Button>
           </div>
         </div>
 
         {!scan && !scanning ? (
-          <EmptyState icon={<HardDrive />} title="就绪" description="点击扫描加载数据" />
+          <EmptyState icon={<HardDrive />} title="就绪" description="点击右上角扫描加载数据" />
         ) : scanning && !scan ? (
           <div className="flex items-center justify-center py-20 text-muted">
             <Loader2 className="size-8 animate-spin" />
@@ -265,11 +256,11 @@ export function ProfilesPage() {
                     <CardTitle className="text-base truncate flex-1" title={p.name}>
                       {p.name}
                     </CardTitle>
-                    {!p.linked && <Badge variant="outline" className="text-warn border-warn">孤儿</Badge>}
-                    {p.busy && <Badge variant="neutral">使用中</Badge>}
+                    {!p.linked && <Badge variant="outline" className="text-warn border-warn text-2xs">孤儿</Badge>}
+                    {p.busy && <Badge variant="neutral" className="text-2xs">使用中</Badge>}
                   </div>
                 </CardHeader>
-                <CardContent className="flex flex-col gap-2 pb-3 text-sm">
+                <CardContent className="flex flex-col gap-2 pb-3 text-xs">
                   {p.linked ? (
                     <div className="text-secondary truncate" title={p.accountLabels.join(", ")}>
                       关联: {p.accountLabels.join(", ")}
@@ -285,19 +276,19 @@ export function ProfilesPage() {
                 <CardFooter className="p-2 border-t border-subtle bg-sunken/50 justify-end gap-1">
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      {/* We must wrap in span if button is disabled to make Tooltip trigger work on hover */}
                       <span className="inline-block">
                         <Button
                           variant="ghost"
                           size="icon-sm"
                           onClick={() => setActionDialog({ kind: "clean", profile: p })}
                           disabled={p.busy || runningBulk}
+                          aria-label="清理缓存"
                         >
                           <Eraser className="size-4" />
                         </Button>
                       </span>
                     </TooltipTrigger>
-                    <TooltipContent>{p.busy ? "使用中无法操作" : "清理缓存"}</TooltipContent>
+                    <TooltipContent>清理缓存</TooltipContent>
                   </Tooltip>
                   
                   {!p.linked && (
@@ -310,12 +301,13 @@ export function ProfilesPage() {
                               size="icon-sm"
                               onClick={() => setActionDialog({ kind: "archive", profile: p })}
                               disabled={p.busy || runningBulk}
+                              aria-label="归档"
                             >
                               <ArchiveRestore className="size-4" />
                             </Button>
                           </span>
                         </TooltipTrigger>
-                        <TooltipContent>{p.busy ? "使用中无法操作" : "归档"}</TooltipContent>
+                        <TooltipContent>归档</TooltipContent>
                       </Tooltip>
                       <Tooltip>
                         <TooltipTrigger asChild>
@@ -326,12 +318,13 @@ export function ProfilesPage() {
                               className="text-danger hover:text-danger-content hover:bg-danger"
                               onClick={() => setActionDialog({ kind: "purge", profile: p })}
                               disabled={p.busy || runningBulk}
+                              aria-label="彻底删除"
                             >
                               <Trash2 className="size-4" />
                             </Button>
                           </span>
                         </TooltipTrigger>
-                        <TooltipContent>{p.busy ? "使用中无法操作" : "彻底删除"}</TooltipContent>
+                        <TooltipContent>彻底删除</TooltipContent>
                       </Tooltip>
                     </>
                   )}

@@ -55,7 +55,7 @@ export function LoginProgressDialog() {
         </DialogHeader>
 
         <div className="flex flex-col gap-4 py-2">
-          <div className="flex items-center gap-2 text-[13px] text-primary">
+          <div className="flex items-center gap-2 text-base text-primary">
             {!terminal && !waitingUser && (
               <Loader2 className="size-4 shrink-0 animate-spin text-accent" />
             )}
@@ -70,7 +70,7 @@ export function LoginProgressDialog() {
           {/* waiting_user 必须显式呈现：这一步要用户去一个**另外的** Chrome 窗口里操作，
               只说「已提交」的话用户会盯着这个弹窗等一个永远不会自己走完的进度。 */}
           {waitingUser && (
-            <div className="flex items-start gap-2.5 rounded-panel border border-warn-soft bg-warn-soft p-3 text-[13px] text-warn">
+            <div className="flex items-start gap-2.5 rounded-panel border border-warn-soft bg-warn-soft p-3 text-base text-warn">
               <ExternalLink className="mt-0.5 size-4 shrink-0" />
               <div className="flex flex-col gap-1">
                 <span className="font-medium">需要你在 Chrome 窗口里操作</span>
@@ -86,9 +86,9 @@ export function LoginProgressDialog() {
 
           {/* 失败时把稳定错误码显示出来。它是用户报障时唯一有用的信息。 */}
           {failed && operation?.error && (
-            <div className="flex flex-col gap-1.5 rounded-panel border border-danger-soft bg-danger-soft p-3 text-[13px]">
+            <div className="flex flex-col gap-1.5 rounded-panel border border-danger-soft bg-danger-soft p-3 text-base">
               <span className="text-primary">{operation.error.message}</span>
-              <code className="w-fit rounded-chip border border-line bg-sunken px-1.5 py-0.5 font-mono text-[11px] text-secondary">
+              <code className="w-fit rounded-chip border border-line bg-sunken px-1.5 py-0.5 font-mono text-xs text-secondary">
                 {operation.error.code}
               </code>
             </div>

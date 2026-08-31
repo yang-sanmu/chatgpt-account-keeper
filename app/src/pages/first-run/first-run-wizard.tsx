@@ -160,8 +160,8 @@ export function FirstRunWizard() {
         {step === "menu" && (
           <div className="space-y-6">
             <div className="text-center space-y-2 mb-8">
-              <h1 className="text-3xl font-semibold tracking-tight">欢迎使用</h1>
-              <p className="text-secondary text-lg">请选择数据初始化方式</p>
+              <h1 className="text-xl font-semibold tracking-tight">欢迎使用</h1>
+              <p className="text-secondary text-base">请选择数据初始化方式</p>
             </div>
             
             <Card className="hover:border-accent cursor-pointer transition-colors" onClick={handleCreateNew}>
@@ -222,7 +222,7 @@ export function FirstRunWizard() {
                     <span>该目录似乎不是有效的数据目录</span>
                   </div>
                   <div className="text-sm">
-                    <span className="font-mono rounded-chip border border-line bg-sunken px-1.5 py-0.5 text-[11px] text-secondary select-all">
+                    <span className="font-mono rounded-chip border border-line bg-sunken px-1.5 py-0.5 text-xs text-secondary select-all">
                       {inspection.error?.code}
                     </span>
                     <span className="ml-2">{inspection.error?.message}</span>
@@ -316,7 +316,7 @@ export function FirstRunWizard() {
                       <span>迁移失败</span>
                     </div>
                     <div className="text-sm">
-                      <span className="select-all rounded-chip border border-line bg-sunken px-1.5 py-0.5 font-mono text-[11px] text-secondary">
+                      <span className="select-all rounded-chip border border-line bg-sunken px-1.5 py-0.5 font-mono text-xs text-secondary">
                         {migrationState.error?.code ?? "MIGRATION_FAILED"}
                       </span>
                       <span className="ml-2">

@@ -6,6 +6,38 @@
 //
 // 事件处理逻辑集中在这里，不散到页面里：18 种 agent 事件里有一半会被多个页面同时关心
 // （账号状态既影响卡片也影响总览计数），谁先收到谁更新会让状态出现分叉。
+//
+// ---------------------------------------------------------------------------
+// 各份数据靠什么保持新鲜
+// ---------------------------------------------------------------------------
+//
+// 页面切换是**卸载 + 重新挂载**（App.tsx 用三元链渲染，不是 CSS 隐藏），所以组件内计算的
+// 派生显示（相对时间等）进页面自然就是最新的。下面这张表只关于 store 里的状态 —— 它跨页
+// 存活，不随切页刷新。
+//
+// A. 事件完全覆盖，**不要**再加进页拉取（加了就是每次切页一次无谓 IPC）：
+//    accounts       account.changed / accountStatus.changed / openPage.changed
+//                   / scheduler.accountChanged
+//    operations     operation.changed
+//    proxies        proxyState.changed / proxyNode.tested
+//    groups         group.changed
+//    conversations  conversation.changed
+//    scheduler      scheduler.changed
+//    agentSettings  settings.changed
+//
+// B. 事件有缺口，需要进页面时拉一次。缺口各不相同，不能互相照抄：
+//    queue          queue.changed 只在**变化时**推，前端刚连上时没有初值
+//                   → 总览 mount 时 refreshQueue()
+//    browserRuns    同上，且 browserRun.changed 只说「变了」不带快照
+//                   → 总览 mount 时 refreshBrowserRuns()
+//    historyAccounts  只有 bootstrap 那一份；history.appended 现在会触发重取，但用户可能
+//                   在别的机器/进程跑过
+//                   → 历史页 mount 时 refreshHistoryAccounts() + 表头手动刷新
+//    profileScan    没有对应事件，扫描本身是个操作，必须主动发起
+//                   → Profile 页首次进入自动扫描
+//
+// C. 断线重连期间丢掉的事件由 Rust 侧补：seq 出现缺口时会重发 keeper://bootstrap。
+//    前端不需要自己检测缺口。
 
 import { create } from "zustand";
 import {
@@ -176,8 +208,13 @@ interface KeeperState {
   updateDialog: UpdateDialogState;
   closeDialogOpen: boolean;
   exitProgress: ExitProgress | null;
-  /// 从账号卡片跳到历史页时带过去的账号 id。
+  /// 历史页当前选中的账号。从账号卡片跳过去时带上。
   historyFocusAccountId: string | null;
+  /// 账号卡片上「历史」按钮打开的抽屉。null 表示关闭。
+  ///
+  /// 与 historyFocusAccountId 分开：抽屉是在账号页原地看一眼，不改变当前页面；跳转到历史页
+  /// 才用那个。合成一个字段会让开抽屉这个动作把历史页的选中项也换掉。
+  historyDrawerAccountId: string | null;
 }
 
 interface KeeperActions {
@@ -187,6 +224,8 @@ interface KeeperActions {
   setNav: (nav: NavKey) => void;
   toggleSidebar: () => void;
   openHistoryFor: (accountId: string) => void;
+  openHistoryDrawer: (accountId: string) => void;
+  closeHistoryDrawer: () => void;
 
   setAccountFilter: (patch: Partial<AccountFilter>) => void;
   resetAccountFilter: () => void;
@@ -220,6 +259,7 @@ interface KeeperActions {
   requestProfileScan: () => Promise<void>;
   refreshBrowserRuns: () => Promise<void>;
   refreshQueue: () => Promise<void>;
+  refreshHistoryAccounts: () => Promise<void>;
 
   updateDesktopSettings: (patch: Partial<DesktopSettings>) => Promise<void>;
   updateAgentSettings: (patch: Partial<AgentSettings>) => Promise<void>;
@@ -276,6 +316,7 @@ const INITIAL_STATE: KeeperState = {
   closeDialogOpen: false,
   exitProgress: null,
   historyFocusAccountId: null,
+  historyDrawerAccountId: null,
 };
 
 /// 等待某个 operation 走到终态的挂起 promise。
@@ -334,7 +375,8 @@ function toStatusPatch(payload: unknown): AccountStatusPatch {
   if (status !== undefined && status.length > 0) {
     patch.status = status;
   } else if (typeof raw.loggedIn === "boolean") {
-    patch.status = raw.loggedIn ? "ok" : "needs_login";
+    // 同 normalizeAccount：未登录对应 out，不是界面自造的 needs_login。
+    patch.status = raw.loggedIn ? "ok" : "out";
   }
 
   const stale = optionalBoolean(raw.stale);
@@ -355,6 +397,9 @@ function toStatusPatch(payload: unknown): AccountStatusPatch {
 
   const pageOpen = optionalBoolean(raw.pageOpen) ?? optionalBoolean(raw.open);
   if (pageOpen !== undefined) patch.pageOpen = pageOpen;
+
+  const running = optionalBoolean(raw.running);
+  if (running !== undefined) patch.running = running;
 
   if (raw.rotationTopic !== undefined) {
     patch.rotationTopic = optionalString(raw.rotationTopic) ?? null;
@@ -703,10 +748,22 @@ export const useKeeperStore = create<KeeperStore>()((set, get) => {
         break;
       }
 
+      case "history.appended": {
+        // 跑完一轮对话就要让历史页的账号摘要跟上。
+        //
+        // 这个事件原来被直接 break 掉，于是 historyAccounts 只有 bootstrap 时那一份快照：
+        // 左栏的「上次成功/失败」和时间会一直显示启动那一刻的状态，一个昨天失败、今天已经
+        // 连续成功的账号在界面上永远是红的。
+        //
+        // 只重取摘要列表（很小），不动条目本身 —— 条目由 useAccountHistory 按当前选中账号
+        // 自己拉，塞进 store 会变成一份需要同步的第二副本。
+        void get().refreshHistoryAccounts();
+        break;
+      }
+
       // profile.changed 刻意不处理：Profile 的刷新以 operation.changed 为唯一权威来源，
       // 两个入口都触发 profiles.scan 会让一次清理引发两次全盘扫描。
       case "profile.changed":
-      case "history.appended":
       case "agent.readyForUpdate":
         break;
     }
@@ -795,6 +852,8 @@ export const useKeeperStore = create<KeeperStore>()((set, get) => {
     setNav: (nav) => set({ nav }),
     toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
     openHistoryFor: (accountId) => set({ nav: "history", historyFocusAccountId: accountId }),
+    openHistoryDrawer: (accountId) => set({ historyDrawerAccountId: accountId }),
+    closeHistoryDrawer: () => set({ historyDrawerAccountId: null }),
 
     // ------------------------------------------------------------ 账号筛选
     setAccountFilter: (patch) =>
@@ -1055,6 +1114,14 @@ export const useKeeperStore = create<KeeperStore>()((set, get) => {
         set({ queue: await agentCall("queue.getSnapshot", {}) });
       } catch {
         // 同上：队列快照每几秒刷一次，一次失败不值得一个提示。
+      }
+    },
+
+    refreshHistoryAccounts: async () => {
+      try {
+        set({ historyAccounts: await agentCall("history.listAccounts", {}) });
+      } catch {
+        // 摘要取不到时保留上一份，不打断用户。历史页有手动刷新按钮可以重试。
       }
     },
 

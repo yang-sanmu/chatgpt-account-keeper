@@ -138,15 +138,15 @@ describe("全量快照与增量事件的闭环", () => {
     tauri.emitBootstrap(
       makeBootstrap({
         accounts: [
-          makeAccount({ id: "acc-1", status: "needs_login" }),
-          makeAccount({ id: "acc-2", status: "needs_login" }),
-          makeAccount({ id: "acc-3", status: "needs_login" }),
+          makeAccount({ id: "acc-1", status: "reauth" }),
+          makeAccount({ id: "acc-2", status: "reauth" }),
+          makeAccount({ id: "acc-3", status: "reauth" }),
         ],
       })
     );
 
     store().selectAccounts(["acc-1", "acc-2", "acc-3"]);
-    store().setAccountFilter({ status: "needs_login" });
+    store().setAccountFilter({ status: "reauth" });
 
     tauri.emitAgentEvent("accountStatus.changed", { id: "acc-1", status: "ok" });
 

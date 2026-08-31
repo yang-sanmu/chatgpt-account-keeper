@@ -184,6 +184,7 @@ export function makeAccount(overrides: Partial<Account> = {}): Account {
     lastRunAt: null,
     lastRunOk: null,
     pageOpen: false,
+    running: false,
     ...overrides,
   };
 }

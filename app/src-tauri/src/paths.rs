@@ -352,7 +352,9 @@ mod tests {
 
     fn lock_environment() -> std::sync::MutexGuard<'static, ()> {
         // 中毒只说明另一个用例 panic 过；这把锁不保护任何不变量，继续用就行。
-        ENVIRONMENT_LOCK.lock().unwrap_or_else(|error| error.into_inner())
+        ENVIRONMENT_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
     }
 
     #[test]

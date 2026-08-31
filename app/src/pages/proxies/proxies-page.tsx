@@ -4,7 +4,7 @@ import { ProxiesSection } from "./proxies-section";
 
 export function ProxiesPage() {
   return (
-    <Page className="p-6">
+    <Page>
       <PageHeader
         title="分组与代理"
         description="管理账号分组、代理节点池以及订阅状态"

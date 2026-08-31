@@ -70,6 +70,12 @@ export interface Account {
   pageOpen: boolean;
   profileDir?: string;
   gptName?: string | null;
+  /// Agent 认为这个账号此刻正在被占用（见契约的 accountResult.running）。
+  ///
+  /// 这是比「翻 operations 找非终态记录」更权威的信号：调度自己拉起的运行不一定有对应的
+  /// operation 记录留在前端手里（例如前端刚连上，之前的调度已经在跑）。两个信号一起用：
+  /// 这个决定「要不要标成运行中」，operations 决定「显示在跑什么」。
+  running: boolean;
 }
 
 export interface AccountPatch {

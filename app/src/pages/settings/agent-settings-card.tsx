@@ -94,9 +94,9 @@ export function AgentSettingsCard() {
               onChange={(e) => setNumber("intervalMinutes", e.target.value)}
             />
             {errors.intervalMinutes ? (
-              <p className="text-[13px] text-danger">{errors.intervalMinutes}</p>
+              <p className="text-xs text-danger">{errors.intervalMinutes}</p>
             ) : (
-              <p className="text-[13px] text-secondary">调度器每隔多久运行一轮。建议 5-15 分钟。</p>
+              <p className="text-xs text-secondary">调度器每隔多久运行一轮。建议 5-15 分钟。</p>
             )}
           </div>
           <div className="space-y-2">
@@ -109,9 +109,9 @@ export function AgentSettingsCard() {
               onChange={(e) => setNumber("jitterMinutes", e.target.value)}
             />
             {errors.jitterMinutes ? (
-              <p className="text-[13px] text-danger">{errors.jitterMinutes}</p>
+              <p className="text-xs text-danger">{errors.jitterMinutes}</p>
             ) : (
-              <p className="text-[13px] text-secondary">为每次任务添加随机延迟，避免固定特征。建议 1-5 分钟。</p>
+              <p className="text-xs text-secondary">为每次任务添加随机延迟，避免固定特征。建议 1-5 分钟。</p>
             )}
           </div>
           <div className="space-y-2">
@@ -124,9 +124,9 @@ export function AgentSettingsCard() {
               onChange={(e) => setNumber("statusCheckMinutes", e.target.value)}
             />
             {errors.statusCheckMinutes ? (
-              <p className="text-[13px] text-danger">{errors.statusCheckMinutes}</p>
+              <p className="text-xs text-danger">{errors.statusCheckMinutes}</p>
             ) : (
-              <p className="text-[13px] text-secondary">自动检查账号状态（如封禁或掉线）的频率。建议 60-120 分钟。</p>
+              <p className="text-xs text-secondary">自动检查账号状态（如封禁或掉线）的频率。建议 60-120 分钟。</p>
             )}
           </div>
           <div className="space-y-2">
@@ -139,9 +139,9 @@ export function AgentSettingsCard() {
               onChange={(e) => setNumber("openPageTimeoutMinutes", e.target.value)}
             />
             {errors.openPageTimeoutMinutes ? (
-              <p className="text-[13px] text-danger">{errors.openPageTimeoutMinutes}</p>
+              <p className="text-xs text-danger">{errors.openPageTimeoutMinutes}</p>
             ) : (
-              <p className="text-[13px] text-secondary">
+              <p className="text-xs text-secondary">
                 限制手动打开页面时的最大时长。设为 0 表示不限制，需手动关闭。
               </p>
             )}
@@ -152,7 +152,7 @@ export function AgentSettingsCard() {
           <div className="flex items-center justify-between">
             <div className="space-y-0.5">
               <Label htmlFor="agent-headless">无头模式 (Headless)</Label>
-              <p className="text-[13px] text-secondary">后台自动任务时不显示浏览器窗口。</p>
+              <p className="text-xs text-secondary">后台自动任务时不显示浏览器窗口。</p>
             </div>
             <Switch
               id="agent-headless"
@@ -163,7 +163,7 @@ export function AgentSettingsCard() {
           <div className="flex items-center justify-between">
             <div className="space-y-0.5">
               <Label htmlFor="agent-status-on-startup">启动时检查所有账号状态</Label>
-              <p className="text-[13px] text-secondary">在应用启动后，批量检测未确认状态的账号。</p>
+              <p className="text-xs text-secondary">在应用启动后，批量检测未确认状态的账号。</p>
             </div>
             <Switch
               id="agent-status-on-startup"
@@ -174,7 +174,7 @@ export function AgentSettingsCard() {
           <div className="flex items-center justify-between">
             <div className="space-y-0.5">
               <Label htmlFor="agent-auto-clean">自动清理孤立 Profile</Label>
-              <p className="text-[13px] text-secondary">在后台空闲时，自动归档或清理未关联任何账号的浏览器缓存目录。</p>
+              <p className="text-xs text-secondary">在后台空闲时，自动归档或清理未关联任何账号的浏览器缓存目录。</p>
             </div>
             <Switch
               id="agent-auto-clean"

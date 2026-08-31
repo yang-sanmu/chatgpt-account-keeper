@@ -48,7 +48,7 @@ export function AboutCard() {
 
           <div className="grid grid-cols-[120px_1fr] items-baseline gap-4">
             <Label className="text-secondary text-right">数据目录</Label>
-            <span className="text-sm break-all font-mono text-[13px]">{startupInfo?.dataDirectory ?? "未知"}</span>
+            <span className="text-xs break-all font-mono text-secondary">{startupInfo?.dataDirectory ?? "未知"}</span>
           </div>
         </div>
       </CardContent>

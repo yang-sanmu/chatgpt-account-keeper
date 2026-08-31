@@ -20,7 +20,6 @@ import {
   PanelLeftOpen,
   RefreshCw,
   Play,
-  Square,
   AlertCircle,
   Wifi,
   WifiOff,
@@ -237,14 +236,23 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           )}
 
           <Button
-            variant={running ? "danger" : "default"}
+            variant={running ? "outline" : "default"}
             size={collapsed ? "icon" : "md"}
-            className={cn("w-full shadow-none", collapsed && "mx-auto")}
+            className={cn("w-full shadow-none gap-2", collapsed && "mx-auto")}
             onClick={() => (running ? stop() : start())}
             aria-label={running ? "停止调度" : "启动调度"}
           >
-            {running ? <Square className="size-4" /> : <Play className="size-4" />}
-            {!collapsed && <span>{running ? "停止调度" : "启动调度"}</span>}
+            {running ? (
+              <>
+                <span className="size-2 rounded-full bg-ok animate-pulse shrink-0" />
+                {!collapsed && <span>停止调度</span>}
+              </>
+            ) : (
+              <>
+                <Play className="size-4 shrink-0" />
+                {!collapsed && <span>启动调度</span>}
+              </>
+            )}
           </Button>
 
           {collapsed && (

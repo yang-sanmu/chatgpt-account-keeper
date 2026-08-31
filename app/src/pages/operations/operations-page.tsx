@@ -1,14 +1,17 @@
 import { useState } from "react";
 import { Page, PageHeader, PageBody } from "@/components/layout/page";
 import { useKeeperStore } from "@/store/keeperStore";
+import { useAccountLabeler } from "@/store/selectors";
+import { resolveOperationSubject } from "@/lib/operation-subject";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ListTodo, Copy } from "lucide-react";
-import { shortId, formatDateTime, formatDuration } from "@/lib/format";
+import { formatDateTime, formatDuration } from "@/lib/format";
 import { notify } from "@/lib/notify";
+import { cn } from "@/lib/utils";
 
 /// 任务筛选档位。定成常量数组是为了让 Tabs 的 onValueChange 能窄化回联合类型，
 /// 而不是靠 as 断言 —— 断言在这里会静默接受任何字符串。
@@ -30,6 +33,8 @@ function isOperationFilter(value: string): value is OperationFilter {
 
 export function OperationsPage() {
   const operations = useKeeperStore((s) => s.operations);
+  const proxyNodes = useKeeperStore((s) => s.proxies.nodes);
+  const accountLabeler = useAccountLabeler();
   const [filter, setFilter] = useState<OperationFilter>("active");
 
   const filtered = operations.filter((op) => {
@@ -61,13 +66,15 @@ export function OperationsPage() {
       succeeded: "已成功",
       failed: "已失败",
       timed_out: "已超时",
+      // 上一轮 Agent 留下的未完成任务在启动时已被后端改写成 cancelled，所以「已取消」
+      // 同时覆盖「用户取消」和「Agent 重启中断」两种来源；任务的 message 里会写明是哪种。
       cancelled: "已取消",
     };
     return map[state] || state;
   };
 
   return (
-    <Page className="p-6">
+    <Page>
       <PageHeader
         title="任务中心"
         description="查看并管理当前排队及历史执行的任务记录"
@@ -104,19 +111,29 @@ export function OperationsPage() {
               ? (Date.now() - new Date(op.startedAt).getTime()) / 1000
               : null;
 
+            const {
+              title: resourceTitle,
+              action,
+              deletedAccount: isDeletedAccount,
+            } = resolveOperationSubject(op, { account: accountLabeler, nodes: proxyNodes });
+
             return (
               <Card key={op.id} className="p-4 flex flex-col gap-3 relative">
-                <div className="flex items-start justify-between">
-                  <div className="flex items-center gap-3">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex items-center gap-2.5 min-w-0">
                     <Badge variant={getBadgeVariant(op.state)}>{getStateLabel(op.state)}</Badge>
-                    <span className="font-semibold text-primary">{op.kind}</span>
-                    {op.resourceId && (
-                      <span className="font-mono text-xs text-secondary bg-sunken px-1.5 py-0.5 rounded">
-                        {shortId(op.resourceId)}
-                      </span>
-                    )}
+                    <span
+                      className={cn(
+                        "font-semibold text-primary truncate max-w-[260px]",
+                        isDeletedAccount && "text-muted"
+                      )}
+                      title={resourceTitle}
+                    >
+                      {resourceTitle}
+                    </span>
+                    <span className="text-sm text-secondary shrink-0">{action}</span>
                   </div>
-                  <div className="text-xs text-muted flex gap-4 tabular">
+                  <div className="text-xs text-muted flex gap-4 tabular shrink-0">
                     <span>{formatDateTime(op.startedAt)}</span>
                     {durationSec !== null && <span>耗时 {formatDuration(durationSec)}</span>}
                   </div>
@@ -131,7 +148,7 @@ export function OperationsPage() {
                   <div className="flex items-center mt-1">
                     <button
                       onClick={() => handleCopyCode(op.error!.code)}
-                      className="inline-flex items-center gap-1 rounded-chip border border-line bg-sunken px-1.5 py-0.5 text-[11px] text-secondary hover:text-primary hover:border-subtle transition-colors cursor-pointer font-mono"
+                      className="inline-flex items-center gap-1 rounded-chip border border-line bg-sunken px-1.5 py-0.5 text-xs text-secondary hover:text-primary hover:border-subtle transition-colors cursor-pointer font-mono"
                       title="点击复制错误码"
                     >
                       {op.error.code}

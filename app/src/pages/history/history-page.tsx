@@ -1,157 +1,205 @@
 import * as React from "react";
-import { useEffect, useState } from "react";
 import { Page, PageHeader } from "@/components/layout/page";
 import { useKeeperStore } from "@/store/keeperStore";
-import { agentCall } from "@/ipc/bridge";
+import { useAccountLabeler } from "@/store/selectors";
+import { useAccountHistory } from "@/store/useAccountHistory";
+import { describeLastRun } from "@/lib/history-summary";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
-import { SearchX, MessageSquare, Copy } from "lucide-react";
-import { formatDate, formatDateTime, displayEmail } from "@/lib/format";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
+import { StatusDot } from "@/components/ui/status-dot";
+import { LastRunSummary, HistoryEntryList } from "@/components/history";
+import { SearchX, MessageSquare, AlertCircle, RefreshCw, Search } from "lucide-react";
+import { RelativeTime } from "@/components/ui/relative-time";
 import { notify } from "@/lib/notify";
-import type { HistoryEntryResult } from "@/ipc/generated";
 import { cn } from "@/lib/utils";
-
-/// 一条问答气泡。
-///
-/// 取不到内容时显示「本条记录缺少内容」而不是空气泡或原始 JSON：历史记录的 rounds 里
-/// question / answer 都可能缺失（对话中断、解析失败），把 undefined 渲染成空白会让用户
-/// 以为记录损坏了，而把整个对象打印出来则是把内部结构泄给用户看。
-function Bubble({
-  side,
-  text,
-  onCopy,
-}: {
-  side: "question" | "answer";
-  text: string | null | undefined;
-  onCopy: (text: string) => void;
-}) {
-  const hasText = typeof text === "string" && text.trim().length > 0;
-  const isQuestion = side === "question";
-
-  return (
-    <div className={cn("flex", isQuestion ? "justify-end" : "justify-start")}>
-      <div
-        className={cn(
-          "group relative max-w-[85%] rounded-2xl px-4 py-2 text-sm whitespace-pre-wrap",
-          isQuestion
-            ? "rounded-tr-sm bg-accent text-accent-content"
-            : "rounded-tl-sm border border-subtle bg-panel text-primary",
-          !hasText && "text-muted italic"
-        )}
-      >
-        {hasText ? text : "本条记录缺少内容"}
-        {hasText && (
-          <button
-            type="button"
-            onClick={() => onCopy(text)}
-            aria-label={isQuestion ? "复制提问" : "复制回复"}
-            className={cn(
-              "absolute top-1.5 right-1.5 rounded-chip p-1 opacity-0 transition-opacity focus-visible:opacity-100 group-hover:opacity-100",
-              isQuestion
-                ? "bg-accent-content/15 text-accent-content hover:bg-accent-content/25"
-                : "bg-hover text-secondary hover:text-primary"
-            )}
-          >
-            <Copy className="size-3" />
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
 
 export function HistoryPage() {
   const historyAccounts = useKeeperStore((s) => s.historyAccounts);
-  const emailsRevealed = useKeeperStore((s) => s.emailsRevealed);
   const historyFocusAccountId = useKeeperStore((s) => s.historyFocusAccountId);
-  
-  const [selectedAccountId, setSelectedAccountId] = useState<string | null>(historyFocusAccountId);
-  const [entries, setEntries] = useState<HistoryEntryResult[]>([]);
-  const [loading, setLoading] = useState(false);
+  const refreshHistoryAccounts = useKeeperStore((s) => s.refreshHistoryAccounts);
+  const accountLabeler = useAccountLabeler();
 
-  useEffect(() => {
+  const [search, setSearch] = React.useState("");
+  const [failedOnly, setFailedOnly] = React.useState(false);
+  const [refreshing, setRefreshing] = React.useState(false);
+
+  const [selectedAccountId, setSelectedAccountId] = React.useState<string | null>(
+    historyFocusAccountId ?? (historyAccounts[0]?.accountId ?? null)
+  );
+
+  React.useEffect(() => {
     if (historyFocusAccountId && historyFocusAccountId !== selectedAccountId) {
       setSelectedAccountId(historyFocusAccountId);
     }
   }, [historyFocusAccountId, selectedAccountId]);
 
-  useEffect(() => {
-    if (!selectedAccountId) {
-      setEntries([]);
-      return;
+  // 当账号列表初始加载且没有默认选中时，自动选中第一项
+  React.useEffect(() => {
+    if (!selectedAccountId && historyAccounts.length > 0 && historyAccounts[0]) {
+      setSelectedAccountId(historyAccounts[0].accountId);
     }
-    
-    let cancelled = false;
-    setLoading(true);
-    
-    agentCall("history.query", { accountId: selectedAccountId, limit: 100 })
-      .then((res) => {
-        if (!cancelled) {
-          setEntries(res);
-        }
-      })
-      .catch((err) => {
-        if (!cancelled) notify.error("加载历史记录失败", err);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-      
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedAccountId]);
+  }, [selectedAccountId, historyAccounts]);
+
+  const filteredAccounts = React.useMemo(() => {
+    return historyAccounts.filter((acc) => {
+      const { outcome } = describeLastRun(acc.lastOk);
+      if (failedOnly && outcome !== "failed") return false;
+      if (!search.trim()) return true;
+      const query = search.trim().toLowerCase();
+      const { label } = accountLabeler(acc.accountId);
+      const note = acc.note?.toLowerCase() ?? "";
+      const accountId = acc.accountId.toLowerCase();
+      return (
+        label.toLowerCase().includes(query) ||
+        note.includes(query) ||
+        accountId.includes(query)
+      );
+    });
+  }, [historyAccounts, failedOnly, search, accountLabeler]);
+
+  const { entries, loading, failed, reload } = useAccountHistory(selectedAccountId);
+
+  // 进入页面时拉一次账号摘要。
+  //
+  // 只拉摘要，不调 reload()：useAccountHistory 自己已经在 accountId 变化时取过条目了，
+  // 这里再调一次就是对同一份数据发两个并发请求。
+  React.useEffect(() => {
+    void refreshHistoryAccounts();
+  }, [refreshHistoryAccounts]);
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    try {
+      await refreshHistoryAccounts();
+      reload();
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   const handleCopy = (text: string) => {
     void navigator.clipboard.writeText(text);
     notify.success("已复制内容");
   };
 
-  // 按天分组。同一天的多次巡检记录归到一个日期标题下，否则几十条记录连成一片。
-  const groups = React.useMemo(() => {
-    const map = new Map<string, HistoryEntryResult[]>();
-    for (const entry of entries) {
-      const date = formatDate(entry.time);
-      if (!map.has(date)) map.set(date, []);
-      map.get(date)!.push(entry);
-    }
-    return Array.from(map.entries());
-  }, [entries]);
+  const newestEntry = entries.length > 0 ? entries[0] : null;
 
   return (
-    <Page className="p-6">
+    <Page>
       <PageHeader
         title="对话历史"
         description="查看各个账号与 ChatGPT 的对话记录与巡检细节"
+        actions={
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleRefresh}
+            disabled={refreshing || loading}
+          >
+            <RefreshCw className={cn("mr-1.5 size-3.5", (refreshing || loading) && "animate-spin")} />
+            刷新
+          </Button>
+        }
       />
       <div className="flex gap-6 h-full min-h-0">
         {/* Left pane: Accounts */}
-        <div className="w-64 shrink-0 flex flex-col border border-subtle rounded-panel bg-panel overflow-hidden">
-          <div className="p-3 border-b border-subtle bg-sunken text-sm font-medium text-secondary">
-            账号列表
+        <div className="w-80 shrink-0 flex flex-col border border-subtle rounded-panel bg-panel overflow-hidden">
+          {/* Header & Filter Controls */}
+          <div className="p-3 border-b border-subtle bg-sunken space-y-2.5">
+            <div className="flex items-center justify-between text-xs font-medium text-secondary">
+              <span>账号列表 ({filteredAccounts.length})</span>
+              <div className="flex items-center gap-1.5">
+                <Switch
+                  id="history-failed-only"
+                  checked={failedOnly}
+                  onCheckedChange={setFailedOnly}
+                />
+                <Label htmlFor="history-failed-only" className="text-2xs text-secondary cursor-pointer">
+                  仅看失败
+                </Label>
+              </div>
+            </div>
+            <div className="relative">
+              <Search className="absolute left-2.5 top-2 size-3.5 text-muted" />
+              <Input
+                placeholder="搜索邮箱或备注..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="h-7.5 pl-8 text-xs"
+              />
+            </div>
           </div>
+
           <ScrollArea className="flex-1">
             {historyAccounts.length === 0 ? (
-              <div className="p-4 text-center text-sm text-muted">暂无历史记录</div>
+              <div className="p-4 text-center text-xs text-muted">暂无历史记录</div>
+            ) : filteredAccounts.length === 0 ? (
+              <div className="p-4 text-center text-xs text-muted">无匹配账号</div>
             ) : (
-              <div className="p-2 space-y-1">
-                {historyAccounts.map((acc) => {
+              <div className="p-2 space-y-1.5">
+                {filteredAccounts.map((acc) => {
                   const isSelected = acc.accountId === selectedAccountId;
+                  const { label, known } = accountLabeler(acc.accountId);
+                  const { outcome, label: lastRunLabel } = describeLastRun(acc.lastOk);
+                  const isFailed = outcome === "failed";
+                  const isDeleted = acc.deleted || !known;
+
                   return (
                     <button
                       key={acc.accountId}
+                      type="button"
                       onClick={() => setSelectedAccountId(acc.accountId)}
-                      className={`w-full text-left px-3 py-2 rounded-control text-sm transition-colors ${
-                        isSelected ? "bg-accent-soft text-accent" : "text-primary hover:bg-hover"
-                      }`}
+                      className={cn(
+                        "w-full text-left px-3 py-2.5 rounded-control text-xs transition-colors border",
+                        isSelected
+                          ? "bg-accent-soft border-accent/40 text-accent"
+                          : isFailed
+                          ? "border-danger bg-danger-soft text-primary hover:bg-hover"
+                          : "border-transparent text-primary hover:bg-hover",
+                        isFailed && !isSelected && "border-l-2 border-l-danger"
+                      )}
                     >
-                      <div className="truncate font-medium">
-                        {acc.note || displayEmail(acc.email, emailsRevealed)}
+                      <div className="flex items-center justify-between gap-1.5">
+                        <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                          <StatusDot
+                            status={
+                              outcome === "ok" ? "ok" : outcome === "failed" ? "failed" : "unknown"
+                            }
+                          />
+                          <span
+                            className={cn("truncate font-medium", isDeleted && "text-muted")}
+                            title={`${label} · ${lastRunLabel}`}
+                          >
+                            {label}
+                          </span>
+                        </div>
+                        {isDeleted && (
+                          <Badge variant="neutral" className="h-4 shrink-0 px-1 py-0 text-2xs">
+                            已删除
+                          </Badge>
+                        )}
+                        {isFailed && (
+                          <Badge variant="danger" className="h-4 shrink-0 px-1 py-0 text-2xs">
+                            失败
+                          </Badge>
+                        )}
                       </div>
-                      <div className="text-xs text-muted flex justify-between mt-1 tabular">
-                        <span>{acc.entryCount} 条</span>
-                        {acc.lastAt && <span>{formatDate(acc.lastAt)}</span>}
+
+                      {acc.note && acc.note.trim().length > 0 && (
+                        <div className="text-2xs text-muted truncate mt-1" title={acc.note}>
+                          {acc.note}
+                        </div>
+                      )}
+
+                      <div className="text-2xs text-muted flex justify-between mt-1 tabular">
+                        <span>{acc.entryCount} 条记录</span>
+                        {acc.lastAt && <RelativeTime value={acc.lastAt} />}
                       </div>
                     </button>
                   );
@@ -173,9 +221,22 @@ export function HistoryPage() {
                 />
               ) : loading ? (
                 <div className="space-y-6">
+                  <Skeleton className="h-20 w-full" />
                   <Skeleton className="h-4 w-24" />
                   <Skeleton className="h-32 w-full" />
                   <Skeleton className="h-32 w-full" />
+                </div>
+              ) : failed ? (
+                <div className="py-12 flex flex-col items-center justify-center text-center space-y-3">
+                  <AlertCircle className="size-8 text-danger" />
+                  <div className="space-y-1">
+                    <p className="text-sm font-medium text-primary">加载历史记录失败</p>
+                    <p className="text-xs text-muted">无法获取该账号的历史数据，请重试</p>
+                  </div>
+                  <Button variant="outline" size="sm" onClick={reload} className="mt-2">
+                    <RefreshCw className="mr-1.5 size-3.5" />
+                    重新加载
+                  </Button>
                 </div>
               ) : entries.length === 0 ? (
                 <EmptyState
@@ -184,55 +245,9 @@ export function HistoryPage() {
                   description="该账号暂无详细对话记录。"
                 />
               ) : (
-                <div className="space-y-8">
-                  {groups.map(([date, dayEntries]) => (
-                    <div key={date} className="space-y-4">
-                      <div className="text-sm font-medium text-secondary sticky top-0 bg-panel/90 backdrop-blur py-2 border-b border-subtle z-10">
-                        {date}
-                      </div>
-                      <div className="space-y-6">
-                        {dayEntries.map((entry, idx) => (
-                          <div key={idx} className="bg-sunken rounded-panel p-4 border border-subtle space-y-4">
-                            <div className="flex justify-between items-center text-sm">
-                              <div className="font-medium text-primary">
-                                {entry.topic || entry.setName || "未知主题"}
-                              </div>
-                              <div className="text-muted tabular">{formatDateTime(entry.time)}</div>
-                            </div>
-
-                            {entry.error && (
-                              <div className="text-sm text-danger bg-danger-soft p-2 rounded">
-                                异常: {entry.error}
-                              </div>
-                            )}
-
-                            {entry.rounds && entry.rounds.length > 0 ? (
-                              <div className="space-y-4 pt-2">
-                                {entry.rounds.map((round, rIdx) => (
-                                  <div key={rIdx} className="space-y-2">
-                                    <Bubble
-                                      side="question"
-                                      text={round.question}
-                                      onCopy={handleCopy}
-                                    />
-                                    <Bubble
-                                      side="answer"
-                                      text={round.answer}
-                                      onCopy={handleCopy}
-                                    />
-                                  </div>
-                                ))}
-                              </div>
-                            ) : (
-                              <div className="text-sm text-muted italic">
-                                本条记录缺少内容
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
+                <div className="space-y-6">
+                  {newestEntry && <LastRunSummary entry={newestEntry} />}
+                  <HistoryEntryList entries={entries} onCopy={handleCopy} />
                 </div>
               )}
             </div>

@@ -272,6 +272,7 @@ export interface AccountStatusPatch {
   gptName?: string | null;
   email?: string | null;
   groupName?: string | null;
+  running?: boolean;
 }
 
 const STATUS_PATCH_FIELDS = [
@@ -291,6 +292,7 @@ const STATUS_PATCH_FIELDS = [
   "gptName",
   "email",
   "groupName",
+  "running",
 ] as const satisfies readonly (keyof AccountStatusPatch)[];
 
 /// 规则 3 的另一半：状态类增量事件。
@@ -331,8 +333,8 @@ export function applyAccountStatus(
 export type AccountStatusFilter =
   | "all"
   | "ok"
-  | "needs_login"
-  | "waf"
+  | "reauth"
+  | "out"
   | "unknown"
   | "stale"
   | "node_missing"

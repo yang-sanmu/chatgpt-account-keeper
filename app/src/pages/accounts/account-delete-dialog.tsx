@@ -139,14 +139,14 @@ export function AccountDeleteDialog({
                   />
                   <span
                     className={cn(
-                      "text-[13px] font-medium",
+                      "text-base font-medium",
                       active && choice.danger ? "text-danger" : "text-primary"
                     )}
                   >
                     {choice.title}
                   </span>
                   {choice.recommended && (
-                    <span className="rounded-chip bg-ok-soft px-1.5 py-0.5 text-[11px] text-ok">
+                    <span className="rounded-chip bg-ok-soft px-1.5 py-0.5 text-xs text-ok">
                       推荐
                     </span>
                   )}

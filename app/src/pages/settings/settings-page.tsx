@@ -5,7 +5,7 @@ import { AboutCard } from "./about-card";
 
 export function SettingsPage() {
   return (
-    <Page className="p-6">
+    <Page>
       <PageHeader
         title="设置"
         description="管理客户端偏好与调度器行为配置。"

@@ -48,7 +48,7 @@ const accounts = Array.from({ length: REAL_ACCOUNT_COUNT }, (_, index) =>
   makeAccount({
     id: `acc-${index}`,
     email: `user${index}@example.com`,
-    status: index % 4 === 0 ? "needs_login" : "ok",
+    status: index % 4 === 0 ? "reauth" : "ok",
   })
 );
 
@@ -70,7 +70,7 @@ describe("账号卡片的渲染成本", () => {
     renderCounts.clear();
 
     act(() => {
-      tauri.emitAgentEvent("accountStatus.changed", { id: "acc-7", status: "waf" });
+      tauri.emitAgentEvent("accountStatus.changed", { id: "acc-7", status: "out" });
     });
 
     const rerendered = [...renderCounts.keys()].sort();
@@ -78,7 +78,7 @@ describe("账号卡片的渲染成本", () => {
       rerendered,
       `期望只有 acc-7 重渲染，实际 ${rerendered.length} 张：${rerendered.join(",")}`
     ).toEqual(["acc-7"]);
-    expect(screen.getByTestId("acc-7").textContent).toBe("waf");
+    expect(screen.getByTestId("acc-7").textContent).toBe("out");
   });
 
   it("一轮完整巡检（28 条事件）的渲染次数与账号数同阶，而不是平方阶", () => {
@@ -88,7 +88,7 @@ describe("账号卡片的渲染成本", () => {
 
     act(() => {
       for (const id of ids) {
-        tauri.emitAgentEvent("accountStatus.changed", { id, status: "waf" });
+        tauri.emitAgentEvent("accountStatus.changed", { id, status: "out" });
       }
     });
 

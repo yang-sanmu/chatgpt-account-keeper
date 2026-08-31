@@ -78,17 +78,23 @@ export function formatRelative(iso: string | null | undefined): string {
 }
 
 /// 绝对时间戳，如「2026-08-27 14:11」。
-export function formatDateTime(iso: string | null | undefined): string {
+///
+/// seconds 为真时精确到秒。历史记录需要它：同一分钟内可能有多条，只到分钟就分不出先后，
+/// 也没法和 Agent 日志里的时间戳对上。
+export function formatDateTime(
+  iso: string | null | undefined,
+  options: { seconds?: boolean } = {}
+): string {
   if (!iso) return "—";
 
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return iso;
 
   const pad = (value: number): string => String(value).padStart(2, "0");
-  return (
-    `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ` +
-    `${pad(date.getHours())}:${pad(date.getMinutes())}`
-  );
+  const day = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  const time = `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+
+  return options.seconds ? `${day} ${time}:${pad(date.getSeconds())}` : `${day} ${time}`;
 }
 
 /// 只要日期部分，用于历史记录按天分组。

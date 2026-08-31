@@ -9,6 +9,7 @@ import { AccountCard } from "./account-card";
 import { BulkActionBar } from "./bulk-action-bar";
 import { AccountCreateDialog } from "./account-create-dialog";
 import { AccountDeleteDialog } from "./account-delete-dialog";
+import { AccountHistoryDrawer } from "./account-history-drawer";
 import { Users, SearchX } from "lucide-react";
 import { shortId } from "@/lib/format";
 
@@ -45,7 +46,7 @@ export function AccountsPage() {
   const visibleIds = visibleAccounts.map((a) => a.effective.id);
 
   return (
-    <Page className="p-6">
+    <Page>
       <PageHeader 
         title="账号" 
         description="管理并监控所有 ChatGPT 账号的轮换与登录状态"
@@ -73,7 +74,17 @@ export function AccountsPage() {
             }
           />
         ) : (
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(340px,1fr))] gap-4 items-start">
+          // 卡片宽度设上限。
+          //
+          // 原来是 minmax(340px, 1fr)，1fr 让卡片吃掉整行剩余宽度 —— 窗口窄到只放得下一列时
+          // 那一列被拉到满宽，于是「窗口越小卡片越大」。
+          //
+          // 上限设为 360px（卡片紧凑区间 ~340-360px）：在默认 1260px 窗口（内容区约 972px）下
+          // 刚好稳定容纳 2 列卡片；1080p 全屏（约 1660px）容纳 4 列；窄窗口（约 700px）容纳 1 列。
+          //
+          // 下界用 min(340px, 100%)：容器比 340px 还窄时（侧栏展开 + 窄窗口）固定下界会让
+          // 轨道溢出容器，出现横向滚动条。
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(min(340px,100%),360px))] items-start justify-start gap-4">
             {visibleAccounts.map((record) => (
               <AccountCard
                 key={record.effective.id}
@@ -100,6 +111,8 @@ export function AccountsPage() {
         onOpenChange={setDeleteOpen} 
         accounts={deleteTargets} 
       />
+
+      <AccountHistoryDrawer />
     </Page>
   );
 }

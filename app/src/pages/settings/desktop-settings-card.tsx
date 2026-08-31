@@ -18,7 +18,7 @@ export function DesktopSettingsCard() {
           <div className="flex items-center justify-between">
             <div className="space-y-0.5 w-full max-w-[200px]">
               <Label>外观主题</Label>
-              <p className="text-[13px] text-secondary">选择您偏好的界面颜色。</p>
+              <p className="text-xs text-secondary">选择您偏好的界面颜色。</p>
             </div>
             <Select
               value={settings.theme}
@@ -38,7 +38,7 @@ export function DesktopSettingsCard() {
           <div className="flex items-center justify-between">
             <div className="space-y-0.5 w-full max-w-[300px]">
               <Label>关闭主窗口时的行为</Label>
-              <p className="text-[13px] text-secondary">点击窗口右上角关闭按钮时执行的操作。</p>
+              <p className="text-xs text-secondary">点击窗口右上角关闭按钮时执行的操作。</p>
             </div>
             <Select
               value={settings.closeBehavior}
@@ -58,7 +58,7 @@ export function DesktopSettingsCard() {
           <div className="flex items-center justify-between">
             <div className="space-y-0.5 w-full max-w-[300px]">
               <Label>更新策略</Label>
-              <p className="text-[13px] text-secondary">应用有新版本时的处理方式。</p>
+              <p className="text-xs text-secondary">应用有新版本时的处理方式。</p>
             </div>
             <Select
               value={settings.updatePolicy}
@@ -77,7 +77,7 @@ export function DesktopSettingsCard() {
           <div className="flex items-center justify-between">
             <div className="space-y-0.5">
               <Label>开机自启动</Label>
-              <p className="text-[13px] text-secondary">登录系统时自动运行此应用。</p>
+              <p className="text-xs text-secondary">登录系统时自动运行此应用。</p>
             </div>
             <Switch
               checked={settings.startAtLogin}
@@ -88,7 +88,7 @@ export function DesktopSettingsCard() {
           <div className="flex items-center justify-between">
             <div className="space-y-0.5">
               <Label>启动后自动开始调度</Label>
-              <p className="text-[13px] text-secondary">应用启动时自动开启任务调度器。</p>
+              <p className="text-xs text-secondary">应用启动时自动开启任务调度器。</p>
             </div>
             <Switch
               checked={settings.autoStartScheduler}

@@ -23,7 +23,7 @@ export function ConversationsPage() {
   const [deleteTarget, setDeleteTarget] = React.useState<string | null>(null);
 
   return (
-    <Page className="p-6">
+    <Page>
       <PageHeader
         title="会话策略"
         description="管理对话的主题与轮数规则，分配给账号以实现不同的对话行为"

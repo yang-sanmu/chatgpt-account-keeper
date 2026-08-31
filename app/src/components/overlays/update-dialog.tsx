@@ -97,7 +97,7 @@ export function UpdateDialog() {
 
           {installing && (
             <div className="flex flex-col gap-3">
-              <div className="flex items-center gap-2 text-[13px] text-primary">
+              <div className="flex items-center gap-2 text-base text-primary">
                 <Loader2 className="size-4 shrink-0 animate-spin text-accent" />
                 <span className="flex-1">{stageLabel ?? status?.message ?? "处理中"}</span>
                 {hasPercent && (

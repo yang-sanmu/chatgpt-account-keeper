@@ -55,7 +55,7 @@ export function CloseConfirmDialog() {
           >
             <MinusSquare className="mt-0.5 size-4 shrink-0 text-accent" />
             <span className="flex flex-col gap-0.5">
-              <span className="text-[13px] font-medium text-primary">隐藏到托盘</span>
+              <span className="text-base font-medium text-primary">隐藏到托盘</span>
               <span className="text-xs text-secondary">
                 窗口收起，账号轮换和状态巡检照常进行。
               </span>
@@ -69,7 +69,7 @@ export function CloseConfirmDialog() {
           >
             <PowerOff className="mt-0.5 size-4 shrink-0 text-danger" />
             <span className="flex flex-col gap-0.5">
-              <span className="text-[13px] font-medium text-primary">退出全部</span>
+              <span className="text-base font-medium text-primary">退出全部</span>
               <span className="text-xs text-secondary">
                 停止调度、关闭所有 Chrome 窗口并结束后台服务。
               </span>

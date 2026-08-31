@@ -23,7 +23,7 @@ function Toaster(props: ToasterProps) {
       toastOptions={{
         classNames: {
           toast:
-            "!bg-overlay !border-subtle !text-primary !shadow-overlay !rounded-panel !font-sans !text-[13px] !gap-3",
+            "!bg-overlay !border-subtle !text-primary !shadow-overlay !rounded-panel !font-sans !text-base !gap-3",
           title: "!text-primary !font-medium",
           description: "!text-secondary !text-xs",
           icon: "!size-4",

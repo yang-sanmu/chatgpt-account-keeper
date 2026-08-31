@@ -6,16 +6,15 @@ ChatGPT 多账号的桌面管理与后台自动对话工具。每个账号使用
 
 ## 架构
 
-管理端正在从 Avalonia 迁移到 Rust + Tauri（见 [迁移计划](docs/TAURI_MIGRATION_PLAN.md)）。
-两个客户端目前并存：`desktop/` 是已公开的 0.1.x Avalonia 客户端，`app/` 是下一条
-0.2.x Tauri 版本线。Tauri 的仓库内分发门禁和生产 updater 公钥已经落地，但 updater
-私钥/密码 Secrets、平台签名、四平台 Draft 和真机更新验收完成前仍不公开。Agent 与
-IPC v1 契约对两者完全相同。
+管理端已迁移到 Rust + Tauri（见 [迁移计划](docs/TAURI_MIGRATION_PLAN.md)）。`app/` 是当前
+0.2.x 客户端，`desktop/` 仅保留旧 0.1.x Avalonia 代码。首个 Tauri `v0.2.0` 不提供从
+Avalonia 应用内升级的桥接包，旧版用户需退出 Avalonia 后手动安装；两条版本线继续使用
+相同的数据目录和 IPC v1 契约。
 
 ```text
 管理端
-desktop/  Avalonia 12 · .NET 10 NativeAOT · VeloPack   ← 已发布 0.1.x
-app/      Tauri 2 · Rust · React                       ← 下一版 0.2.x
+desktop/  Avalonia 12 · .NET 10 NativeAOT · VeloPack   ← 旧版 0.1.x
+app/      Tauri 2 · Rust · React                       ← 当前版 0.2.x
                     │
         Named Pipe / Unix Domain Socket
         IPC v1 · 协议 1.3 · 50 方法 / 18 事件
@@ -139,7 +138,8 @@ Canonical JSON Schema 位于 `contracts/ipc-v1.schema.json`（消息信封/共�
 6. 将项目许可证、第三方声明、隐私和源码说明写入安装包的 `licenses/`。
 7. 在四个原生 runner 上执行 `tauri build`，生成 Windows NSIS、两种 macOS DMG、
    Linux AppImage/deb/rpm 以及各自的 updater `.sig`。
-8. 分别执行 Authenticode、Apple Developer ID/公证/stapling、Linux Minisign 门禁。
+8. 分别执行 Authenticode、Apple Developer ID/公证/stapling、Linux Minisign 门禁；
+   `v0.2.0` 首发有一个写死版本号、不可复用的一次性 unsigned 例外。
 9. 生成只含四个允许目标的 `latest.json`，再汇总 SBOM、项目与 mihomo 对应源码及
    `SHA256SUMS.release.txt` 到同一个 Draft Release。
 
@@ -148,11 +148,11 @@ Canonical JSON Schema 位于 `contracts/ipc-v1.schema.json`（消息信封/共�
 - 显示名：`ChatGPT Account Keeper`
 - Bundle ID：`io.github.yang-sanmu.gptaccountkeeper`
 
-更新源是公开的 [GitHub Releases](https://github.com/yang-sanmu/chatgpt-account-keeper/releases)，客户端不含 GitHub Token。GitHub Draft 不会被客户端看到；公开前必须完成候选安装与真实 Tauri N → N+1 更新验收。
+更新源是公开的 [GitHub Releases](https://github.com/yang-sanmu/chatgpt-account-keeper/releases)，客户端不含 GitHub Token。正常版本的 GitHub Draft 不会被客户端看到；公开前必须完成候选安装与真实 Tauri N → N+1 更新验收。
 
 ### 签名发布门禁
 
-缺少任一平台凭据时，工作流仍会生成带 `UNSIGNED-<rid>.txt` 标记的内部检查产物，但拒绝创建 GitHub Draft。正式发布要求 Windows Authenticode、macOS Developer ID + Apple 公证以及 Linux Minisign 全部通过。每个 Release 还附带总 SHA-256 清单；具体 Secrets 见 [远端发布流程](docs/RELEASE_REMOTE.md)。
+缺少任一平台凭据时，工作流仍会生成带 `UNSIGNED-<rid>.txt` 标记的内部检查产物，但正常版本拒绝创建 GitHub Draft。正式发布要求 Windows Authenticode、macOS Developer ID + Apple 公证以及 Linux Minisign 全部通过。经明确授权，首个 Tauri `v0.2.0` 可使用专用开关跳过这些平台签名与安装更新验收并直接公开；Tauri updater 私钥、公钥、四平台构建、`.sig`、SBOM 与校验和仍是硬门禁，该开关不能用于任何其他版本。具体见 [远端发布流程](docs/RELEASE_REMOTE.md)。
 
 ### 发布新版本
 
@@ -162,8 +162,9 @@ Canonical JSON Schema 位于 `contracts/ipc-v1.schema.json`（消息信封/共�
 - **[本地 Windows 检查流程](docs/RELEASE_LOCAL.md)** —— 只用于 Windows 包诊断，不能替代四平台 Draft 发布。
 - **[N-1 → N 验收](docs/RELEASE_VERIFY.md)** —— 两条路径共用的升级验收清单。
 
-只有远端四平台流程能创建 Draft Release；真实更新验收后显式执行
-`-Mode PublishDraft -UpdaterVerified`，版本才会进入客户端的稳定更新通道。
+正常版本只有远端四平台流程能创建 Draft Release；真实更新验收后显式执行
+`-Mode PublishDraft -UpdaterVerified`，版本才会进入客户端的稳定更新通道。`v0.2.0`
+的一次性 unsigned 首发命令与风险边界单独记录在远端发布流程中。
 
 ## 过渡期旧入口
 

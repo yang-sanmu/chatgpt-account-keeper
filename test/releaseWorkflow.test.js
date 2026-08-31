@@ -71,7 +71,7 @@ test("release pipeline uses Tauri updater signatures and contains no VeloPack bu
   assert.equal((releaseSource.match(/gh release create/g) ?? []).length, 1);
 });
 
-test("Draft creation requires N-1 verification and every platform signing marker", () => {
+test("normal Draft creation requires N-1 verification and every platform signing marker", () => {
   assert.match(releaseSource, /n_minus_one_verified/);
   assert.match(releaseSource, /UNSIGNED-\*\.txt/);
   for (const rid of ["win-x64", "osx-arm64", "osx-x64", "linux-x64"]) {
@@ -80,6 +80,32 @@ test("Draft creation requires N-1 verification and every platform signing marker
   assert.match(releaseSource, /xcrun stapler validate/);
   assert.match(releaseSource, /Get-AuthenticodeSignature/);
   assert.match(releaseSource, /"\$minisign_bin" -V/);
+});
+
+test("the unsigned public-release exception is locked to v0.2.0", () => {
+  const inputs = release.on.workflow_dispatch.inputs;
+  const requestGate = release.jobs.gate.steps.find(
+    (step) => step.name === "Validate the one-time unsigned v0.2.0 request",
+  );
+  const markerGate = release.jobs.aggregate.steps.find(
+    (step) => step.name === "Require explicit unsigned markers for the one-time v0.2.0 release",
+  );
+  const createRelease = release.jobs.aggregate.steps.find(
+    (step) => step.name === "Create the single GitHub Draft or one-time public Release",
+  );
+
+  assert.equal(inputs.publish_unsigned_v0_2_0.default, false);
+  assert.match(requestGate.run, /VERSION" != '0\.2\.0'/);
+  assert.match(requestGate.run, /publish_draft/);
+  assert.match(requestGate.run, /n_minus_one_verified/);
+  assert.match(markerGate.run, /UNSIGNED-\$rid\.txt/);
+  assert.match(createRelease.if, /publish_unsigned_v0_2_0/);
+  assert.match(createRelease.run, /release_visibility=\(--latest\)/);
+  assert.match(releaseSource, /TAURI_SIGNING_PRIVATE_KEY is required/);
+
+  assert.match(publishScript, /\[switch\] \$PublishUnsignedV020/);
+  assert.match(publishScript, /Version -ne '0\.2\.0'/);
+  assert.match(publishScript, /publish_unsigned_v0_2_0=/);
 });
 
 test("Linux only installs the pinned Minisign tool when signing is configured", () => {

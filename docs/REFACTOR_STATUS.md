@@ -106,8 +106,8 @@ against `docs/PLAN.md` section 一之二.
 | --- | --- | --- |
 | Private runtime stage and no Chromium | DONE | Package verifier, private Agent smoke, and the exact staged Desktop lifecycle pass without a bundled browser or legacy panel. |
 | Notify/download/safe-point policies | PARTIAL | The monitor remains alive before a download exists, waits for zero blockers, and failed drain/checkpoint attempts restore status monitoring, scheduling and write availability. Installed N-1 → N acceptance still belongs to the signed-release phase. |
-| Signed stable release gate | DEFERRED | Moved out of v1 per the revised plan: it needs Authenticode credentials. The workflow already refuses distributable builds without them. |
-| Draft GitHub Release workflow/SBOM/licenses | DONE | The workflow, package verifier, private-runtime licenses and CycloneDX/SPDX SBOM generation are implemented. Upload remains gated by signing and an attested N-1 → N run. |
+| Signed stable release gate | DEFERRED | Authenticode, Apple Developer ID/notarization and Linux Minisign credentials are still absent. The one-time unsigned `v0.2.0` authorization does not complete this gate. |
+| Draft GitHub Release workflow/SBOM/licenses | DONE | The workflow, package verifier, private-runtime licenses and CycloneDX/SPDX SBOM generation are implemented. Normal releases remain gated by platform signing and an attested N-1 → N run; only exact `v0.2.0` has a one-time direct-public exception. |
 
 ## M6 — macOS/Linux
 
@@ -268,11 +268,12 @@ cannot be reset in-process, those cases run the code in a child process with an
 injected data root. Each new test was verified by temporarily reverting its fix and
 confirming it goes red — which caught two tests that had been passing vacuously.
 
-Unsigned jobs now remain explicitly marked internal artifacts. The shared release
-workflow implements Authenticode, Apple signing/notarization/stapling and Linux
-AppImage/Minisign, then refuses Draft creation until every native job and the
-installed N-1 → N attestation pass. Repository credentials and real-machine
-acceptance remain operational prerequisites, not claims made by a CI-only run.
+Unsigned jobs remain explicitly marked. The shared release workflow implements
+Authenticode, Apple signing/notarization/stapling and Linux AppImage/Minisign, then
+refuses normal Draft creation until every native job and the installed N-1 → N
+attestation pass. Exact `v0.2.0` has a separately authorized, one-time public
+exception; it does not turn repository credentials or real-machine acceptance into
+claims made by a CI-only run.
 
 The Alpha 6 review follow-up closes lifecycle and release-integrity gaps found by
 the full Git review: safe-point monitoring no longer exits before the delayed

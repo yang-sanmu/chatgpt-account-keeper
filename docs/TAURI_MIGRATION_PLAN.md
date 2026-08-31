@@ -496,10 +496,10 @@ AppImage 各一次**（macOS 与 AppImage 要确认 `install()` 后的显式重�
 deb 与 rpm 各装一次并确认**没有**发起更新检查；AppImage 在干净 Ubuntu 22.04 与一台
 较新发行版上各起一次。
 
-2026-08-31 生产 updater 密钥、公钥和 Actions Secrets 已接入。发布者明确授权 `v0.2.0`
-作为一次性 unsigned 首发：跳过平台代码签名、候选下载及 N → N+1 真机门禁，但不跳过
-updater `.sig`、四平台原生构建、SBOM 与校验和。这个例外不把 M5 标为完成；平台签名、
-真机安装及 `v0.2.0 → v0.2.1` updater 验收仍是后续外部门禁。
+2026-08-31 生产 updater 密钥、公钥和 Actions Secrets 已接入。发布者先后明确授权 `v0.2.0`
+首发与 `v0.2.1` 修复版作为各自一次性的 unsigned 发布：跳过平台代码签名、候选下载及
+N → N+1 真机门禁，但不跳过 updater `.sig`、四平台原生构建、SBOM 与校验和。这些例外
+不把 M5 标为完成；平台签名和真机安装/更新验收仍是后续外部门禁。
 
 ### M6 · 删除 `desktop/`
 

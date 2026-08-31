@@ -178,6 +178,7 @@ export function createSqliteRuntimeAdapters(repository) {
   const operations = {
     save: (operation) => repository.saveOperation(operation),
     list: (options) => repository.listOperations(options),
+    listLatestAccountRuns: () => repository.listLatestAccountRuns(),
     cancelUnfinished: () => repository.cancelUnfinishedOperations(),
     prune: () => repository.pruneOperations(),
   };

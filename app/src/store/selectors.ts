@@ -102,6 +102,7 @@ export function useSchedulerControls() {
     useShallow((state) => ({
       scheduler: state.scheduler,
       running: state.scheduler.running,
+      starting: state.schedulerStarting,
       start: state.startScheduler,
       stop: state.stopScheduler,
       toggle: state.toggleScheduler,
@@ -172,6 +173,41 @@ export function useAccountRunningOperation(accountId: string): Operation | undef
     }
     return undefined;
   });
+}
+
+/// 卡片显示最近一次对话结果，但不改写自动调度的排期/结果。
+/// 手动运行不记入 scheduler_state；任务和历史的完成时间用来覆盖更早的调度错误。
+/// bootstrap 会补齐每个账号的最新终态；历史摘要兼容升级前尚无任务记录的对话。
+export function useAccountLastRun(accountId: string) {
+  return useKeeperStore(useShallow((state) => {
+    const account = state.accounts[accountId]?.effective;
+    let lastRunAt = account?.lastRunAt ?? null;
+    let lastRunOk = account?.lastRunOk ?? null;
+    let lastRunReason = account?.lastRunReason ?? null;
+    let latestAt = Date.parse(lastRunAt ?? "") || 0;
+
+    for (const operation of state.operations) {
+      if (operation.resourceId !== accountId || operation.kind !== "account-run") continue;
+      if (operation.state !== "succeeded" && operation.state !== "failed" && operation.state !== "timed_out") continue;
+      const finishedAt = Date.parse(operation.finishedAt ?? "");
+      if (!Number.isFinite(finishedAt) || finishedAt <= latestAt) continue;
+      latestAt = finishedAt;
+      lastRunAt = operation.finishedAt;
+      lastRunOk = operation.state === "succeeded";
+      lastRunReason = lastRunOk
+        ? null
+        : operation.error?.message || operation.message || "最近一次对话失败，请查看任务中心";
+    }
+
+    const history = state.historyAccounts.find((item) => item.accountId === accountId);
+    const historyAt = Date.parse(history?.lastAt ?? "");
+    if (historyAt > latestAt && typeof history?.lastOk === "boolean") {
+      lastRunAt = history.lastAt ?? null;
+      lastRunOk = history.lastOk;
+      lastRunReason = history.lastOk ? null : "最近一次对话失败，请查看历史记录";
+    }
+    return { lastRunAt, lastRunOk, lastRunReason };
+  }));
 }
 
 export function useNav() {

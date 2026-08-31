@@ -3,6 +3,7 @@ import { Page, PageHeader, PageBody } from "@/components/layout/page";
 import { useKeeperStore } from "@/store/keeperStore";
 import { useAccountLabeler } from "@/store/selectors";
 import { resolveOperationSubject } from "@/lib/operation-subject";
+import { normalizeOperationDisplay } from "@/lib/operation-labels";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
@@ -105,6 +106,7 @@ export function OperationsPage() {
           />
         ) : (
           filtered.map((op) => {
+            const display = normalizeOperationDisplay(op.state, op.stage, op.message);
             const durationSec = op.finishedAt
               ? (new Date(op.finishedAt).getTime() - new Date(op.startedAt).getTime()) / 1000
               : op.state === "running"
@@ -140,8 +142,8 @@ export function OperationsPage() {
                 </div>
 
                 <div className="text-sm text-secondary">
-                  {op.stage ? <span className="font-medium text-primary mr-2">[{op.stage}]</span> : null}
-                  {op.message || "无详细信息"}
+                  {display.stage ? <span className="font-medium text-primary mr-2">[{display.stage}]</span> : null}
+                  {display.message || "无详细信息"}
                 </div>
 
                 {op.error?.code && (

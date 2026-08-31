@@ -39,6 +39,7 @@ import {
   useAccountRecord,
   useAccountActions,
   useAccountRunningOperation,
+  useAccountLastRun,
 } from "@/store/selectors";
 import { useKeeperStore } from "@/store/keeperStore";
 import { RelativeTime } from "@/components/ui/relative-time";
@@ -65,6 +66,7 @@ interface AccountCardProps {
 export const AccountCard = React.memo(({ id, onDelete }: AccountCardProps) => {
   const record = useAccountRecord(id);
   const runningOp = useAccountRunningOperation(id);
+  const lastRun = useAccountLastRun(id);
   const actions = useAccountActions();
   const selected = useKeeperStore((s) => s.selectedAccountIds.has(id));
   const toggle = useKeeperStore((s) => s.toggleAccountSelected);
@@ -297,13 +299,13 @@ export const AccountCard = React.memo(({ id, onDelete }: AccountCardProps) => {
                   className="text-xs text-primary"
                 />
               </div>
-              {acc.lastRunOk === false && acc.lastRunReason ? (
+              {lastRun.lastRunOk === false && lastRun.lastRunReason ? (
                 <div
                   tabIndex={0}
-                  title={`失败: ${acc.lastRunReason}`}
+                  title={`失败: ${lastRun.lastRunReason}`}
                   className="text-2xs text-danger mt-1 bg-danger-soft px-1.5 py-0.5 rounded-sm truncate cursor-help focus-visible:ring-1"
                 >
-                  失败: {acc.lastRunReason}
+                  失败: {lastRun.lastRunReason}
                 </div>
               ) : null}
             </>
@@ -428,7 +430,7 @@ export const AccountCard = React.memo(({ id, onDelete }: AccountCardProps) => {
                 )}
               </Button>
 
-              {(statusNeedsAttention(acc.status) || acc.lastRunOk === false) && (
+              {(statusNeedsAttention(acc.status) || lastRun.lastRunOk === false) && (
                 <Button
                   variant="ghost"
                   size="icon-sm"

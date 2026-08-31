@@ -6,6 +6,7 @@ import {
   ApplicationServices,
   ERROR_CODES,
   InMemoryReceiptStore,
+  OperationRegistry,
   ReceiptCoordinator,
 } from "../src/application/index.js";
 
@@ -222,6 +223,40 @@ test("hello negotiates major version and bootstrap contains a consistent managem
     }),
     (error) => error.code === ERROR_CODES.PROTOCOL_MISMATCH
   );
+});
+
+test("bootstrap 保留被大量巡检挤出列表的最新对话失败，不被较旧成功历史覆盖", async () => {
+  let now = Date.parse("2026-08-31T10:00:00.000Z");
+  const operations = new OperationRegistry({ clock: () => new Date(now), maxTerminal: 5 });
+  const runtime = fakeRuntime({
+    listHistoryAccounts: () => [{
+      accountId: "acc_1", entryCount: 1, deleted: false,
+      lastAt: "2026-08-31T10:00:00.000Z", lastOk: true,
+    }],
+  });
+  const services = new ApplicationServices({ runtime, operations });
+  const schedulerBefore = runtime.scheduler.status();
+  const finish = (id, kind, state, error = null) => {
+    now += 1000;
+    operations.declare(kind, { id, resourceId: "acc_1" });
+    operations.update(id, { state, error });
+  };
+  finish("manual-success", "account-run", "succeeded");
+  finish("latest-startup-failure", "account-run", "failed", {
+    code: "TIMEOUT", message: "Chrome 本地调试端口未就绪", retryable: true,
+  });
+  finish("cancelled-run", "account-run", "cancelled");
+  for (let index = 0; index < 120; index++) {
+    finish(`check-${index}`, "account-status-refresh", "succeeded");
+  }
+
+  const snapshot = await services.invoke("system.bootstrap");
+  const latest = snapshot.operations.find((operation) => operation.id === "latest-startup-failure");
+  assert.equal(latest?.state, "failed", "重连快照不能遗失历史里没有的新启动失败");
+  assert.equal(latest.error.message, "Chrome 本地调试端口未就绪");
+  assert.equal(snapshot.historyAccounts[0].lastOk, true);
+  assert.deepEqual(runtime.scheduler.status(), schedulerBefore, "实际结果展示不能改写调度排期");
+  assert.equal(new Set(snapshot.operations.map((operation) => operation.id)).size, snapshot.operations.length);
 });
 
 test("hello rejects a client without the per-user IPC credential", async () => {

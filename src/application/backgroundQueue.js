@@ -491,13 +491,14 @@ export class BackgroundQueue {
       return;
     }
     const closeFailed = entry.closeOutcome?.ok === false;
+    const completionMessage = entry.stage === STAGES.closing ? "任务已完成" : null;
     this._operations.update(entry.operationId, {
       // 业务成功不等于资源已释放；完整 Chrome 树无法确认回收时必须降级。
       state: closeFailed ? "failed" : "succeeded",
       stage: null,
       ...(closeFailed
         ? { message: `Chrome 未能确认回收：${entry.closeOutcome.reason ?? "unknown"}` }
-        : {}),
+        : completionMessage ? { message: completionMessage } : {}),
       progress: 1,
       result: result ?? closeResult ?? null,
       blocksUpdate: false,

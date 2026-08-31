@@ -11,6 +11,7 @@ import { getAccount, effectiveProxyId } from "./store.js";
 import { resolveRegionForAccount } from "./geo.js";
 import { scheduleProfileCacheMaintenance } from "./profileMaintenance.js";
 import { replaceFileSync } from "./atomicFile.js";
+import { throwIfCancelled } from "./cancellation.js";
 import * as log from "./logger.js";
 
 /**
@@ -28,7 +29,8 @@ import * as log from "./logger.js";
  */
 const BROWSER_CHANNEL = "chrome";
 const HEADLESS_IDENTITY_CACHE_MS = 5 * 60 * 1000;
-const DEVTOOLS_ENDPOINT_TIMEOUT_MS = 10_000;
+const DEVTOOLS_ENDPOINT_TIMEOUT_MS = 30_000;
+const CDP_CONNECTION_TIMEOUT_MS = 10_000;
 const CDP_COMMAND_TIMEOUT_MS = 10_000;
 const INTERACTIVE_CDP_TIMEOUT_MS = 15_000;
 const INTERACTIVE_CDP_POLL_TIMEOUT_MS = 750;
@@ -294,46 +296,82 @@ function configureHeadlessLaunchArgs(launchArgs, identity) {
   );
 }
 
-const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const delay = (ms, signal = null) => new Promise((resolve, reject) => {
+  throwIfCancelled(signal);
+  const finish = () => {
+    signal?.removeEventListener("abort", abort);
+    resolve();
+  };
+  const timer = setTimeout(finish, ms);
+  const abort = () => {
+    clearTimeout(timer);
+    signal.removeEventListener("abort", abort);
+    try {
+      throwIfCancelled(signal);
+    } catch (error) {
+      reject(error);
+    }
+  };
+  signal?.addEventListener("abort", abort, { once: true });
+});
 
-export async function waitForDevToolsEndpoint(userDataDir, notBefore) {
+export async function waitForDevToolsEndpoint(
+  userDataDir,
+  notBefore,
+  { timeoutMs = DEVTOOLS_ENDPOINT_TIMEOUT_MS, signal = null } = {}
+) {
+  throwIfCancelled(signal);
   const endpointFile = path.join(userDataDir, "DevToolsActivePort");
-  const deadline = Date.now() + DEVTOOLS_ENDPOINT_TIMEOUT_MS;
-  let lastError = null;
+  const started = Date.now();
+  const deadline = started + timeoutMs;
+  let lastState = "尚未读取 DevToolsActivePort";
 
   while (Date.now() < deadline) {
+    throwIfCancelled(signal);
     try {
       const [content, stats] = await Promise.all([
-        fs.readFile(endpointFile, "utf8"),
+        fs.readFile(endpointFile, { encoding: "utf8", signal: signal ?? undefined }),
         fs.stat(endpointFile),
       ]);
+      throwIfCancelled(signal);
       // 避免异常退出遗留的旧端口文件被误读。Windows 文件时间粒度保留 2 秒余量。
+      // 慢启动时旧文件会一直存在，不能删 Profile/放宽新鲜度检查来掩盖它。
       if (stats.mtimeMs + 2_000 < notBefore) {
-        await delay(50);
-        continue;
+        lastState = `DevToolsActivePort 仍是旧文件（早于本次启动 ${Math.round(notBefore - stats.mtimeMs)}ms）`;
+      } else {
+        const [portLine, pathLine] = content.trim().split(/\r?\n/);
+        const port = Number(portLine);
+        if (
+          !Number.isInteger(port) ||
+          port < 1 ||
+          port > 65_535 ||
+          !pathLine?.startsWith("/devtools/browser/")
+        ) {
+          lastState = "DevToolsActivePort 内容无效或尚未写完";
+        } else {
+          return `ws://127.0.0.1:${port}${pathLine}`;
+        }
       }
-      const [portLine, pathLine] = content.trim().split(/\r?\n/);
-      const port = Number(portLine);
-      if (
-        !Number.isInteger(port) ||
-        port < 1 ||
-        port > 65_535 ||
-        !pathLine?.startsWith("/devtools/browser/")
-      ) {
-        throw new Error("DevToolsActivePort 内容无效");
-      }
-      return `ws://127.0.0.1:${port}${pathLine}`;
     } catch (error) {
-      lastError = error;
-      await delay(50);
+      throwIfCancelled(signal);
+      // 文件系统原始 message 含账号 Profile 路径，诊断只保留状态/错误码。
+      lastState = error?.code === "ENOENT"
+        ? "DevToolsActivePort 尚未生成"
+        : `DevToolsActivePort 读取失败（${error?.code || "未知文件错误"}）`;
     }
+    const remaining = deadline - Date.now();
+    if (remaining > 0) await delay(Math.min(50, remaining), signal);
   }
 
-  throw new Error(
-    `无法连接 Headless Chrome 的本地调试端口：${String(
-      lastError?.message || lastError || "等待超时"
-    )}`
+  throwIfCancelled(signal);
+  const elapsedMs = Date.now() - started;
+  const error = new Error(
+    `无法连接 Headless Chrome 的本地调试端口：等待超时（已等待 ${elapsedMs}ms，限时 ${timeoutMs}ms；${lastState}）`
   );
+  error.code = "CHROME_DEVTOOLS_TIMEOUT";
+  error.elapsedMs = elapsedMs;
+  error.timeoutMs = timeoutMs;
+  throw error;
 }
 
 class RawCdpConnection {
@@ -372,7 +410,7 @@ class RawCdpConnection {
       const timer = setTimeout(() => {
         socket.terminate();
         reject(new Error("连接 Chrome CDP WebSocket 超时"));
-      }, DEVTOOLS_ENDPOINT_TIMEOUT_MS);
+      }, CDP_CONNECTION_TIMEOUT_MS);
       const onOpen = () => {
         clearTimeout(timer);
         socket.off("error", onError);

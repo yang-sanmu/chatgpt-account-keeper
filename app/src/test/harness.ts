@@ -74,28 +74,30 @@ export const DEFAULT_STARTUP_INFO = {
   },
 };
 
-vi.mock("@tauri-apps/api/core", () => ({
-  invoke: vi.fn(async (command: string, args?: Record<string, unknown>) => {
-    calls.push({ command, args });
+async function invokeInHarness(command: string, args?: Record<string, unknown>): Promise<unknown> {
+  calls.push({ command, args });
 
-    if (command === "agent_call") {
-      const method = String(args?.method ?? "");
-      const handler = methodHandlers.get(method);
-      if (handler) return handler((args?.params ?? {}) as Record<string, unknown>);
-      return null;
-    }
-
-    const handler = commandHandlers.get(command);
-    if (handler) return handler(command, args);
-
-    if (command === "get_startup_info") return DEFAULT_STARTUP_INFO;
-    if (command === "new_command_id") return "00000000-0000-4000-8000-000000000000";
-    if (command === "connect_agent") {
-      return { connected: true, status: "已连接", detail: "Agent 就绪" };
-    }
-    if (command === "check_update") return { state: "up-to-date", message: "已是最新" };
+  if (command === "agent_call") {
+    const method = String(args?.method ?? "");
+    const handler = methodHandlers.get(method);
+    if (handler) return handler((args?.params ?? {}) as Record<string, unknown>);
     return null;
-  }),
+  }
+
+  const handler = commandHandlers.get(command);
+  if (handler) return handler(command, args);
+
+  if (command === "get_startup_info") return DEFAULT_STARTUP_INFO;
+  if (command === "new_command_id") return "00000000-0000-4000-8000-000000000000";
+  if (command === "connect_agent") {
+    return { connected: true, status: "已连接", detail: "Agent 就绪" };
+  }
+  if (command === "check_update") return { state: "up-to-date", message: "已是最新" };
+  return null;
+}
+
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: vi.fn((command: string, args?: Record<string, unknown>) => invokeInHarness(command, args)),
 }));
 
 vi.mock("@tauri-apps/api/event", () => ({
@@ -146,6 +148,15 @@ export const tauri: TauriHarness = {
   emitExitProgress: (payload) => emit("keeper://exit", payload),
 
   reset() {
+    // 仅补上 WebView 原生注入的窗口标识。Window 的 show/unminimize/setFocus
+    // 仍走真实 API，最终的 native invoke 才由上面的边界桩接管。
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {
+        invoke: invokeInHarness,
+        metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main", windowLabel: "main" } },
+      },
+    });
     listeners.clear();
     commandHandlers.clear();
     methodHandlers.clear();

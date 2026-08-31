@@ -82,30 +82,30 @@ test("normal Draft creation requires N-1 verification and every platform signing
   assert.match(releaseSource, /"\$minisign_bin" -V/);
 });
 
-test("the unsigned public-release exception is locked to v0.2.0", () => {
+test("the unsigned public-release exception is locked to v0.2.1", () => {
   const inputs = release.on.workflow_dispatch.inputs;
   const requestGate = release.jobs.gate.steps.find(
-    (step) => step.name === "Validate the one-time unsigned v0.2.0 request",
+    (step) => step.name === "Validate the one-time unsigned v0.2.1 request",
   );
   const markerGate = release.jobs.aggregate.steps.find(
-    (step) => step.name === "Require explicit unsigned markers for the one-time v0.2.0 release",
+    (step) => step.name === "Require explicit unsigned markers for the one-time v0.2.1 release",
   );
   const createRelease = release.jobs.aggregate.steps.find(
     (step) => step.name === "Create the single GitHub Draft or one-time public Release",
   );
 
-  assert.equal(inputs.publish_unsigned_v0_2_0.default, false);
-  assert.match(requestGate.run, /VERSION" != '0\.2\.0'/);
+  assert.equal(inputs.publish_unsigned_v0_2_1.default, false);
+  assert.match(requestGate.run, /VERSION" != '0\.2\.1'/);
   assert.match(requestGate.run, /publish_draft/);
   assert.match(requestGate.run, /n_minus_one_verified/);
   assert.match(markerGate.run, /UNSIGNED-\$rid\.txt/);
-  assert.match(createRelease.if, /publish_unsigned_v0_2_0/);
+  assert.match(createRelease.if, /publish_unsigned_v0_2_1/);
   assert.match(createRelease.run, /release_visibility=\(--latest\)/);
   assert.match(releaseSource, /TAURI_SIGNING_PRIVATE_KEY is required/);
 
-  assert.match(publishScript, /\[switch\] \$PublishUnsignedV020/);
-  assert.match(publishScript, /Version -ne '0\.2\.0'/);
-  assert.match(publishScript, /publish_unsigned_v0_2_0=/);
+  assert.match(publishScript, /\[switch\] \$PublishUnsignedV021/);
+  assert.match(publishScript, /Version -ne '0\.2\.1'/);
+  assert.match(publishScript, /publish_unsigned_v0_2_1=/);
 });
 
 test("Linux only installs the pinned Minisign tool when signing is configured", () => {

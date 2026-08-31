@@ -1,6 +1,6 @@
 [package]
 name = "keeper-app"
-version = "0.2.0"
+version = "0.2.1"
 description = "ChatGPT Account Keeper 管理端"
 authors = ["yang-sanmu"]
 license = "AGPL-3.0-only"

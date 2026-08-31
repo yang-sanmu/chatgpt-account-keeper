@@ -209,6 +209,33 @@ test("session 和鉴权接口均成功时判定已登录", async () => {
   assert.equal(result.email, "person@example.com");
 });
 
+test("后端验证身份成功时可见登录入口不能覆盖已登录状态", async () => {
+  const result = await checkSession(
+    pageRunningProbe({
+      session: { body: healthySession },
+      me: { body: JSON.stringify({ id: "user-1", email: "person@example.com" }) },
+      loggedOut: true,
+    })
+  );
+
+  assert.equal(result.state, SESSION_OK);
+  assert.equal(result.email, "person@example.com");
+});
+
+test("没有 session 身份时不能仅凭 meValidUser 标记判定已登录", async () => {
+  const result = await checkSession(
+    pageReturning({
+      email: null,
+      name: null,
+      hasToken: true,
+      meStatus: 200,
+      meValidUser: true,
+    })
+  );
+
+  assert.equal(result.state, SESSION_UNKNOWN);
+});
+
 test("session 有邮箱但暂缺 accessToken 时保持待确认", async () => {
   const result = await checkSession(
     pageReturning({

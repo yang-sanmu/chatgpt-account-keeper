@@ -336,9 +336,15 @@ export async function checkSession(page, options = {}) {
   const email = probe.email ?? null;
   const name = probe.name ?? null;
 
+  // 与 session 身份一致的后端用户 JSON 是最强的可用证据。页面迁移期间，
+  // 可见登录入口或弹窗可能与仍可用的认证响应同时存在，不能用 UI 标记覆盖它。
+  if (email && probe.meStatus === 200 && probe.meValidUser) {
+    return { state: SESSION_OK, email, name, detail: null };
+  }
+
   // 游客页与登录页现在同样提供可用输入框，只有会话接口而忽略页面强指示，会让
   // 自动对话先以游客身份跑几轮，再被 modal-no-auth-login 拦住。可见的登录入口
-  // 或未登录弹窗是明确证据；挑战页优先保持 unknown，避免把 WAF 误判成退出。
+  // 或未登录弹窗是强证据；挑战页优先保持 unknown，避免把 WAF 误判成退出。
   if (probe.loggedOutPage && !probe.challengePage) {
     return {
       state: email ? SESSION_REAUTH : SESSION_OUT,
@@ -391,11 +397,6 @@ export async function checkSession(page, options = {}) {
       name,
       detail: "session 暂未提供 accessToken，未能确认会话状态",
     };
-  }
-
-  // 后端鉴权通过，且确实返回了与 session 一致的用户 JSON。
-  if (probe.meStatus === 200 && probe.meValidUser) {
-    return { state: SESSION_OK, email, name, detail: null };
   }
 
   // 只有已知的明确 token-invalid 响应才判为 reauth；是否清理 Cookie 仍只由

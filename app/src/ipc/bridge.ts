@@ -3,6 +3,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import type {
   Account,
   AgentEventEnvelope,
@@ -134,6 +135,18 @@ export async function exitAll(force = false): Promise<void> {
 export async function hideToTray(): Promise<void> {
   try {
     await invoke<void>("hide_to_tray");
+  } catch (error) {
+    throw normalizeApiError(error);
+  }
+}
+
+// 托盘触发需要用户选择的动作时，让承载询问框的主窗口可见。
+export async function showMainWindow(): Promise<void> {
+  try {
+    const window = getCurrentWindow();
+    await window.show();
+    await window.unminimize();
+    await window.setFocus();
   } catch (error) {
     throw normalizeApiError(error);
   }

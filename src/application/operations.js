@@ -7,6 +7,21 @@ function clone(value) {
   return value == null ? value : structuredClone(value);
 }
 
+function latestAccountRuns(operations) {
+  const latest = new Map();
+  for (const operation of operations) {
+    if (operation.kind !== "account-run" || !operation.resourceId) continue;
+    if (!["succeeded", "failed", "timed_out"].includes(operation.state)) continue;
+    const finishedAt = Date.parse(operation.finishedAt);
+    if (!Number.isFinite(finishedAt)) continue;
+    const previous = latest.get(operation.resourceId);
+    if (!previous || finishedAt >= Date.parse(previous.finishedAt)) {
+      latest.set(operation.resourceId, operation);
+    }
+  }
+  return [...latest.values()];
+}
+
 export class OperationRegistry {
   constructor(options = {}) {
     this._events = options.events;
@@ -235,6 +250,19 @@ export class OperationRegistry {
       .map(clone);
   }
 
+  /** 每个账号的最新实际结果独立于全局任务列表上限，供重连快照补齐。 */
+  listLatestAccountRuns() {
+    let stored = [];
+    try {
+      stored = this._store?.listLatestAccountRuns?.() ?? [];
+    } catch {
+      // 与 list() 一样，存储不可用时保留内存视图。
+    }
+    const merged = new Map(stored.map((operation) => [operation.id, operation]));
+    for (const operation of this._operations.values()) merged.set(operation.id, operation);
+    return latestAccountRuns(merged.values()).map(clone);
+  }
+
   waitForTerminal(id) {
     const current = this._operations.get(id);
     if (!current) return Promise.resolve(null);
@@ -248,13 +276,17 @@ export class OperationRegistry {
 
   prune() {
     const cutoff = this._clock().getTime() - this._retentionMs;
+    // 每个账号额外保留一条实际结果；巡检和取消不应抹掉最后一次对话失败。
+    const latestIds = new Set(latestAccountRuns(this._operations.values()).map((operation) => operation.id));
     const terminal = [...this._operations.values()]
       .filter((operation) => TERMINAL_STATES.has(operation.state))
       .sort((a, b) => Date.parse(a.finishedAt) - Date.parse(b.finishedAt));
     for (const operation of terminal) {
-      if (Date.parse(operation.finishedAt) <= cutoff) this._operations.delete(operation.id);
+      if (!latestIds.has(operation.id) && Date.parse(operation.finishedAt) <= cutoff) {
+        this._operations.delete(operation.id);
+      }
     }
-    const remaining = terminal.filter((operation) => this._operations.has(operation.id));
+    const remaining = terminal.filter((operation) => this._operations.has(operation.id) && !latestIds.has(operation.id));
     while (remaining.length > this._maxTerminal) {
       this._operations.delete(remaining.shift().id);
     }

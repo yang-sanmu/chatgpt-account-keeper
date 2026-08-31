@@ -53,6 +53,7 @@ import {
   refreshBootstrap,
   saveSettings,
   setSchedulerTrayState,
+  showMainWindow,
   subscribeTauriEvents,
 } from "@/ipc/bridge";
 import { notify } from "@/lib/notify";
@@ -187,6 +188,8 @@ interface KeeperState {
   proxies: ProxyState;
   conversations: Record<string, ConversationSet>;
   scheduler: SchedulerState;
+  schedulerStarting: boolean;
+  schedulerStartDialogOpen: boolean;
   operations: Operation[];
   historyAccounts: HistoryAccount[];
   browserRuns: BrowserRunListResult | null;
@@ -252,6 +255,8 @@ interface KeeperActions {
   bulkRemove: (ids: readonly string[], profileAction: ProfileAction) => Promise<void>;
 
   startScheduler: () => Promise<void>;
+  confirmSchedulerStart: (remember: boolean) => Promise<void>;
+  dismissSchedulerStartDialog: () => void;
   stopScheduler: () => Promise<void>;
   toggleScheduler: () => Promise<void>;
 
@@ -298,6 +303,8 @@ const INITIAL_STATE: KeeperState = {
   proxies: DEFAULT_PROXY_STATE,
   conversations: {},
   scheduler: DEFAULT_SCHEDULER,
+  schedulerStarting: false,
+  schedulerStartDialogOpen: false,
   operations: [],
   historyAccounts: [],
   browserRuns: null,
@@ -448,6 +455,30 @@ function reportBulk(
 }
 
 export const useKeeperStore = create<KeeperStore>()((set, get) => {
+  async function startSchedulerNow(remember: boolean): Promise<void> {
+    if (get().schedulerStarting) return;
+    if (get().scheduler.running) {
+      set({ schedulerStartDialogOpen: false });
+      return;
+    }
+    set({ schedulerStarting: true });
+    try {
+      if (remember) {
+        const next = { ...get().desktopSettings, autoStartScheduler: true };
+        // 偏好保存成功后才启动；写入失败时保留询问框，不能假装已经记住选择。
+        await saveSettings(next);
+        set({ desktopSettings: next });
+      }
+      await agentCall("scheduler.start", {}, await newCommandId());
+      set({ schedulerStartDialogOpen: false });
+      notify.success("自动调度已启动");
+    } catch (error) {
+      notify.error("启动自动调度失败", error);
+    } finally {
+      set({ schedulerStarting: false });
+    }
+  }
+
   /// 串行执行一批单账号调用并汇总结果。
   ///
   /// 必须保持串行：runNow 与 refreshStatus 每个都可能拉起一个真实 Chrome，并发提交 28 个
@@ -472,6 +503,9 @@ export const useKeeperStore = create<KeeperStore>()((set, get) => {
     set((state) => {
       const serverAccounts: Account[] = (snapshot.accounts ?? []).map(normalizeAccount);
       const { records, ids } = reconcileFromSnapshot(state.accounts, serverAccounts);
+      const scheduler = snapshot.scheduler
+        ? normalizeScheduler(snapshot.scheduler)
+        : state.scheduler;
 
       // 选中项里已经不存在的账号要清掉，仍存在的保留 —— 一次刷新不该让用户重新勾一遍。
       const validIds = new Set(ids);
@@ -487,9 +521,8 @@ export const useKeeperStore = create<KeeperStore>()((set, get) => {
         groups: snapshot.groups ?? state.groups,
         proxies: snapshot.proxies ?? state.proxies,
         conversations: snapshot.conversations ?? state.conversations,
-        scheduler: snapshot.scheduler
-          ? normalizeScheduler(snapshot.scheduler)
-          : state.scheduler,
+        scheduler,
+        schedulerStartDialogOpen: scheduler.running ? false : state.schedulerStartDialogOpen,
         agentSettings: snapshot.settings ?? state.agentSettings,
         operations: snapshot.operations ?? state.operations,
         historyAccounts: snapshot.historyAccounts ?? state.historyAccounts,
@@ -682,7 +715,10 @@ export const useKeeperStore = create<KeeperStore>()((set, get) => {
 
       case "scheduler.changed": {
         const scheduler = normalizeScheduler(envelope.payload);
-        set({ scheduler });
+        set({
+          scheduler,
+          ...(scheduler.running ? { schedulerStartDialogOpen: false } : {}),
+        });
         // 让托盘菜单与真实状态一致。
         void setSchedulerTrayState(scheduler.running);
         break;
@@ -709,10 +745,10 @@ export const useKeeperStore = create<KeeperStore>()((set, get) => {
               ...state.scheduler.accounts,
               [accountId]: {
                 ...state.scheduler.accounts[accountId],
-                nextRunAt: payload.nextAt ?? state.scheduler.accounts[accountId]?.nextRunAt,
-                lastRunAt: payload.lastAt ?? state.scheduler.accounts[accountId]?.lastRunAt,
-                lastRunOk: patch.lastRunOk ?? state.scheduler.accounts[accountId]?.lastRunOk,
-                reason: patch.lastRunReason ?? state.scheduler.accounts[accountId]?.reason,
+                nextRunAt: payload.nextAt !== undefined ? payload.nextAt : state.scheduler.accounts[accountId]?.nextRunAt,
+                lastRunAt: payload.lastAt !== undefined ? payload.lastAt : state.scheduler.accounts[accountId]?.lastRunAt,
+                lastRunOk: patch.lastRunOk !== undefined ? patch.lastRunOk : state.scheduler.accounts[accountId]?.lastRunOk,
+                reason: patch.lastRunReason !== undefined ? patch.lastRunReason : state.scheduler.accounts[accountId]?.reason,
                 busy: payload.busy ?? state.scheduler.accounts[accountId]?.busy,
               },
             },
@@ -1057,12 +1093,26 @@ export const useKeeperStore = create<KeeperStore>()((set, get) => {
 
     // -------------------------------------------------------------- 调度
     startScheduler: async () => {
-      try {
-        await agentCall("scheduler.start", {}, await newCommandId());
-        notify.success("自动调度已启动");
-      } catch (error) {
-        notify.error("启动自动调度失败", error);
+      if (get().scheduler.running || get().schedulerStarting) return;
+      if (!get().desktopSettings.autoStartScheduler) {
+        set({ schedulerStartDialogOpen: true });
+        try {
+          await showMainWindow();
+        } catch (error) {
+          notify.error("无法显示启动调度询问", error);
+        }
+        return;
       }
+      await startSchedulerNow(false);
+    },
+
+    confirmSchedulerStart: async (remember) => {
+      if (!get().schedulerStartDialogOpen) return;
+      await startSchedulerNow(remember);
+    },
+
+    dismissSchedulerStartDialog: () => {
+      if (!get().schedulerStarting) set({ schedulerStartDialogOpen: false });
     },
 
     stopScheduler: async () => {

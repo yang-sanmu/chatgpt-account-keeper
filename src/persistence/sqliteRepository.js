@@ -5,6 +5,15 @@ import { MIGRATION_LEDGER_SQL, MIGRATIONS, SCHEMA_VERSION } from "./schema.js";
 
 const require = createRequire(import.meta.url);
 const DEFAULT_RECEIPT_TTL_MS = 24 * 60 * 60 * 1000;
+const LATEST_ACCOUNT_RUN_IDS_SQL = `
+  SELECT id FROM (
+    SELECT id, ROW_NUMBER() OVER (
+      PARTITION BY resource_id ORDER BY finished_at DESC, rowid DESC
+    ) AS account_rank
+    FROM operations
+    WHERE kind = 'account-run' AND resource_id IS NOT NULL AND finished_at IS NOT NULL
+      AND state IN ('succeeded', 'failed', 'timed_out')
+  ) WHERE account_rank = 1`;
 
 function repositoryError(code, message, cause = null) {
   const error = new Error(message, cause ? { cause } : undefined);
@@ -31,6 +40,24 @@ function parseJson(value, fallback = null) {
 
 function bool(value, fallback = false) {
   return value == null ? (fallback ? 1 : 0) : value ? 1 : 0;
+}
+
+function operationFromRow(row) {
+  return {
+    id: row.id,
+    kind: row.kind,
+    resourceId: row.resource_id,
+    state: row.state,
+    stage: row.stage,
+    message: row.message,
+    progress: row.progress,
+    blocksUpdate: !!row.blocks_update,
+    startedAt: row.started_at,
+    updatedAt: row.updated_at,
+    finishedAt: row.finished_at,
+    result: row.result_json == null ? null : parseJson(row.result_json, null),
+    error: row.error_json == null ? null : parseJson(row.error_json, null),
+  };
 }
 
 function accountFromRow(row) {
@@ -327,21 +354,14 @@ export class KeeperRepository {
               ORDER BY started_at DESC, rowid DESC LIMIT ?`
           )
           .all(safeLimit);
-    return rows.map((row) => ({
-      id: row.id,
-      kind: row.kind,
-      resourceId: row.resource_id,
-      state: row.state,
-      stage: row.stage,
-      message: row.message,
-      progress: row.progress,
-      blocksUpdate: !!row.blocks_update,
-      startedAt: row.started_at,
-      updatedAt: row.updated_at,
-      finishedAt: row.finished_at,
-      result: row.result_json == null ? null : parseJson(row.result_json, null),
-      error: row.error_json == null ? null : parseJson(row.error_json, null),
-    }));
+    return rows.map(operationFromRow);
+  }
+
+  listLatestAccountRuns() {
+    return this.db.prepare(
+      `SELECT * FROM operations WHERE id IN (${LATEST_ACCOUNT_RUN_IDS_SQL})
+       ORDER BY finished_at DESC, rowid DESC`
+    ).all().map(operationFromRow);
   }
 
   /**
@@ -365,7 +385,7 @@ export class KeeperRepository {
       .prepare(
         `DELETE FROM operations WHERE id NOT IN (
            SELECT id FROM operations ORDER BY started_at DESC, rowid DESC LIMIT ?
-         )`
+         ) AND id NOT IN (${LATEST_ACCOUNT_RUN_IDS_SQL})`
       )
       .run(safeKeep).changes;
   }

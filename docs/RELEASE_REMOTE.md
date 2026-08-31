@@ -38,17 +38,17 @@ npm run tauri signer generate -- -w D:\offline-backup\gpt-account-keeper-updater
 同一平台的 Secrets 必须完整配置。缺失整组时仍可产出带 Tauri 更新签名的内部检查包，
 但会生成 UNSIGNED-<rid>.txt，正常发布的 aggregate job 不允许据此创建 Draft。
 
-## `v0.2.0` 一次性 unsigned 首发例外
+## `v0.2.1` 一次性 unsigned 发布例外
 
-首个 Tauri 版本没有可供验证的上一版。经发布者明确授权，工作流允许精确版本 `0.2.0`
-在缺少 Authenticode、Apple Developer ID/公证和 Linux Minisign 时直接公开，并跳过候选
-安装、N → N+1 与 `PublishDraft -UpdaterVerified` 阶段：
+经发布者针对本次发布明确授权，工作流允许精确版本 `0.2.1` 在缺少 Authenticode、Apple
+Developer ID/公证和 Linux Minisign 时直接公开，并跳过候选安装、N → N+1 与
+`PublishDraft -UpdaterVerified` 阶段：
 
 ~~~powershell
-.\scripts\publish-windows-release.ps1 -Version 0.2.0 -Mode Release -PublishUnsignedV020 -ReleaseNotesFile .\docs\release-notes\v0.2.0.md
+.\scripts\publish-windows-release.ps1 -Version 0.2.1 -Mode Release -PublishUnsignedV021 -ReleaseNotesFile .\docs\release-notes\v0.2.1.md
 ~~~
 
-这个命令只跟踪远端工作流，不下载任何产物。CI 会同时要求版本精确等于 `0.2.0`、四个平台
+这个命令只跟踪远端工作流，不下载任何产物。CI 会同时要求版本精确等于 `0.2.1`、四个平台
 都明确生成 `UNSIGNED-<rid>.txt`、完整安装包/SBOM/校验和存在，并继续强制 Tauri updater
 私钥、公钥和每个平台 updater `.sig`。最终 Release 会自动附加平台未签名警告并直接标为
 latest。脚本和工作流都拒绝把这个开关用于其他版本，也拒绝与正常 Draft/N-1 证明混用。
@@ -146,7 +146,7 @@ Draft 还不会被 GitHub releases/latest 返回，因此不能把“Draft 已�
 - Linux AppImage/校验清单的 Minisign 签名与公钥
 - SHA256SUMS.release.txt
 
-`v0.2.0` 一次性例外没有 Minisign `.minisig` 与 `minisign.pub`，但仍包含 Linux SHA-256
+`v0.2.1` 一次性例外没有 Minisign `.minisig` 与 `minisign.pub`，但仍包含 Linux SHA-256
 清单、总校验和和 Tauri updater 的 `.AppImage.sig`。
 
 ## 工作流关键门禁
@@ -162,5 +162,5 @@ Draft 还不会被 GitHub releases/latest 返回，因此不能把“Draft 已�
 6. 从各 bundle 目录只收集唯一的本次产物，生成 latest.json、源码归档和总校验和。
 7. Candidate 只上传 workflow artifact；正常 Release 模式创建 Draft。
 
-除写死为 `v0.2.0` 的一次性首发开关外，不保留“允许无平台签名并跳过人工验收”的直接
+除写死为 `v0.2.1` 的本次发布开关外，不保留“允许无平台签名并跳过人工验收”的直接
 公开路径。

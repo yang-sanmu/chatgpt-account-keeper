@@ -51,7 +51,7 @@ export function OverviewPage() {
   const { connection, agentVersion, instanceId } = useConnectionStatus();
   const startupInfo = useKeeperStore((s) => s.startupInfo);
 
-  const { scheduler, running, start, stop } = useSchedulerControls();
+  const { scheduler, running, starting, start, stop } = useSchedulerControls();
   const queue = useKeeperStore((s) => s.queue);
   const browserRuns = useKeeperStore((s) => s.browserRuns);
   const operations = useKeeperStore((s) => s.operations).slice(0, 6);
@@ -156,6 +156,7 @@ export function OverviewPage() {
               variant={running ? "outline" : "default"}
               size="sm"
               onClick={() => (running ? stop() : start())}
+              disabled={starting}
               className="h-7 text-xs gap-1.5"
             >
               {running ? (

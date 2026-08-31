@@ -10,6 +10,18 @@ import {
   waitForInteractiveCdp,
 } from "./browser.js";
 import * as defaultLog from "./logger.js";
+import { throwIfCancelled } from "./cancellation.js";
+
+function throwIfCancelledBeforeLaunch(signal) {
+  try {
+    throwIfCancelled(signal);
+  } catch (error) {
+    // token 已由 BrowserRun 预登记，但尚未向 broker 发出 launch。
+    // 只给新建的取消错误附证明，不能修改可能由多个任务共享的 signal.reason。
+    error.ownershipCertain = true;
+    throw error;
+  }
+}
 
 /**
  * 统一的 Chrome 创建入口（计划 §9.1）。有头与无头共用同一条路径：同样的进程登记、
@@ -70,6 +82,7 @@ export class ChromeProcessLauncher {
     runToken,
     signal = null,
   }) {
+    throwIfCancelledBeforeLaunch(signal);
     if (!this._broker?.running) {
       const error = new Error("chrome-launcher 不可用，无法启动 Chrome");
       error.code = "CHROME_BROKER_UNAVAILABLE";
@@ -91,20 +104,23 @@ export class ChromeProcessLauncher {
     });
     const notBefore = Date.now();
 
+    throwIfCancelledBeforeLaunch(signal);
     const launched = await this._broker.launch(runToken, executable, args);
 
     let browser = null;
     let barrier = null;
     try {
+      throwIfCancelled(signal);
       // 2) Headless 从 DevToolsActivePort 读取 Chrome 分配的端口；交互窗口则等待
       //    预先分配的非零端口就绪，避免 port=0 暴露 webdriver。
       let endpoint;
       if (headless) {
-        endpoint = await this._waitForDevTools(resolvedUserDataDir, notBefore);
+        endpoint = await this._waitForDevTools(resolvedUserDataDir, notBefore, { signal });
       } else {
         await this._waitForInteractiveCdp(debugPort);
         endpoint = `http://127.0.0.1:${debugPort}`;
       }
+      throwIfCancelled(signal);
 
       // 3) 先装身份屏障并处理完既有 Target，之后才允许 Playwright attach。
       if (headless) {
@@ -115,10 +131,12 @@ export class ChromeProcessLauncher {
           accountId,
         });
       }
+      throwIfCancelled(signal);
 
       // 4) 现在才接管。
       const httpEndpoint = headless ? toHttpEndpoint(endpoint) : endpoint;
       browser = await this._connectOverCDP(httpEndpoint);
+      throwIfCancelled(signal);
       const context = browser.contexts()[0];
       if (!context) throw new Error("Chrome 没有默认浏览器上下文");
 
@@ -129,6 +147,7 @@ export class ChromeProcessLauncher {
         pages.find((candidate) => candidate.url() === "about:blank")
         ?? pages[0]
         ?? (await context.newPage());
+      throwIfCancelled(signal);
 
       // context.close 显式发送 CDP Browser.close，让持久 Profile 先正常落盘；
       // 进程树的有界等待、强制兜底与最终证明仍由 BrowserRun / broker 完成。

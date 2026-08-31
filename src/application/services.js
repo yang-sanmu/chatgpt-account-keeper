@@ -621,6 +621,12 @@ export class ApplicationServices {
 
   _bootstrap() {
     const context = accountViewContext(this.runtime);
+    const operations = new Map(this.operations.list({ limit: 100, includeTerminal: true })
+      .map((operation) => [operation.id, operation]));
+    // 启动阶段失败不一定产生对话历史，不能被后续大量巡检挤出重连快照。
+    for (const operation of this.operations.listLatestAccountRuns?.() ?? []) {
+      operations.set(operation.id, operation);
+    }
     return {
       instanceId: this.events.instanceId,
       revision: this.events.revision,
@@ -634,7 +640,8 @@ export class ApplicationServices {
       scheduler: publicSchedulerStatus(this.runtime),
       settings: this.runtime.store.getSettings(),
       // 带上最近的已结束任务：重连或重启后错误详情不该消失。
-      operations: this.operations.list({ limit: 100, includeTerminal: true }),
+      operations: [...operations.values()]
+        .sort((a, b) => String(b.startedAt).localeCompare(String(a.startedAt))),
       activeOperations: this.operations.listActive(),
       historyAccounts: this.runtime.listHistoryAccounts?.() ?? [],
       draining: this.draining,

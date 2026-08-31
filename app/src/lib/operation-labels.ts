@@ -58,3 +58,23 @@ const BROWSER_PURPOSES: Record<string, string> = {
 export function describeBrowserPurpose(purpose: string): string {
   return BROWSER_PURPOSES[purpose] ?? purpose;
 }
+
+/// 兼容旧版本已落盘的终态：旧队列会把关闭 Chrome 的进行中提示留在成功记录上。
+///
+/// 这只影响显示，不会改写 store 或持久化内容；非成功任务仍必须如实展示其当前消息。
+export function normalizeOperationDisplay(
+  state: string,
+  stage: string | null,
+  message: string | null
+): { stage: string | null; message: string | null } {
+  if (state !== "succeeded") return { stage, message };
+
+  const hasStaleClosingStage = stage === "closing";
+  const hasStaleClosingMessage = message === "正在关闭 Chrome";
+  if (!hasStaleClosingStage && !hasStaleClosingMessage) return { stage, message };
+
+  return {
+    stage: hasStaleClosingStage ? null : stage,
+    message: hasStaleClosingMessage ? "任务已完成" : message ?? "任务已完成",
+  };
+}

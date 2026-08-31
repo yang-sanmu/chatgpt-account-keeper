@@ -134,6 +134,31 @@ describe("全量快照与增量事件的闭环", () => {
     ).toBe(true);
   });
 
+  it("scheduler.accountChanged 显式清空结果时同步清掉调度视图中的旧错误", () => {
+    tauri.emitBootstrap(makeBootstrap({ accounts: [makeAccount()] }));
+    tauri.emitAgentEvent("scheduler.accountChanged", {
+      accountId: "acc-1",
+      nextAt: "2026-09-01T10:00:00Z",
+      lastAt: "2026-08-31T10:00:00Z",
+      lastResult: { ok: false, reason: "旧的端口超时" },
+    });
+
+    tauri.emitAgentEvent("scheduler.accountChanged", {
+      accountId: "acc-1",
+      nextAt: null,
+      lastAt: null,
+      lastResult: null,
+    });
+
+    expect(store().scheduler.accounts["acc-1"]).toMatchObject({
+      nextRunAt: null,
+      lastRunAt: null,
+      lastRunOk: null,
+      reason: null,
+    });
+    expect(store().accounts["acc-1"]?.effective.lastRunReason).toBeNull();
+  });
+
   it("增量事件不破坏筛选与勾选状态", () => {
     tauri.emitBootstrap(
       makeBootstrap({
@@ -740,6 +765,7 @@ describe("窗口关闭行为", () => {
 
 describe("托盘动作复用页面逻辑", () => {
   it("四个托盘动作各自触发对应的 IPC", async () => {
+    await store().updateDesktopSettings({ autoStartScheduler: true });
     tauri.emitTrayAction("scheduler-start");
     await flush();
     expect(tauri.methodSequence()).toContain("scheduler.start");

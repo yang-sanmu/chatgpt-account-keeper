@@ -30,6 +30,27 @@ function harness(options = {}) {
 
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 
+test("成功完成会替换遗留的 Chrome 关闭进度消息", async () => {
+  resetLocksForTest();
+  const { queue, operations } = harness();
+  queue.registerHandler(WORK_KINDS.accountRun, async ({ setStage }) => {
+    // Browser 清理在业务成功之后才报告进度；终态不能把这条进行中提示留给用户。
+    setStage(STAGES.closing, "正在关闭 Chrome");
+    return { ok: true };
+  });
+
+  const operation = queue.submit({
+    accountId: "acc-closing-message",
+    workKind: WORK_KINDS.accountRun,
+    source: SOURCES.manual,
+  });
+  for (let i = 0; i < 20 && queue.activeCount() > 0; i++) await settle();
+
+  const completed = operations.get(operation.id);
+  assert.equal(completed.state, "succeeded");
+  assert.equal(completed.message, "任务已完成");
+});
+
 test("manual run 与 scheduled run 去重到同一条并提升 effectiveSource", async () => {
   resetLocksForTest();
   const { queue, operations } = harness();

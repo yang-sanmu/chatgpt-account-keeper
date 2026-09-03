@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Eye, EyeOff, Plus, X } from "lucide-react";
-import { AccountStatusFilter } from "@/store/accountModel";
+import { AccountPromoFilter, AccountStatusFilter } from "@/store/accountModel";
 import { SwitchRule } from "@/ipc/types";
 
 interface AccountsToolbarProps {
@@ -70,6 +70,23 @@ export function AccountsToolbar({ onCreateClick }: AccountsToolbarProps) {
           <SelectItem value="disabled">已停用</SelectItem>
           <SelectItem value="page_open">网页已打开</SelectItem>
           <SelectItem value="unknown">未知</SelectItem>
+        </SelectContent>
+      </Select>
+
+      <Select
+        value={filter.promo}
+        onValueChange={(v) => setFilter({ promo: v as AccountPromoFilter })}
+      >
+        <SelectTrigger className="w-32 h-9">
+          <SelectValue placeholder="优惠资格" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">全部优惠</SelectItem>
+          <SelectItem value="eligible">有优惠资格</SelectItem>
+          <SelectItem value="free_trial">免费试用</SelectItem>
+          <SelectItem value="half_price">半价优惠</SelectItem>
+          <SelectItem value="none">无优惠资格</SelectItem>
+          <SelectItem value="unchecked">优惠未检查</SelectItem>
         </SelectContent>
       </Select>
 

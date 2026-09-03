@@ -13,6 +13,7 @@
 // 不塌缩成「未知」：塌缩会让新增状态与真正的 unknown 无法区分。
 
 import type { StatusDotProps } from "@/components/ui/status-dot";
+import type { PromoEligibility } from "@/ipc/types";
 
 type DotStatus = NonNullable<StatusDotProps["status"]>;
 
@@ -47,23 +48,51 @@ export interface AccountStatusDisplay {
   label: string;
 }
 
+export const PROMO_LABELS: Record<Exclude<PromoEligibility, "none">, string> = {
+  free_trial: "免费试用",
+  half_price: "半价优惠",
+  both: "免费试用 + 半价优惠",
+};
+
+function promoStatusLabel(
+  eligibility: PromoEligibility | null | undefined,
+  stale: boolean | undefined
+): string | null {
+  if (!eligibility || eligibility === "none") return null;
+  const label = PROMO_LABELS[eligibility];
+  return stale ? `${label}（待复核）` : label;
+}
+
 /// 把账号状态收敛成一个色点 + 一段中文。
 ///
 /// enabled 优先于 status：一个已停用的账号不参与调度，此时它的巡检状态是次要信息 ——
 /// 只显示「正常」会让用户以为它在跑。
 export function describeAccountStatus(
   status: string,
-  options: { stale: boolean; enabled: boolean }
+  options: {
+    stale: boolean;
+    enabled: boolean;
+    promoEligibility?: PromoEligibility | null;
+    promoStale?: boolean;
+  }
 ): AccountStatusDisplay {
+  const promo = promoStatusLabel(options.promoEligibility, options.promoStale);
   if (!options.enabled) {
     const underlying = STATUS_LABELS[status] ?? status;
-    return { dot: "disabled", label: `已停用 · ${underlying}` };
+    return {
+      dot: "disabled",
+      label: ["已停用", underlying, promo].filter(Boolean).join(" · "),
+    };
   }
 
-  const label = STATUS_LABELS[status] ?? status;
+  const label = [
+    STATUS_LABELS[status] ?? status,
+    options.stale ? "待复核" : null,
+    promo,
+  ].filter(Boolean).join(" · ");
   return {
     dot: STATUS_DOTS[status] ?? "unknown",
-    label: options.stale ? `${label} · 待复核` : label,
+    label,
   };
 }
 

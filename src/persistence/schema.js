@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 const SCHEMA_V1 = String.raw`
 CREATE TABLE IF NOT EXISTS command_receipts (
@@ -351,6 +351,17 @@ DROP TABLE _legacy_conversation_rows;
 DROP TABLE _legacy_conversation_id_map;
 `;
 
+// 优惠资格跟登录健康状态使用同一次浏览器巡检，但有独立的可信时间与失败迟滞。
+// 不把它塞进 legacy_extra_json：账号列表和筛选都需要稳定、可校验的结构化字段。
+const SCHEMA_V4 = String.raw`
+ALTER TABLE account_status ADD COLUMN promo_eligibility TEXT
+  CHECK (promo_eligibility IS NULL OR promo_eligibility IN ('free_trial', 'half_price', 'both', 'none'));
+ALTER TABLE account_status ADD COLUMN promo_checked_at TEXT;
+ALTER TABLE account_status ADD COLUMN promo_stale INTEGER NOT NULL DEFAULT 0
+  CHECK (promo_stale IN (0, 1));
+ALTER TABLE account_status ADD COLUMN promo_check_detail TEXT;
+`;
+
 export const MIGRATIONS = Object.freeze([
   Object.freeze({
     version: 1,
@@ -369,6 +380,12 @@ export const MIGRATIONS = Object.freeze([
     name: "normalize-legacy-conversation-ids",
     sql: SCHEMA_V3,
     checksum: createHash("sha256").update(SCHEMA_V3).digest("hex"),
+  }),
+  Object.freeze({
+    version: 4,
+    name: "account-promo-eligibility",
+    sql: SCHEMA_V4,
+    checksum: createHash("sha256").update(SCHEMA_V4).digest("hex"),
   }),
 ]);
 

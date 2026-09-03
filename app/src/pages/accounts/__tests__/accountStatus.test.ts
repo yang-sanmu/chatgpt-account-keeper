@@ -48,6 +48,39 @@ describe("Agent 实际发的四个状态都要有中文名", () => {
     expect(display.label).toContain("正常");
     expect(display.label).toContain("待复核");
   });
+
+  it("免费试用与半价资格在账号状态上显示为不同文案", () => {
+    const free = describeAccountStatus("ok", {
+      stale: false,
+      enabled: true,
+      promoEligibility: "free_trial",
+    });
+    const half = describeAccountStatus("ok", {
+      stale: false,
+      enabled: true,
+      promoEligibility: "half_price",
+    });
+    expect(free.label).toContain("免费试用");
+    expect(free.label).not.toContain("半价优惠");
+    expect(half.label).toContain("半价优惠");
+    expect(half.label).not.toContain("免费试用");
+  });
+
+  it("无优惠不占用状态文案，旧优惠探测失败则明确标记待复核", () => {
+    const none = describeAccountStatus("ok", {
+      stale: false,
+      enabled: true,
+      promoEligibility: "none",
+    });
+    const stalePromo = describeAccountStatus("ok", {
+      stale: false,
+      enabled: true,
+      promoEligibility: "free_trial",
+      promoStale: true,
+    });
+    expect(none.label).toBe("正常");
+    expect(stalePromo.label).toContain("免费试用（待复核）");
+  });
 });
 
 describe("需要用户处理的状态", () => {
@@ -98,6 +131,13 @@ describe("loggedIn 布尔量的降级映射", () => {
   it("显式 state 优先于 loggedIn", async () => {
     const { normalizeAccount } = await import("@/ipc/bridge");
     expect(normalizeAccount({ id: "a", state: "reauth", loggedIn: false }).status).toBe("reauth");
+  });
+
+  it("normalizeAccount 只接受四个明确的优惠枚举", async () => {
+    const { normalizeAccount } = await import("@/ipc/bridge");
+    expect(normalizeAccount({ id: "free", promoEligibility: "free_trial" }).promoEligibility).toBe("free_trial");
+    expect(normalizeAccount({ id: "half", promoEligibility: "half_price" }).promoEligibility).toBe("half_price");
+    expect(normalizeAccount({ id: "bad", promoEligibility: "eligible" }).promoEligibility).toBeNull();
   });
 
   it("映射出的每个值都能查到中文名", async () => {

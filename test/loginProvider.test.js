@@ -502,12 +502,17 @@ test("状态检查仅在 SESSION_OK 时持久化已验证邮箱", async () => {
     profileDir: "profiles/__checked_email_test__",
   };
   const updates = [];
+  let promoChecks = 0;
   const context = { close: async () => {} };
   const page = { goto: async () => {} };
   const baseRuntime = {
     getAccount: () => account,
     launchForAccount: async () => ({ context, page }),
     updateAccount: (...args) => updates.push(args),
+    checkPromoEligibility: async () => {
+      promoChecks++;
+      return { ok: true, eligibility: "free_trial" };
+    },
   };
 
   const unknown = await checkLoggedIn(account, {
@@ -520,6 +525,7 @@ test("状态检查仅在 SESSION_OK 时持久化已验证邮箱", async () => {
     }),
   });
   assert.equal(unknown.state, "unknown");
+  assert.equal(promoChecks, 0, "会话未确认时不应请求优惠接口");
   assert.deepEqual(updates, []);
 
   const ok = await checkLoggedIn(account, {
@@ -532,6 +538,8 @@ test("状态检查仅在 SESSION_OK 时持久化已验证邮箱", async () => {
     }),
   });
   assert.equal(ok.state, "ok");
+  assert.deepEqual(ok.promo, { ok: true, eligibility: "free_trial" });
+  assert.equal(promoChecks, 1);
   assert.deepEqual(updates, [
     [
       account.id,

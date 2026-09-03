@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { TextDecoder } from "node:util";
+import { isPromoEligibility } from "../promoEligibility.js";
 
 const UTF8_DECODER = new TextDecoder("utf-8", { fatal: true });
 const CONFIG_FILES = Object.freeze([
@@ -534,7 +535,8 @@ function normalizeData(config, profileTrees, rawHistories) {
   const statusKnown = new Set([
     "state", "loggedIn", "email", "detail", "checkedAt", "lastCheckState",
     "lastCheckDetail", "confirmedState", "confirmedAt", "consecutiveUnknowns",
-    "unknownSince", "stale",
+    "unknownSince", "stale", "promoEligibility", "promoCheckedAt", "promoStale",
+    "promoCheckDetail",
   ]);
   const statuses = Object.entries(rawStatuses)
     .filter(([accountId, status]) => accountIds.has(accountId) && status && typeof status === "object")
@@ -551,6 +553,12 @@ function normalizeData(config, profileTrees, rawHistories) {
       consecutiveUnknowns: finiteNumber(status.consecutiveUnknowns, 0),
       unknownSince: status.unknownSince ?? null,
       stale: true,
+      promoEligibility: isPromoEligibility(status.promoEligibility)
+        ? status.promoEligibility
+        : null,
+      promoCheckedAt: status.promoCheckedAt ?? null,
+      promoStale: status.promoStale === true,
+      promoCheckDetail: status.promoCheckDetail ?? null,
       legacyExtra: pickExtra(status, statusKnown),
     }));
 

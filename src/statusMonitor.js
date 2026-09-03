@@ -12,6 +12,7 @@ import {
   writePersistedStatuses,
 } from "./statusCacheStore.js";
 import { safeStatusCheckMinutes } from "./statusSettings.js";
+import { isPromoEligibility } from "./promoEligibility.js";
 import * as log from "./logger.js";
 
 // 缓存每个账号的登录状态，前端读缓存 => 刷新即显示，无需现开浏览器。
@@ -34,6 +35,10 @@ function emptyCachedStatus() {
     consecutiveUnknowns: 0,
     unknownSince: null,
     stale: false,
+    promoEligibility: null,
+    promoCheckedAt: null,
+    promoStale: false,
+    promoCheckDetail: null,
   };
 }
 
@@ -52,6 +57,43 @@ function validTimestamp(value) {
     : null;
 }
 
+function normalizedPromoFields(value = {}) {
+  const promoEligibility = isPromoEligibility(value.promoEligibility)
+    ? value.promoEligibility
+    : null;
+  return {
+    promoEligibility,
+    promoCheckedAt: promoEligibility ? validTimestamp(value.promoCheckedAt) : null,
+    promoStale: value.promoStale === true,
+    promoCheckDetail:
+      typeof value.promoCheckDetail === "string" ? value.promoCheckDetail : null,
+  };
+}
+
+function mergePromoObservation(previous, observation, checkedAt) {
+  const current = normalizedPromoFields(previous);
+  if (!observation || !Object.hasOwn(observation, "promo")) return current;
+
+  const promo = observation.promo;
+  if (promo?.ok === true && isPromoEligibility(promo.eligibility)) {
+    return {
+      promoEligibility: promo.eligibility,
+      promoCheckedAt: checkedAt,
+      promoStale: false,
+      promoCheckDetail: null,
+    };
+  }
+
+  return {
+    ...current,
+    promoStale: true,
+    promoCheckDetail:
+      typeof promo?.detail === "string" && promo.detail.trim()
+        ? promo.detail
+        : "本次未能确认优惠资格",
+  };
+}
+
 function normalizePersistedStatus(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
 
@@ -66,6 +108,7 @@ function normalizePersistedStatus(value) {
   const detail = typeof value.detail === "string" ? value.detail : null;
   const lastCheckDetail =
     typeof value.lastCheckDetail === "string" ? value.lastCheckDetail : null;
+  const promo = normalizedPromoFields(value);
 
   if (!confirmedState) {
     if (
@@ -85,6 +128,7 @@ function normalizePersistedStatus(value) {
       lastCheckDetail,
       consecutiveUnknowns: Math.max(0, Number(value.consecutiveUnknowns) || 0),
       unknownSince: validTimestamp(value.unknownSince),
+      ...promo,
     };
   }
 
@@ -113,6 +157,7 @@ function normalizePersistedStatus(value) {
     unknownSince: hadUncertainCheck ? validTimestamp(value.unknownSince) : null,
     // 跨进程恢复的结论一定是“上次确认”，新进程尚未重新验证。
     stale: true,
+    ...promo,
   };
 }
 
@@ -182,6 +227,10 @@ export function mergeStatusObservation(previous, observation, options = {}) {
   const now = new Date(nowMs).toISOString();
   const detail = observation?.detail ?? null;
   const email = observation?.email ?? prev.email ?? null;
+  // 重新登录或窗口内切换了邮箱时，旧邮箱的优惠资格不能归到新邮箱名下。
+  const identityChanged = isDefiniteState(state) &&
+    email?.trim().toLowerCase() !== prev.email?.trim().toLowerCase();
+  const promo = mergePromoObservation(identityChanged ? undefined : prev, observation, now);
 
   if (isDefiniteState(state)) {
     return {
@@ -197,6 +246,7 @@ export function mergeStatusObservation(previous, observation, options = {}) {
       consecutiveUnknowns: 0,
       unknownSince: null,
       stale: false,
+      ...promo,
     };
   }
 
@@ -229,6 +279,7 @@ export function mergeStatusObservation(previous, observation, options = {}) {
       consecutiveUnknowns,
       unknownSince,
       stale: false,
+      ...promo,
     };
   }
 
@@ -246,6 +297,7 @@ export function mergeStatusObservation(previous, observation, options = {}) {
     confirmedState,
     confirmedAt,
     stale: true,
+    ...promo,
   };
 }
 
@@ -254,9 +306,11 @@ export function mergeStatusObservation(previous, observation, options = {}) {
  * unknown 有明确基线时保留原有效状态，并通过 stale / lastCheckState 暴露异常。
  */
 export function setCachedStatus(accountId, state, email, detail = null, options = {}) {
+  const observation = { state, email, detail };
+  if (Object.hasOwn(options, "promo")) observation.promo = options.promo;
   const next = mergeStatusObservation(
     cache.get(accountId),
-    { state, email, detail },
+    observation,
     options
   );
   cache.set(accountId, next);
@@ -303,7 +357,9 @@ export async function refreshAccount(account, opts = {}) {
     }
     const live = await checkLoggedIn(liveAccount, { page: opts.page });
     if (live.skipped) return live;
-    return setCachedStatus(account.id, live.state, live.email, live.detail ?? null);
+    return setCachedStatus(account.id, live.state, live.email, live.detail ?? null, {
+      promo: live.promo,
+    });
   }
   if (isHeld(account.id)) {
     return heldCachedStatus(account.id);
@@ -347,7 +403,8 @@ export async function refreshAccount(account, opts = {}) {
     account.id,
     result.state,
     result.email,
-    result.detail ?? null
+    result.detail ?? null,
+    { promo: result.promo }
   );
 }
 

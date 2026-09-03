@@ -111,6 +111,10 @@ function statusFromRow(row) {
     consecutiveUnknowns: row.consecutive_unknowns,
     unknownSince: row.unknown_since,
     stale: !!row.stale,
+    promoEligibility: row.promo_eligibility,
+    promoCheckedAt: row.promo_checked_at,
+    promoStale: !!row.promo_stale,
+    promoCheckDetail: row.promo_check_detail,
   };
 }
 
@@ -622,8 +626,9 @@ export class KeeperRepository {
         `INSERT INTO account_status(
            account_id, state, email, detail, checked_at, last_check_state,
            last_check_detail, confirmed_state, confirmed_at, consecutive_unknowns,
-           unknown_since, stale, legacy_extra_json
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`
+           unknown_since, stale, promo_eligibility, promo_checked_at, promo_stale,
+           promo_check_detail, legacy_extra_json
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)`
       );
       data.statuses.forEach((status) =>
         insertStatus.run(
@@ -638,6 +643,10 @@ export class KeeperRepository {
           status.confirmedAt,
           status.consecutiveUnknowns ?? 0,
           status.unknownSince,
+          status.promoEligibility ?? null,
+          status.promoCheckedAt ?? null,
+          bool(status.promoStale),
+          status.promoCheckDetail ?? null,
           json(status.legacyExtra)
         )
       );
@@ -983,6 +992,10 @@ export class KeeperRepository {
       consecutiveUnknowns: 0,
       unknownSince: null,
       stale: true,
+      promoEligibility: null,
+      promoCheckedAt: null,
+      promoStale: false,
+      promoCheckDetail: null,
     };
     const next = { ...current, ...status };
     this.db
@@ -990,14 +1003,18 @@ export class KeeperRepository {
         `INSERT INTO account_status(
            account_id, state, email, detail, checked_at, last_check_state,
            last_check_detail, confirmed_state, confirmed_at, consecutive_unknowns,
-           unknown_since, stale, legacy_extra_json
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+           unknown_since, stale, promo_eligibility, promo_checked_at, promo_stale,
+           promo_check_detail, legacy_extra_json
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
          ON CONFLICT(account_id) DO UPDATE SET
            state=excluded.state, email=excluded.email, detail=excluded.detail,
            checked_at=excluded.checked_at, last_check_state=excluded.last_check_state,
            last_check_detail=excluded.last_check_detail, confirmed_state=excluded.confirmed_state,
            confirmed_at=excluded.confirmed_at, consecutive_unknowns=excluded.consecutive_unknowns,
-           unknown_since=excluded.unknown_since, stale=excluded.stale`
+           unknown_since=excluded.unknown_since, stale=excluded.stale,
+           promo_eligibility=excluded.promo_eligibility,
+           promo_checked_at=excluded.promo_checked_at, promo_stale=excluded.promo_stale,
+           promo_check_detail=excluded.promo_check_detail`
       )
       .run(
         accountId,
@@ -1011,7 +1028,11 @@ export class KeeperRepository {
         next.confirmedAt,
         next.consecutiveUnknowns ?? 0,
         next.unknownSince,
-        bool(next.stale)
+        bool(next.stale),
+        next.promoEligibility,
+        next.promoCheckedAt,
+        bool(next.promoStale),
+        next.promoCheckDetail
       );
     return this.getStatus(accountId);
   }

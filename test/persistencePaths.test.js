@@ -92,6 +92,7 @@ test("schema declares every durable subsystem and migration checksum", () => {
   // Operation 持久化是 v2 引入的：任务历史与错误详情要能跨 Agent 重启查询。
   assert.match(MIGRATIONS[1].sql, /CREATE TABLE IF NOT EXISTS operations\b/);
   assert.match(MIGRATIONS[2].sql, /_legacy_conversation_id_map/);
+  assert.match(MIGRATIONS[3].sql, /promo_eligibility/);
   for (const table of [
     "command_receipts",
     "app_settings",

@@ -273,6 +273,105 @@ test("明确结果立即生效并清除 unknown 迟滞", () => {
   assert.equal(reauth.stale, false);
 });
 
+test("优惠资格成功结果更新，接口失败时保留上次可信资格并标记待复核", () => {
+  const t0 = Date.parse("2026-09-02T00:00:00.000Z");
+  const free = mergeStatusObservation(
+    null,
+    {
+      state: "ok",
+      email: "promo@example.com",
+      promo: { ok: true, eligibility: "free_trial" },
+    },
+    { nowMs: t0 }
+  );
+  assert.equal(free.promoEligibility, "free_trial");
+  assert.equal(free.promoCheckedAt, "2026-09-02T00:00:00.000Z");
+  assert.equal(free.promoStale, false);
+
+  const failed = mergeStatusObservation(
+    free,
+    {
+      state: "ok",
+      email: "promo@example.com",
+      promo: { ok: false, detail: "优惠接口返回 503" },
+    },
+    { nowMs: t0 + 60_000 }
+  );
+  assert.equal(failed.promoEligibility, "free_trial");
+  assert.equal(failed.promoCheckedAt, free.promoCheckedAt);
+  assert.equal(failed.promoStale, true);
+  assert.equal(failed.promoCheckDetail, "优惠接口返回 503");
+
+  const none = mergeStatusObservation(
+    failed,
+    {
+      state: "ok",
+      email: "promo@example.com",
+      promo: { ok: true, eligibility: "none" },
+    },
+    { nowMs: t0 + 120_000 }
+  );
+  assert.equal(none.promoEligibility, "none");
+  assert.equal(none.promoStale, false);
+  assert.equal(none.promoCheckDetail, null);
+});
+
+for (const [name, observation, expectedStale] of [
+  ["新邮箱尚未检查优惠", { state: "ok", email: "new@example.com" }, false],
+  [
+    "新邮箱的优惠检查失败",
+    {
+      state: "ok",
+      email: "new@example.com",
+      promo: { ok: false, detail: "优惠接口返回 503" },
+    },
+    true,
+  ],
+  ["新邮箱先进入需重新登录状态", { state: "reauth", email: "new@example.com" }, false],
+]) {
+  test(`${name}时不能沿用旧邮箱的优惠资格`, () => {
+    const previous = mergeStatusObservation(null, {
+      state: "ok",
+      email: "old@example.com",
+      promo: { ok: true, eligibility: "free_trial" },
+    });
+    const next = mergeStatusObservation(previous, observation);
+
+    assert.equal(next.email, "new@example.com");
+    assert.equal(next.promoEligibility, null);
+    assert.equal(next.promoCheckedAt, null);
+    assert.equal(next.promoStale, expectedStale);
+    assert.equal(next.promoCheckDetail, expectedStale ? "优惠接口返回 503" : null);
+
+    const loggedIn = mergeStatusObservation(next, { state: "ok", email: "new@example.com" });
+    assert.equal(loggedIn.promoEligibility, null);
+  });
+}
+
+test("同一邮箱或未确认的邮箱观测不清除优惠，新邮箱的成功检查正常生效", () => {
+  const previous = mergeStatusObservation(null, {
+    state: "ok",
+    email: "original@example.com",
+    promo: { ok: true, eligibility: "free_trial" },
+  });
+
+  const same = mergeStatusObservation(previous, { state: "ok", email: " Original@Example.com " });
+  assert.equal(same.promoEligibility, "free_trial");
+  assert.equal(same.promoCheckedAt, previous.promoCheckedAt);
+
+  const unknown = mergeStatusObservation(previous, { state: "unknown", email: "other@example.com" });
+  assert.equal(unknown.email, "original@example.com");
+  assert.equal(unknown.promoEligibility, "free_trial");
+
+  const checked = mergeStatusObservation(previous, {
+    state: "ok",
+    email: "new@example.com",
+    promo: { ok: true, eligibility: "half_price" },
+  });
+  assert.equal(checked.promoEligibility, "half_price");
+  assert.equal(checked.promoStale, false);
+});
+
 test("删除状态缓存后不会留下幽灵条目", () => {
   const accountId = "deleted_status_cache";
   setCachedStatus(accountId, "ok", "person@example.com");

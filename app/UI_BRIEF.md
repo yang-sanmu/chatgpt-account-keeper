@@ -195,7 +195,9 @@ queuedTotal / running）、Chrome 运行明细（`browserRuns`，`close_failed` 
 单卡内容，字段全部来自 `AccountRecord.effective`：
 
 - **卡头**：勾选框、邮箱（`displayEmail(email, emailsRevealed)`）、`gptName` 徽章、
-  状态徽章（`status` + 颜色点，`stale` 时追加「待复核」）、`statusCheckedAt` 的相对时间
+  状态徽章（`status` + 颜色点，`stale` 时追加「待复核」；`promoEligibility` 为
+  `free_trial` / `half_price` / `both` 时追加对应优惠，`promoStale` 时标记优惠待复核）、
+  `statusCheckedAt` 的相对时间
   （完整时间戳进 `title`）
 - **分组行**：`groupName` 可编辑下拉（改动即时保存）、`exitNode`；`exitNodeMissing` 为真时
   显示「节点已失效」并用 `text-danger`
@@ -214,7 +216,8 @@ queuedTotal / running）、Chrome 运行明细（`browserRuns`，`close_failed` 
 （`save` / `discard`）。`record.inFlight !== null` 时提交按钮进 loading。
 
 顶部工具栏：搜索框、分组筛选、状态筛选（含 `stale` / `node_missing` / `disabled` /
-`page_open` 四个派生项）、轮换规则筛选、**全部隐藏/全部展示邮箱的切换按钮**
+`page_open` 四个派生项）、优惠资格筛选（有优惠 / 免费试用 / 半价 / 无优惠 / 未检查）、
+轮换规则筛选、**全部隐藏/全部展示邮箱的切换按钮**
 （`emailsRevealed` / `setEmailsRevealed`，默认隐藏）、新建账号。
 
 底部吸底批量操作栏（有勾选时出现，不随卡片滚动）：全选/取消、已选 N 个、批量启用/停用/

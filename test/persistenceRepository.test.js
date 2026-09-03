@@ -46,7 +46,15 @@ test(
     repository.createAccount({ id: "a1", profileName: "a1", groupId: "g1" });
     repository.saveConversationSet("default", { topic: "test", minRounds: 1, maxRounds: 2 });
     repository.updateSettings({ intervalMinutes: 60, schedulerEnabled: true });
-    repository.upsertStatus("a1", { state: "ok", email: "a@example.test", stale: false });
+    repository.upsertStatus("a1", {
+      state: "ok",
+      email: "a@example.test",
+      stale: false,
+      promoEligibility: "half_price",
+      promoCheckedAt: "2026-08-13T00:00:00.000Z",
+      promoStale: false,
+      promoCheckDetail: null,
+    });
     repository.updateSchedulerAccount("a1", { nextAt: "2026-08-14T00:00:00.000Z" });
     repository.appendHistory("a1", { ok: true, prompt: "p", reply: "r" });
 
@@ -55,6 +63,8 @@ test(
     assert.equal(repository.getConversationSetsObject().default.topic, "test");
     assert.equal(repository.getSettings().intervalMinutes, 60);
     assert.equal(repository.getStatus("a1").stale, false);
+    assert.equal(repository.getStatus("a1").promoEligibility, "half_price");
+    assert.equal(repository.getStatus("a1").promoCheckedAt, "2026-08-13T00:00:00.000Z");
     assert.equal(repository.queryHistory({ accountId: "a1" })[0].prompt, "p");
     assert.equal(repository.listHistoryAccounts()[0].lastOk, true);
     repository.appendHistory("a1", {

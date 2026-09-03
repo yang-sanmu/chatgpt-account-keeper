@@ -7,7 +7,12 @@
 // 2. 提交在途时用户又改了同一字段，响应回来不能把界面退回已提交的值。
 // 3. 单条增量事件只改那一条记录，其余记录保持引用不变（否则下游 memo 全部失效）。
 
-import type { Account, AccountPatch, SwitchRule } from "@/ipc/types";
+import type {
+  Account,
+  AccountPatch,
+  PromoEligibility,
+  SwitchRule,
+} from "@/ipc/types";
 
 /// 用户可编辑的字段。数组而非类型别名：合并逻辑需要在运行时遍历它。
 export const EDITABLE_ACCOUNT_FIELDS = [
@@ -259,6 +264,10 @@ export interface AccountStatusPatch {
   status?: string;
   stale?: boolean;
   statusCheckedAt?: string | null;
+  promoEligibility?: PromoEligibility | null;
+  promoCheckedAt?: string | null;
+  promoStale?: boolean;
+  promoCheckDetail?: string | null;
   nextRunAt?: string | null;
   lastRunAt?: string | null;
   lastRunOk?: boolean | null;
@@ -279,6 +288,10 @@ const STATUS_PATCH_FIELDS = [
   "status",
   "stale",
   "statusCheckedAt",
+  "promoEligibility",
+  "promoCheckedAt",
+  "promoStale",
+  "promoCheckDetail",
   "nextRunAt",
   "lastRunAt",
   "lastRunOk",
@@ -341,10 +354,19 @@ export type AccountStatusFilter =
   | "disabled"
   | "page_open";
 
+export type AccountPromoFilter =
+  | "all"
+  | "eligible"
+  | "free_trial"
+  | "half_price"
+  | "none"
+  | "unchecked";
+
 export interface AccountFilter {
   keyword: string;
   groupId: string | "all" | "none";
   status: AccountStatusFilter;
+  promo: AccountPromoFilter;
   switchRule: SwitchRule | "all";
 }
 
@@ -352,6 +374,7 @@ export const DEFAULT_ACCOUNT_FILTER: AccountFilter = {
   keyword: "",
   groupId: "all",
   status: "all",
+  promo: "all",
   switchRule: "all",
 };
 
@@ -360,8 +383,27 @@ export function isFilterActive(filter: AccountFilter): boolean {
     filter.keyword.trim().length > 0 ||
     filter.groupId !== "all" ||
     filter.status !== "all" ||
+    filter.promo !== "all" ||
     filter.switchRule !== "all"
   );
+}
+
+function matchesPromo(account: Account, promo: AccountPromoFilter): boolean {
+  const eligibility = account.promoEligibility;
+  switch (promo) {
+    case "all":
+      return true;
+    case "eligible":
+      return eligibility === "free_trial" || eligibility === "half_price" || eligibility === "both";
+    case "free_trial":
+      return eligibility === "free_trial" || eligibility === "both";
+    case "half_price":
+      return eligibility === "half_price" || eligibility === "both";
+    case "none":
+      return eligibility === "none";
+    case "unchecked":
+      return eligibility === null;
+  }
 }
 
 function matchesStatus(account: Account, status: AccountStatusFilter): boolean {
@@ -414,6 +456,7 @@ export function selectVisibleAccounts(
 
     if (!matchesKeyword(account, keyword)) continue;
     if (!matchesStatus(account, filter.status)) continue;
+    if (!matchesPromo(account, filter.promo)) continue;
     if (filter.switchRule !== "all" && account.switchRule !== filter.switchRule) continue;
 
     if (filter.groupId === "none") {

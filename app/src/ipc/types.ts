@@ -44,6 +44,7 @@ export interface ConnectionSnapshot {
 }
 
 export type SwitchRule = "random" | "sequential";
+export type PromoEligibility = "free_trial" | "half_price" | "both" | "none";
 
 export interface Account {
   id: string;
@@ -58,6 +59,10 @@ export interface Account {
   status: string;
   statusCheckedAt: string | null;
   stale: boolean;
+  promoEligibility: PromoEligibility | null;
+  promoCheckedAt: string | null;
+  promoStale: boolean;
+  promoCheckDetail: string | null;
   exitNode: string | null;
   exitNodeMissing: boolean;
   rotationTopic: string | null;

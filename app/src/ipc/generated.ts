@@ -368,6 +368,10 @@ export interface AccountResult {
   confirmedAt: string | null;
   consecutiveUnknowns: number;
   unknownSince: string | null;
+  promoEligibility: "free_trial" | "half_price" | "both" | "none" | null;
+  promoCheckedAt: string | null;
+  promoStale: boolean;
+  promoCheckDetail: string | null;
   pageOpen: boolean;
   rotationCurrentSet: string | null;
   rotationWindowsDone: number;
@@ -420,6 +424,10 @@ export interface AccountStatusResult {
   confirmedAt: string | null;
   consecutiveUnknowns: number;
   unknownSince: string | null;
+  promoEligibility: "free_trial" | "half_price" | "both" | "none" | null;
+  promoCheckedAt: string | null;
+  promoStale: boolean;
+  promoCheckDetail: string | null;
   skipped: boolean;
   skipKind: string | null;
   skipReason: string | null;
@@ -824,6 +832,10 @@ export interface BootstrapResult {
       consecutiveUnknowns: number;
       unknownSince: string | null;
       stale: boolean;
+      promoEligibility: "free_trial" | "half_price" | "both" | "none" | null;
+      promoCheckedAt: string | null;
+      promoStale: boolean;
+      promoCheckDetail: string | null;
     };
   };
   openPages: OpenPageMap;

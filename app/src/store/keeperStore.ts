@@ -389,6 +389,25 @@ function toStatusPatch(payload: unknown): AccountStatusPatch {
   const stale = optionalBoolean(raw.stale);
   if (stale !== undefined) patch.stale = stale;
 
+  if (raw.promoEligibility === null) {
+    patch.promoEligibility = null;
+  } else if (
+    raw.promoEligibility === "free_trial" ||
+    raw.promoEligibility === "half_price" ||
+    raw.promoEligibility === "both" ||
+    raw.promoEligibility === "none"
+  ) {
+    patch.promoEligibility = raw.promoEligibility;
+  }
+  if (raw.promoCheckedAt !== undefined) {
+    patch.promoCheckedAt = optionalString(raw.promoCheckedAt) ?? null;
+  }
+  const promoStale = optionalBoolean(raw.promoStale);
+  if (promoStale !== undefined) patch.promoStale = promoStale;
+  if (raw.promoCheckDetail !== undefined) {
+    patch.promoCheckDetail = optionalString(raw.promoCheckDetail) ?? null;
+  }
+
   if (raw.statusCheckedAt !== undefined) {
     patch.statusCheckedAt = optionalString(raw.statusCheckedAt) ?? null;
   } else if (raw.checkedAt !== undefined) {

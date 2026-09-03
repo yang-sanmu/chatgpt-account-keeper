@@ -14,6 +14,7 @@ import {
   prepareSessionForLogin,
   shouldClearSessionBeforeLogin,
 } from "./sessionPolicy.js";
+import { checkPromoEligibility } from "./promoEligibility.js";
 import * as log from "./logger.js";
 
 export { shouldClearSessionBeforeLogin } from "./sessionPolicy.js";
@@ -363,6 +364,7 @@ export async function checkLoggedIn(account, runtime = {}) {
   const findAccount = runtime.getAccount ?? getAccount;
   const launchBrowser = runtime.launchForAccount ?? launchForAccount;
   const inspectSession = runtime.checkSession ?? checkSession;
+  const inspectPromo = runtime.checkPromoEligibility ?? checkPromoEligibility;
   const persistAccount = runtime.updateAccount ?? updateAccount;
   const selectors = readResourceJson("config/selectors.json");
   let context;
@@ -391,6 +393,23 @@ export async function checkLoggedIn(account, runtime = {}) {
     }
     await page.goto(selectors.url, { waitUntil: "domcontentloaded" });
     const health = await inspectSession(page);
+    let promo;
+    if (health.state === SESSION_OK) {
+      try {
+        promo = await inspectPromo(page);
+      } catch (error) {
+        // 优惠是状态刷新里的附加观测；它失败不能把已由 /me 确认的健康会话降成 unknown。
+        promo = {
+          ok: false,
+          detail: `优惠资格检查失败：${String(error?.message || error)}`,
+        };
+      }
+    } else {
+      promo = {
+        ok: false,
+        detail: "账号会话未确认，本次未检查优惠资格",
+      };
+    }
     // 只有 /me 已验证且邮箱与 session 一致的 SESSION_OK 才能写回账号资料。
     // WAF/unknown 响应里的邮箱只是未验证观测，不能永久覆盖绑定信息。
     if (health.state === SESSION_OK && health.email) {
@@ -404,6 +423,7 @@ export async function checkLoggedIn(account, runtime = {}) {
       loggedIn: health.state === SESSION_OK,
       email: health.email,
       detail: health.detail,
+      promo,
     };
   } catch (e) {
     return {
@@ -411,6 +431,10 @@ export async function checkLoggedIn(account, runtime = {}) {
       loggedIn: false,
       email: null,
       detail: `状态检查失败：${String(e.message || e)}`,
+      promo: {
+        ok: false,
+        detail: "状态检查失败，本次未检查优惠资格",
+      },
     };
   } finally {
     if (context) await context.close().catch(() => {});

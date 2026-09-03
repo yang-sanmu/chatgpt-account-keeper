@@ -138,6 +138,8 @@ export const AccountCard = React.memo(({ id, onDelete }: AccountCardProps) => {
   const status = describeAccountStatus(acc.status, {
     stale: acc.stale,
     enabled: acc.enabled,
+    promoEligibility: acc.promoEligibility,
+    promoStale: acc.promoStale,
   });
 
   return (

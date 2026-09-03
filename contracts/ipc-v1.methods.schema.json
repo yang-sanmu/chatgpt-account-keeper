@@ -44,6 +44,7 @@
         "id", "enabled", "switchRule", "minWindows", "maxWindows", "state", "loggedIn",
         "statusDetail", "checkedAt", "stale", "lastCheckState", "lastCheckDetail",
         "confirmedState", "confirmedAt", "consecutiveUnknowns", "unknownSince", "pageOpen",
+        "promoEligibility", "promoCheckedAt", "promoStale", "promoCheckDetail",
         "rotationCurrentSet", "rotationWindowsDone", "rotationWindowsTarget", "groupName",
         "proxyId", "proxyName", "proxyMissing", "nextRunAt", "lastRunAt", "running",
         "lastRunOk", "lastRunReason"
@@ -82,6 +83,12 @@
         "confirmedAt": { "type": ["string", "null"], "format": "date-time" },
         "consecutiveUnknowns": { "type": "integer", "minimum": 0 },
         "unknownSince": { "type": ["string", "null"], "format": "date-time" },
+        "promoEligibility": {
+          "enum": ["free_trial", "half_price", "both", "none", null]
+        },
+        "promoCheckedAt": { "type": ["string", "null"], "format": "date-time" },
+        "promoStale": { "type": "boolean" },
+        "promoCheckDetail": { "type": ["string", "null"] },
         "pageOpen": { "type": "boolean" },
         "rotationCurrentSet": { "type": ["string", "null"] },
         "rotationWindowsDone": { "type": "integer", "minimum": 0 },
@@ -143,7 +150,8 @@
       "required": [
         "id", "state", "loggedIn", "email", "detail", "checkedAt", "stale",
         "lastCheckState", "lastCheckDetail", "confirmedState", "confirmedAt",
-        "consecutiveUnknowns", "unknownSince", "skipped", "skipKind", "skipReason"
+        "consecutiveUnknowns", "unknownSince", "promoEligibility", "promoCheckedAt",
+        "promoStale", "promoCheckDetail", "skipped", "skipKind", "skipReason"
       ],
       "properties": {
         "id": { "type": "string", "minLength": 1 },
@@ -159,6 +167,12 @@
         "confirmedAt": { "type": ["string", "null"], "format": "date-time" },
         "consecutiveUnknowns": { "type": "integer", "minimum": 0 },
         "unknownSince": { "type": ["string", "null"], "format": "date-time" },
+        "promoEligibility": {
+          "enum": ["free_trial", "half_price", "both", "none", null]
+        },
+        "promoCheckedAt": { "type": ["string", "null"], "format": "date-time" },
+        "promoStale": { "type": "boolean" },
+        "promoCheckDetail": { "type": ["string", "null"] },
         "skipped": { "type": "boolean" },
         "skipKind": { "type": ["string", "null"] },
         "skipReason": { "type": ["string", "null"] }
@@ -638,7 +652,8 @@
             "required": [
               "state", "loggedIn", "email", "detail", "checkedAt", "lastCheckState",
               "lastCheckDetail", "confirmedState", "confirmedAt", "consecutiveUnknowns",
-              "unknownSince", "stale"
+              "unknownSince", "stale", "promoEligibility", "promoCheckedAt",
+              "promoStale", "promoCheckDetail"
             ],
             "properties": {
               "state": { "enum": ["ok", "reauth", "out", "unknown", null] },
@@ -652,7 +667,13 @@
               "confirmedAt": { "type": ["string", "null"], "format": "date-time" },
               "consecutiveUnknowns": { "type": "integer", "minimum": 0 },
               "unknownSince": { "type": ["string", "null"], "format": "date-time" },
-              "stale": { "type": "boolean" }
+              "stale": { "type": "boolean" },
+              "promoEligibility": {
+                "enum": ["free_trial", "half_price", "both", "none", null]
+              },
+              "promoCheckedAt": { "type": ["string", "null"], "format": "date-time" },
+              "promoStale": { "type": "boolean" },
+              "promoCheckDetail": { "type": ["string", "null"] }
             }
           }
         },

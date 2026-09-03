@@ -36,6 +36,10 @@ function account(overrides: Partial<Account> = {}): Account {
     status: "ok",
     statusCheckedAt: "2026-08-27T00:00:00Z",
     stale: false,
+    promoEligibility: null,
+    promoCheckedAt: null,
+    promoStale: false,
+    promoCheckDetail: null,
     exitNode: null,
     exitNodeMissing: false,
     rotationTopic: null,
@@ -290,6 +294,27 @@ describe("规则 3 的另一半：增量事件后重新应用筛选", () => {
     expect(pick("node_missing")).toEqual(["acc-node"]);
     expect(pick("disabled")).toEqual(["acc-off"]);
     expect(pick("page_open")).toEqual(["acc-page"]);
+  });
+
+  it("优惠筛选区分免费试用、半价、无资格与未检查", () => {
+    const seeded = seed([
+      account({ id: "acc-free", promoEligibility: "free_trial" }),
+      account({ id: "acc-half", promoEligibility: "half_price" }),
+      account({ id: "acc-both", promoEligibility: "both" }),
+      account({ id: "acc-none", promoEligibility: "none" }),
+      account({ id: "acc-unchecked", promoEligibility: null }),
+    ]);
+    const pick = (promo: "eligible" | "free_trial" | "half_price" | "none" | "unchecked"): string[] =>
+      selectVisibleAccounts(seeded.records, seeded.ids, {
+        ...DEFAULT_ACCOUNT_FILTER,
+        promo,
+      }).map((record) => record.effective.id);
+
+    expect(pick("eligible")).toEqual(["acc-free", "acc-half", "acc-both"]);
+    expect(pick("free_trial")).toEqual(["acc-free", "acc-both"]);
+    expect(pick("half_price")).toEqual(["acc-half", "acc-both"]);
+    expect(pick("none")).toEqual(["acc-none"]);
+    expect(pick("unchecked")).toEqual(["acc-unchecked"]);
   });
 
   it("未分组筛选把 null 与空串都算作未分组", () => {

@@ -17,6 +17,7 @@ import type {
   LegacyInspection,
   LegacyProfileLock,
   MigrationProgress,
+  PromoEligibility,
   StartupInfo,
   UpdateStatus,
   IpcMethod,
@@ -317,6 +318,19 @@ export function normalizeAccount(raw: unknown): Account {
       : null;
 
   const stale = Boolean(r.stale);
+  const promoEligibility = (
+    r.promoEligibility === "free_trial" ||
+    r.promoEligibility === "half_price" ||
+    r.promoEligibility === "both" ||
+    r.promoEligibility === "none"
+  )
+    ? (r.promoEligibility satisfies PromoEligibility)
+    : null;
+  const promoCheckedAt =
+    typeof r.promoCheckedAt === "string" ? r.promoCheckedAt : null;
+  const promoStale = Boolean(r.promoStale);
+  const promoCheckDetail =
+    typeof r.promoCheckDetail === "string" ? r.promoCheckDetail : null;
   const exitNode =
     typeof r.exitNode === "string"
       ? r.exitNode
@@ -374,6 +388,10 @@ export function normalizeAccount(raw: unknown): Account {
     status,
     statusCheckedAt,
     stale,
+    promoEligibility,
+    promoCheckedAt,
+    promoStale,
+    promoCheckDetail,
     exitNode,
     exitNodeMissing,
     rotationTopic,

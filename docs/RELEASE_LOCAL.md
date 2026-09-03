@@ -26,7 +26,7 @@ tauri.conf.json 中还必须已经内联对应公钥。脚本会拒绝 M5 占位
 五处 Tauri 版本一致后运行：
 
 ~~~powershell
-.\scripts\build-local-release.ps1 -Version 0.2.2
+.\scripts\build-local-release.ps1 -Version 0.2.3
 ~~~
 
 脚本执行：

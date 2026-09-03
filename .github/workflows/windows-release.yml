@@ -21,8 +21,8 @@ on:
         required: true
         default: false
         type: boolean
-      publish_unsigned_v0_2_2:
-        description: One-time public v0.2.2 release without platform code signing or installed-update attestation
+      publish_unsigned_v0_2_3:
+        description: One-time public v0.2.3 release without platform code signing or installed-update attestation
         required: true
         default: false
         type: boolean
@@ -53,18 +53,18 @@ jobs:
       - name: Verify the independent Tauri version line
         run: node scripts/verify-release-version.mjs '${{ inputs.version }}'
 
-      - name: Validate the one-time unsigned v0.2.2 request
-        if: inputs.publish_unsigned_v0_2_2 == true
+      - name: Validate the one-time unsigned v0.2.3 request
+        if: inputs.publish_unsigned_v0_2_3 == true
         shell: bash
         env:
           VERSION: ${{ inputs.version }}
         run: |
-          if [[ "$VERSION" != '0.2.2' ]]; then
-            echo 'The unsigned public-release exception is permanently restricted to v0.2.2.' >&2
+          if [[ "$VERSION" != '0.2.3' ]]; then
+            echo 'The unsigned public-release exception is permanently restricted to v0.2.3.' >&2
             exit 1
           fi
           if [[ '${{ inputs.publish_draft }}' == true || '${{ inputs.n_minus_one_verified }}' == true ]]; then
-            echo 'The v0.2.2 exception must not be combined with the normal Draft or installed-update attestations.' >&2
+            echo 'The v0.2.3 exception must not be combined with the normal Draft or installed-update attestations.' >&2
             exit 1
           fi
 
@@ -450,7 +450,7 @@ jobs:
         shell: bash
         run: |
           node scripts/write-release-notes.mjs artifacts/release-notes.md
-          if [[ '${{ inputs.publish_unsigned_v0_2_2 }}' == true ]]; then
+          if [[ '${{ inputs.publish_unsigned_v0_2_3 }}' == true ]]; then
             printf '\n> **平台代码签名提示：** 此版本保留 Tauri updater 签名，但未进行 Windows Authenticode、Apple Developer ID/公证或 Linux Minisign 签名；操作系统可能显示未知发布者或安全警告。\n' >> artifacts/release-notes.md
           fi
           git archive --format=zip --prefix="chatgpt-account-keeper-$VERSION/" --output="artifacts/assets/chatgpt-account-keeper-$VERSION-source.zip" HEAD
@@ -472,7 +472,7 @@ jobs:
           retention-days: 14
 
       - name: Require human and platform signing gates before Draft
-        if: inputs.publish_draft == true && inputs.publish_unsigned_v0_2_2 != true
+        if: inputs.publish_draft == true && inputs.publish_unsigned_v0_2_3 != true
         shell: bash
         run: |
           if [[ '${{ inputs.n_minus_one_verified }}' != true ]]; then
@@ -488,28 +488,28 @@ jobs:
             test -s "artifacts/assets/SIGNED-$rid.txt"
           done
 
-      - name: Require explicit unsigned markers for the one-time v0.2.2 release
-        if: inputs.publish_unsigned_v0_2_2 == true
+      - name: Require explicit unsigned markers for the one-time v0.2.3 release
+        if: inputs.publish_unsigned_v0_2_3 == true
         shell: bash
         run: |
-          test "$VERSION" = '0.2.2'
+          test "$VERSION" = '0.2.3'
           for rid in win-x64 osx-arm64 osx-x64 linux-x64; do
             test -s "artifacts/assets/UNSIGNED-$rid.txt"
           done
 
       - name: Create the single GitHub Draft or one-time public Release
-        if: inputs.publish_draft == true || inputs.publish_unsigned_v0_2_2 == true
+        if: inputs.publish_draft == true || inputs.publish_unsigned_v0_2_3 == true
         shell: bash
         run: |
           mapfile -d '' assets < <(
             find artifacts/assets -maxdepth 1 -type f ! -name 'SIGNED-*.txt' ! -name 'UNSIGNED-*.txt' -print0 | sort -z
           )
           release_visibility=(--draft)
-          if [[ '${{ inputs.publish_unsigned_v0_2_2 }}' == true ]]; then
+          if [[ '${{ inputs.publish_unsigned_v0_2_3 }}' == true ]]; then
             release_visibility=(--latest)
           fi
           gh release create "v$VERSION" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "ChatGPT Account Keeper $VERSION" --notes-file artifacts/release-notes.md "${release_visibility[@]}"
 
       - name: Report candidate-only result
-        if: inputs.publish_draft != true && inputs.publish_unsigned_v0_2_2 != true
+        if: inputs.publish_draft != true && inputs.publish_unsigned_v0_2_3 != true
         run: echo 'Candidate retained as a workflow artifact; no tag or GitHub Release was created.'

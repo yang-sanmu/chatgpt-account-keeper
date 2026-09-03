@@ -38,17 +38,17 @@ npm run tauri signer generate -- -w D:\offline-backup\gpt-account-keeper-updater
 同一平台的 Secrets 必须完整配置。缺失整组时仍可产出带 Tauri 更新签名的内部检查包，
 但会生成 UNSIGNED-<rid>.txt，正常发布的 aggregate job 不允许据此创建 Draft。
 
-## `v0.2.2` 一次性 unsigned 发布例外
+## `v0.2.3` 一次性 unsigned 发布例外
 
-经发布者针对本次发布明确授权，工作流允许精确版本 `0.2.2` 在缺少 Authenticode、Apple
+经发布者针对本次发布明确授权，工作流允许精确版本 `0.2.3` 在缺少 Authenticode、Apple
 Developer ID/公证和 Linux Minisign 时直接公开，并跳过候选安装、N → N+1 与
 `PublishDraft -UpdaterVerified` 阶段：
 
 ~~~powershell
-.\scripts\publish-windows-release.ps1 -Version 0.2.2 -Mode Release -PublishUnsignedV022 -ReleaseNotesFile .\docs\release-notes\v0.2.2.md
+.\scripts\publish-windows-release.ps1 -Version 0.2.3 -Mode Release -PublishUnsignedV023 -ReleaseNotesFile .\docs\release-notes\v0.2.3.md
 ~~~
 
-这个命令只跟踪远端工作流，不下载任何产物。CI 会同时要求版本精确等于 `0.2.2`、四个平台
+这个命令只跟踪远端工作流，不下载任何产物。CI 会同时要求版本精确等于 `0.2.3`、四个平台
 都明确生成 `UNSIGNED-<rid>.txt`、完整安装包/SBOM/校验和存在，并继续强制 Tauri updater
 私钥、公钥和每个平台 updater `.sig`。最终 Release 会自动附加平台未签名警告并直接标为
 latest。脚本和工作流都拒绝把这个开关用于其他版本，也拒绝与正常 Draft/N-1 证明混用。
@@ -58,7 +58,7 @@ latest。脚本和工作流都拒绝把这个开关用于其他版本，也拒�
 
 ## 每次发布
 
-以下以 0.2.2 为例。
+以下以 0.2.3 为例。
 
 ### 1. 同步版本并推送
 
@@ -72,9 +72,9 @@ Rust/Tauri 版本线独立于旧 C# 0.1.x。以下五处必须一致：
 
 ~~~powershell
 npm install --prefix app --package-lock-only --ignore-scripts
-node scripts/verify-release-version.mjs 0.2.2
+node scripts/verify-release-version.mjs 0.2.3
 git add -A
-git commit -m "chore: release 0.2.2"
+git commit -m "chore: release 0.2.3"
 git push origin main
 ~~~
 
@@ -83,10 +83,10 @@ git push origin main
 准备非空的 Markdown 更新摘要，然后运行：
 
 ~~~powershell
-.\scripts\publish-windows-release.ps1 -Version 0.2.2 -Mode Candidate -ReleaseNotesFile .\release-notes-0.2.2.md
+.\scripts\publish-windows-release.ps1 -Version 0.2.3 -Mode Candidate -ReleaseNotesFile .\release-notes-0.2.3.md
 ~~~
 
-成功后，脚本把聚合 artifact 下载到 artifacts\candidate-0.2.2。Candidate 不创建 tag，
+成功后，脚本把聚合 artifact 下载到 artifacts\candidate-0.2.3。Candidate 不创建 tag，
 不创建 Release，也不会进入稳定更新源。
 
 ### 3. 候选安装与数据保留验收
@@ -97,7 +97,7 @@ AppImage、deb 和 rpm；用真实数据确认 Agent、Profile、SQLite、代理
 通过后创建 Draft：
 
 ~~~powershell
-.\scripts\publish-windows-release.ps1 -Version 0.2.2 -Mode Release -NMinusOneVerified -ReleaseNotesFile .\release-notes-0.2.2.md
+.\scripts\publish-windows-release.ps1 -Version 0.2.3 -Mode Release -NMinusOneVerified -ReleaseNotesFile .\release-notes-0.2.3.md
 ~~~
 
 工作流只在 Authenticode、两种 macOS Developer ID + 公证 + stapling、Linux Minisign
@@ -123,7 +123,7 @@ Draft 还不会被 GitHub releases/latest 返回，因此不能把“Draft 已�
 确认 Release 页面资产完整且第 4 步通过后：
 
 ~~~powershell
-.\scripts\publish-windows-release.ps1 -Version 0.2.2 -Mode PublishDraft -UpdaterVerified
+.\scripts\publish-windows-release.ps1 -Version 0.2.3 -Mode PublishDraft -UpdaterVerified
 ~~~
 
 该命令再次核对 Draft、版本和全部必需资产，然后公开并标记 latest。只有此时稳定客户端
@@ -146,7 +146,7 @@ Draft 还不会被 GitHub releases/latest 返回，因此不能把“Draft 已�
 - Linux AppImage/校验清单的 Minisign 签名与公钥
 - SHA256SUMS.release.txt
 
-`v0.2.2` 一次性例外没有 Minisign `.minisig` 与 `minisign.pub`，但仍包含 Linux SHA-256
+`v0.2.3` 一次性例外没有 Minisign `.minisig` 与 `minisign.pub`，但仍包含 Linux SHA-256
 清单、总校验和和 Tauri updater 的 `.AppImage.sig`。
 
 ## 工作流关键门禁
@@ -162,5 +162,5 @@ Draft 还不会被 GitHub releases/latest 返回，因此不能把“Draft 已�
 6. 从各 bundle 目录只收集唯一的本次产物，生成 latest.json、源码归档和总校验和。
 7. Candidate 只上传 workflow artifact；正常 Release 模式创建 Draft。
 
-除写死为 `v0.2.2` 的本次发布开关外，不保留“允许无平台签名并跳过人工验收”的直接
+除写死为 `v0.2.3` 的本次发布开关外，不保留“允许无平台签名并跳过人工验收”的直接
 公开路径。

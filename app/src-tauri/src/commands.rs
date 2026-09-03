@@ -5,7 +5,7 @@
 //! 再写一遍。
 
 use std::path::PathBuf;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -135,7 +135,7 @@ pub async fn connect_agent(
     state: State<'_, Arc<AppState>>,
     start: bool,
 ) -> Result<ConnectionSnapshot, ApiError> {
-    state.suppress_reconnect.store(false, Ordering::Release);
+    // 更新/退出流程负责恢复重连，手动连接不能提前解除其抑制状态。
     Ok(state.connect_and_bootstrap(&app, start).await)
 }
 
@@ -623,6 +623,81 @@ fn self_update_supported() -> bool {
     }
 }
 
+async fn prepare_update_agent(
+    state: &AppState,
+) -> Result<Option<crate::agent::update_lock::UpdateLock>, ApiError> {
+    use crate::ipc::connection::ConnectError;
+    use crate::ipc::transport::TransportError;
+    match state.connection.connect(state.notifications()).await {
+        Ok(_) => {}
+        Err(ConnectError::NotReady(_) | ConnectError::Transport(TransportError::NotReady(_))) => {
+            if state.launcher.current_is_running() {
+                return Err(ApiError {
+                    code: "RESOURCE_BUSY".into(),
+                    message: "Agent 仍在运行但 IPC 未就绪，请等待其退出后重试更新".into(),
+                    retryable: true,
+                });
+            }
+            state.launcher.reclaim_current();
+            return acquire_update_lock(state).map(Some);
+        }
+        Err(error) => return Err(ApiError::internal(error.to_string())),
+    }
+    let preflight = state
+        .connection
+        .call_internal(
+            "system.prepareUpdate",
+            serde_json::json!({ "commit": false, "reason": "desktop-update" }),
+            Some(uuid::Uuid::new_v4().to_string()),
+        )
+        .await?;
+    if preflight.get("ready").and_then(serde_json::Value::as_bool) != Some(true) {
+        return Err(ApiError {
+            code: "RESOURCE_BUSY".into(),
+            message: format!("仍有阻塞项：{}", describe_blockers(&preflight)),
+            retryable: true,
+        });
+    }
+    Ok(None)
+}
+
+fn acquire_update_lock(
+    state: &AppState,
+) -> Result<crate::agent::update_lock::UpdateLock, ApiError> {
+    crate::agent::update_lock::UpdateLock::acquire(&state.paths.data_directory).map_err(|error| {
+        ApiError {
+            code: "RESOURCE_BUSY".into(),
+            message: format!("数据目录仍被 Agent 占用或无法确认已释放，暂不能安装更新：{error}"),
+            retryable: true,
+        }
+    })
+}
+
+struct UpdateReconnectPause<'a> {
+    suppress_reconnect: &'a AtomicBool,
+    exiting: &'a AtomicBool,
+}
+
+impl<'a> UpdateReconnectPause<'a> {
+    fn begin(suppress_reconnect: &'a AtomicBool, exiting: &'a AtomicBool) -> Option<Self> {
+        suppress_reconnect
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .ok()?;
+        Some(Self {
+            suppress_reconnect,
+            exiting,
+        })
+    }
+}
+
+impl Drop for UpdateReconnectPause<'_> {
+    fn drop(&mut self) {
+        if !self.exiting.load(Ordering::Acquire) {
+            self.suppress_reconnect.store(false, Ordering::Release);
+        }
+    }
+}
+
 /// 安装更新：预检 → 下载 → 排空 → 关 Agent → 安装。
 ///
 /// 下载放在预检**之后**：有阻塞项时不浪费一次完整下载（包体含私有 Node + Agent +
@@ -665,29 +740,19 @@ pub async fn install_update(
             );
         };
 
+        // 离线更新期间不能让重连逻辑拉起 Agent；任何失败都由 guard 恢复重连。
+        let _reconnect_pause =
+            UpdateReconnectPause::begin(&state.suppress_reconnect, &state.exiting).ok_or_else(
+                || ApiError {
+                    code: "RESOURCE_BUSY".into(),
+                    message: "更新或退出流程正在进行，请稍后重试".into(),
+                    retryable: true,
+                },
+            )?;
+
         // 1) 预检。此时还没下载，被阻塞就直接停下。
         report(InstallStage::Preflight, None);
-        if !state.connection.is_connected().await {
-            let snapshot = state.connect_and_bootstrap(&app, true).await;
-            if !snapshot.connected {
-                return Err(ApiError::internal(snapshot.detail));
-            }
-        }
-        let preflight = state
-            .connection
-            .call_internal(
-                "system.prepareUpdate",
-                serde_json::json!({ "commit": false, "reason": "desktop-update" }),
-                Some(uuid::Uuid::new_v4().to_string()),
-            )
-            .await?;
-        if preflight.get("ready").and_then(serde_json::Value::as_bool) != Some(true) {
-            return Err(ApiError {
-                code: "RESOURCE_BUSY".into(),
-                message: format!("仍有阻塞项：{}", describe_blockers(&preflight)),
-                retryable: true,
-            });
-        }
+        let mut offline_guard = prepare_update_agent(&state).await?;
 
         // 2) 下载。
         report(InstallStage::Downloading, Some(0));
@@ -737,55 +802,70 @@ pub async fn install_update(
                 .map_err(|error| ApiError::internal(format!("下载更新失败：{error}")))?
         };
 
-        // 3) 排空。从这里起不可取消：Agent 进入拒绝写入状态，必须走完。
-        report(InstallStage::Draining, None);
-        let drained = state
-            .connection
-            .call_internal(
-                "system.prepareUpdate",
-                serde_json::json!({ "commit": true, "reason": "desktop-update" }),
-                Some(uuid::Uuid::new_v4().to_string()),
-            )
-            .await?;
-        let ready = drained.get("ready").and_then(serde_json::Value::as_bool) == Some(true);
-        let committed = drained
-            .get("committed")
-            .and_then(serde_json::Value::as_bool)
-            == Some(true);
-        if !ready || !committed {
-            return Err(ApiError {
-                code: "RESOURCE_BUSY".into(),
-                message: format!(
-                    "Agent 未能进入更新排空状态：{}",
-                    describe_blockers(&drained)
-                ),
-                retryable: true,
-            });
-        }
+        // 离线时已持有数据目录锁；在线时保留预检、排空与安全关闭全过程。
+        if offline_guard.is_none() {
+            // 3) 排空。从这里起不可取消：Agent 进入拒绝写入状态，必须走完。
+            report(InstallStage::Draining, None);
+            let drained = state
+                .connection
+                .call_internal(
+                    "system.prepareUpdate",
+                    serde_json::json!({ "commit": true, "reason": "desktop-update" }),
+                    Some(uuid::Uuid::new_v4().to_string()),
+                )
+                .await?;
+            let ready = drained.get("ready").and_then(serde_json::Value::as_bool) == Some(true);
+            let committed = drained
+                .get("committed")
+                .and_then(serde_json::Value::as_bool)
+                == Some(true);
+            if !ready || !committed {
+                return Err(ApiError {
+                    code: "RESOURCE_BUSY".into(),
+                    message: format!(
+                        "Agent 未能进入更新排空状态：{}",
+                        describe_blockers(&drained)
+                    ),
+                    retryable: true,
+                });
+            }
 
-        // 4) 关 Agent，等它释放数据库和 Profile 句柄。
-        report(InstallStage::StoppingAgent, None);
-        state.suppress_reconnect.store(true, Ordering::Release);
-        let _ = state
-            .connection
-            .call_internal(
-                "system.shutdown",
-                serde_json::json!({ "reason": "desktop-update", "force": false }),
-                Some(uuid::Uuid::new_v4().to_string()),
-            )
-            .await;
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-        while state.launcher.current_is_running() && std::time::Instant::now() < deadline {
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            // 4) 关 Agent，等它释放数据库和 Profile 句柄。
+            report(InstallStage::StoppingAgent, None);
+            let _ = state
+                .connection
+                .call_internal(
+                    "system.shutdown",
+                    serde_json::json!({ "reason": "desktop-update", "force": false }),
+                    Some(uuid::Uuid::new_v4().to_string()),
+                )
+                .await;
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+            loop {
+                if !state.launcher.current_is_running() {
+                    state.launcher.reclaim_current();
+                    if let Ok(guard) = acquire_update_lock(&state) {
+                        offline_guard = Some(guard);
+                        break;
+                    }
+                }
+                if std::time::Instant::now() >= deadline {
+                    state.launcher.reclaim_current();
+                    offline_guard = Some(acquire_update_lock(&state)?);
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+            state.connection.disconnect().await;
+            state.launcher.reclaim_current();
         }
-        state.connection.disconnect().await;
-        state.launcher.reclaim_current();
 
         // 5) 安装。Windows 在这里内部退出并由 NSIS 重启；macOS/Linux 返回后要自己重启。
         report(InstallStage::Installing, None);
         update
             .install(bytes)
             .map_err(|error| ApiError::internal(format!("安装更新失败：{error}")))?;
+        drop(offline_guard);
         if crate::update::needs_explicit_relaunch() {
             app.restart();
         }
@@ -817,6 +897,113 @@ fn describe_blockers(result: &serde_json::Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_failed_update_restores_reconnect_but_never_resumes_during_exit() {
+        let reconnect = AtomicBool::new(false);
+        let exiting = AtomicBool::new(false);
+        {
+            let _pause = UpdateReconnectPause::begin(&reconnect, &exiting).unwrap();
+            assert!(
+                reconnect.load(Ordering::Acquire),
+                "下载期间不应自动重启 Agent"
+            );
+        }
+        assert!(
+            !reconnect.load(Ordering::Acquire),
+            "下载或安装失败后必须允许重连和重试"
+        );
+        {
+            let _pause = UpdateReconnectPause::begin(&reconnect, &exiting).unwrap();
+            exiting.store(true, Ordering::Release);
+        }
+        assert!(
+            reconnect.load(Ordering::Acquire),
+            "退出流程已接管时不能恢复重连"
+        );
+    }
+
+    #[test]
+    fn an_update_cannot_overlap_another_update_or_exit() {
+        let reconnect = AtomicBool::new(true);
+        let exiting = AtomicBool::new(false);
+        assert!(UpdateReconnectPause::begin(&reconnect, &exiting).is_none());
+        assert!(reconnect.load(Ordering::Acquire));
+    }
+
+    #[tokio::test]
+    async fn update_preflight_does_not_require_a_startable_agent() {
+        use crate::agent::launcher::Launcher;
+        use crate::ipc::connection::Connection;
+        use crate::ipc::endpoint::{Endpoint, Transport};
+        use crate::paths::AppPaths;
+
+        let root =
+            std::env::temp_dir().join(format!("keeper-offline-update-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("data")).unwrap();
+        // 不可由旧 Agent 打开的数据库不应让更新器尝试启动那个 Agent。
+        std::fs::write(
+            root.join("data/keeper.db"),
+            b"database owned by a newer Agent",
+        )
+        .unwrap();
+        let paths = AppPaths {
+            configuration_directory: root.join("config"),
+            settings_file: root.join("config/desktop.json"),
+            bootstrap_file: root.join("config/bootstrap.json"),
+            ipc_key_file: root.join("config/ipc.key"),
+            data_directory: root.join("data"),
+            database_file: root.join("data/keeper.db"),
+            cache_directory: root.join("cache"),
+            state_directory: root.join("state"),
+            agent_log_file: root.join("state/agent.log"),
+            migration_progress_file: root.join("state/migration-progress.json"),
+            is_development: false,
+            allows_source_agent: false,
+            bootstrap_warning: None,
+        };
+        let endpoint = Endpoint {
+            transport: if cfg!(windows) {
+                Transport::NamedPipe
+            } else {
+                Transport::UnixSocket
+            },
+            address: if cfg!(windows) {
+                format!(r"\\.\pipe\keeper-offline-update-{}", uuid::Uuid::new_v4())
+            } else {
+                format!("/tmp/kpr-upd-{}.sock", uuid::Uuid::new_v4())
+            },
+        };
+        let connection = Arc::new(Connection::new(
+            endpoint,
+            &paths.data_directory,
+            "token".into(),
+            "test".into(),
+        ));
+        let launcher = Arc::new(Launcher::new(
+            paths.clone(),
+            root.join("missing-installation"),
+            "token".into(),
+        ));
+        let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
+        let state = AppState::new(
+            paths,
+            connection,
+            launcher,
+            DesktopSettings::default(),
+            sender,
+        );
+        let result = prepare_update_agent(&state).await;
+        assert!(result.is_ok(), "Agent 无法启动时也必须能更新：{result:?}");
+        let guard = result.unwrap();
+        assert!(guard.is_some(), "离线更新必须持有数据目录锁");
+        assert_eq!(
+            std::fs::read(root.join("data/keeper.db")).unwrap(),
+            b"database owned by a newer Agent"
+        );
+        drop(guard);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn blockers_are_described_by_resource_then_kind() {

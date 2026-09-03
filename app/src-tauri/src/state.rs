@@ -41,7 +41,7 @@ pub struct AppState {
     pub prompts: tokio::sync::Mutex<UpdatePrompts>,
     /// 已下载待安装的更新包。只在一次安装流程内存活。
     pub staged_update: tokio::sync::Mutex<Option<StagedUpdate>>,
-    /// 「退出全部」进行中：抑制重连，否则退出会把 Agent 又拉起来。
+    /// 更新或「退出全部」进行中：抑制重连，防止流程中重新拉起 Agent。
     pub suppress_reconnect: std::sync::atomic::AtomicBool,
     /// 退出流程已经开始。用户在等待期间反复点击不该叠出多条关闭流程。
     pub exiting: std::sync::atomic::AtomicBool,
@@ -90,6 +90,12 @@ impl AppState {
         let snapshot = self
             .connection
             .ensure_connected(start_when_unavailable, self.notifications(), || {
+                if self
+                    .suppress_reconnect
+                    .load(std::sync::atomic::Ordering::Acquire)
+                {
+                    return Err("更新或退出流程正在进行，暂不启动 Agent".into());
+                }
                 launcher
                     .start(&endpoint, None)
                     .map(|_| ())

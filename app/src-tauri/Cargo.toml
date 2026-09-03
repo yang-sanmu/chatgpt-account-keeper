@@ -1,6 +1,6 @@
 [package]
 name = "keeper-app"
-version = "0.2.2"
+version = "0.2.3"
 description = "ChatGPT Account Keeper 管理端"
 authors = ["yang-sanmu"]
 license = "AGPL-3.0-only"
@@ -43,6 +43,7 @@ windows = { version = "0.62", features = [
   "Win32_Security",
   "Win32_System_JobObjects",
   "Win32_System_Threading",
+  "Win32_System_WindowsProgramming",
   "Win32_System_Memory",
   "Win32_System_Diagnostics_ToolHelp",
 ] }

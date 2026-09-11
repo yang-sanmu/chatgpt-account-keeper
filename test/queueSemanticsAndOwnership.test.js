@@ -87,14 +87,13 @@ async function composeFake(options = {}) {
   return { background, broker, operations, events, recorded, run };
 }
 
-async function waitForQueueIdle(queue) {
-  for (
-    let i = 0;
-    i < 100 && (queue.snapshot().queuedTotal > 0 || queue.activeCount() > 0);
-    i++
-  ) {
+async function waitForOperation(operations, operation) {
+  for (let i = 0; i < 1000; i++) {
+    const state = operations.get(operation.id)?.state;
+    if (state === "succeeded" || state === "failed" || state === "cancelled") return;
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
+  assert.fail(`操作 ${operation.id} 未在时限内结束`);
 }
 
 test("业务失败仍是 failed，保留业务结果并附带 close 契约", async () => {
@@ -133,26 +132,30 @@ test("只有自动调度按独立开关复用当前页面检查优惠资格", as
       return { ok: true };
     },
   };
-  const { background } = await composeFake(config);
+  const { background, operations } = await composeFake(config);
 
-  background.queue.submit({
+  const scheduledEnabled = background.queue.submit({
     accountId: "acc-1",
     workKind: "account-run",
     source: "scheduled",
     kind: "account-run",
   });
-  await waitForQueueIdle(background.queue);
-  background.enqueue({ accountId: "acc-1", workKind: "account-run", kind: "account-run" });
-  await waitForQueueIdle(background.queue);
+  await waitForOperation(operations, scheduledEnabled);
+  const manual = background.enqueue({
+    accountId: "acc-1",
+    workKind: "account-run",
+    kind: "account-run",
+  });
+  await waitForOperation(operations, manual);
 
   config.scheduledPromoCheckEnabled = false;
-  background.queue.submit({
+  const scheduledDisabled = background.queue.submit({
     accountId: "acc-1",
     workKind: "account-run",
     source: "scheduled",
     kind: "account-run",
   });
-  await waitForQueueIdle(background.queue);
+  await waitForOperation(operations, scheduledDisabled);
 
   assert.deepEqual(options, [true, false, false]);
 });

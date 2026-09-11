@@ -83,6 +83,8 @@ export const MUTATING_METHODS = new Set([
   "profiles.cleanCache",
   "profiles.archiveOrphan",
   "profiles.purgeOrphan",
+  "profiles.restoreArchive",
+  "profiles.purgeArchive",
   "conversations.upsert",
   "conversations.remove",
   "scheduler.start",
@@ -541,6 +543,8 @@ export class ApplicationServices {
     add("profiles.cleanCache", this._profilesCleanCache);
     add("profiles.archiveOrphan", this._profilesArchiveOrphan);
     add("profiles.purgeOrphan", this._profilesPurgeOrphan);
+    add("profiles.restoreArchive", this._profilesRestoreArchive);
+    add("profiles.purgeArchive", this._profilesPurgeArchive);
     add("conversations.list", this._conversationsList);
     add("conversations.upsert", this._conversationsUpsert);
     add("conversations.remove", this._conversationsRemove);
@@ -1262,12 +1266,14 @@ export class ApplicationServices {
   }
 
   _profilesScan() {
+    const active = this.operations.listActive().find((operation) => operation.kind === "profile-scan");
+    if (active) return active;
     return this._profileOperation(
       "profile-scan",
       null,
       ({ update }) => {
         update({ stage: "measure", message: "正在统计 Profile 目录大小", progress: 0.2 });
-        return this.runtime.profileManager.scan(this.runtime.store.getAccounts());
+        return this.runtime.profileManager.scanAsync(this.runtime.store.getAccounts());
       },
       { stage: "queued", message: "等待扫描 Profile" }
     );
@@ -1299,6 +1305,18 @@ export class ApplicationServices {
     return this._profileOperation("profile-orphan-archive", name, () =>
       this.runtime.profileManager.archiveOrphan(name, this.runtime.store.getAccounts())
     );
+  }
+
+  _profilesRestoreArchive(params) {
+    const name = requireId(params, "name");
+    return this._profileOperation("profile-archive-restore", name, () =>
+      this.runtime.profileManager.restoreArchive(name, this.runtime.store.getAccounts())
+    );
+  }
+
+  _profilesPurgeArchive(params) {
+    const name = requireId(params, "name");
+    return this._profileOperation("profile-archive-purge", name, () => this.runtime.profileManager.purgeArchive(name));
   }
 
   _profilesPurgeOrphan(params) {

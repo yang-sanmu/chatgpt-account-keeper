@@ -25,6 +25,8 @@ const OPERATIONS: Record<string, OperationMeta> = {
   "profile-scan": { action: "扫描 Profile", resource: "global" },
   "profile-cache-clean": { action: "清理缓存", resource: "profile" },
   "profile-orphan-archive": { action: "归档孤儿", resource: "profile" },
+  "profile-archive-restore": { action: "还原归档", resource: "profile" },
+  "profile-archive-purge": { action: "永久删除归档", resource: "profile" },
   "profile-orphan-purge": { action: "永久删除孤儿", resource: "profile" },
   "proxy-import": { action: "导入订阅", resource: "global" },
   "proxy-refresh": { action: "刷新订阅", resource: "global" },

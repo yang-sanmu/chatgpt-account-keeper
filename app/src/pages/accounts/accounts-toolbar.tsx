@@ -1,3 +1,4 @@
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { useAccountFilter } from "@/store/selectors";
 import { useKeeperStore } from "@/store/keeperStore";
 import { Input } from "@/components/ui/input";
@@ -35,23 +36,7 @@ export function AccountsToolbar({ onCreateClick }: AccountsToolbarProps) {
         />
       </div>
 
-      <Select
-        value={filter.groupId}
-        onValueChange={(v) => setFilter({ groupId: v })}
-      >
-        <SelectTrigger className="w-32 h-9">
-          <SelectValue placeholder="全部分组" />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="all">全部分组</SelectItem>
-          <SelectItem value="none">未分组</SelectItem>
-          {groups.map((g) => (
-            <SelectItem key={g.id} value={g.id}>
-              {g.name}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+      <SearchableSelect label="分组" className="w-40 h-9 justify-between" value={filter.groupId} onValueChange={(v) => setFilter({ groupId: v })} options={[{ value: "all", label: "全部分组" }, { value: "none", label: "未分组" }, ...groups.map((g) => ({ value: g.id, label: g.name }))]} />
 
       <Select
         value={filter.status}

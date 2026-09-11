@@ -31,7 +31,7 @@ function createSource(root) {
   write("config/conversations.json", {
     sets: { topic_mrveci1p: { topic: "迁移主题", minRounds: 1, maxRounds: 2 } },
   });
-  write("config/settings.json", { intervalMinutes: 45 });
+  write("config/settings.json", { intervalMinutes: 45, statusCheckEnabled: true, promoCheckEnabled: true });
   write("config/groups.json", { groups: [] });
   write("profiles/a1/Default/Cookies", "session-cookie");
   write("profiles/a1/DevToolsActivePort", "stale-runtime-file");
@@ -90,6 +90,8 @@ test("full legacy migration promotes a verified DB/profile set and replays idemp
   assert.deepEqual(repository.listConversationSets().map((set) => set.id), ["迁移主题"]);
   assert.equal(repository.queryHistory({ accountId: "a1" })[0].payload.setName, "迁移主题");
   assert.equal(repository.getSettings().schedulerEnabled, false);
+  assert.equal(repository.getSettings().statusCheckEnabled, true);
+  assert.equal(repository.getSettings().promoCheckEnabled, true);
   assert.equal(repository.queryHistory({ accountId: "deleted" }).length, 1);
   assert.deepEqual(
     repository.listHistoryAccounts().map((item) => [item.accountId, item.deleted]),
@@ -276,6 +278,10 @@ test("schema upgrade repairs legacy conversation ids imported by older builds", 
     Database,
     appVersion: "test",
   });
+  assert.equal(repository.getSettings().statusCheckOnStartup, false);
+  assert.equal(repository.getSettings().profileAutoCleanEnabled, false);
+  assert.equal(repository.getSettings().statusCheckEnabled, false);
+  assert.equal(repository.getSettings().promoCheckEnabled, false);
   assert.deepEqual(
     repository.listConversationSets().map((set) => set.id),
     ["default", "default (2)", "相同内容", "相同内容 (3)", "相同内容 (2)"]
@@ -398,4 +404,32 @@ test("没有自定义 selectors 时不在数据目录留下空覆盖", async (t)
 
   // 留一个覆盖会把该文件永久钉死在旧版本，之后的更新再也改不动它。
   assert.equal(fs.existsSync(path.join(target, "config", "selectors.json")), false);
+});
+
+
+test("a database with the already-applied v5 migration can reopen", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "keeper-v5-reopen-"));
+  const filePath = path.join(root, "keeper.db");
+  let repository;
+  t.after(() => {
+    repository?.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  const database = new Database(filePath);
+  database.exec(MIGRATION_LEDGER_SQL);
+  for (const migration of MIGRATIONS.slice(0, 5)) {
+    database.exec(migration.sql);
+    database.prepare("INSERT INTO schema_migrations(version, name, checksum, applied_at) VALUES (?, ?, ?, ?)").run(
+      migration.version, migration.name,
+      migration.version === 5 ? "36deaf703fb008a934b77dcc2941f4363b967409bd14a86d4b60f82a3270bb24" : migration.checksum,
+      "2026-09-11T00:39:34.000Z"
+    );
+  }
+  database.pragma("user_version = 5");
+  database.exec("UPDATE app_settings SET status_check_enabled=1, promo_check_enabled=1");
+  database.close();
+  repository = await openKeeperRepository({ filePath, backupDirectory: path.join(root, "backups") });
+  assert.equal(repository.getSettings().statusCheckEnabled, true);
+  assert.equal(repository.getSettings().promoCheckEnabled, true);
+  assert.equal(repository.integrityCheck().ok, true);
 });

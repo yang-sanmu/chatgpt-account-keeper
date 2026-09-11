@@ -502,18 +502,20 @@ function normalizeData(config, profileTrees, rawHistories) {
   const rawSettings = requireObject(config.settings, "settings");
   const settingsKnown = new Set([
     "intervalMinutes", "jitterMinutes", "headless", "statusCheckMinutes",
-    "statusCheckOnStartup", "openPageTimeoutMinutes", "profileAutoCleanEnabled",
+    "statusCheckOnStartup", "statusCheckEnabled", "promoCheckEnabled", "openPageTimeoutMinutes", "profileAutoCleanEnabled",
   ]);
   const settings = {
     intervalMinutes: finiteNumber(rawSettings.intervalMinutes, 180, 1),
     jitterMinutes: finiteNumber(rawSettings.jitterMinutes, 30),
     headless: typeof rawSettings.headless === "boolean" ? rawSettings.headless : true,
     statusCheckMinutes: finiteNumber(rawSettings.statusCheckMinutes, 15, 1),
+    statusCheckEnabled: rawSettings.statusCheckEnabled === true,
+    promoCheckEnabled: rawSettings.promoCheckEnabled === true,
     statusCheckOnStartup:
-      typeof rawSettings.statusCheckOnStartup === "boolean" ? rawSettings.statusCheckOnStartup : true,
+      typeof rawSettings.statusCheckOnStartup === "boolean" ? rawSettings.statusCheckOnStartup : false,
     openPageTimeoutMinutes: finiteNumber(rawSettings.openPageTimeoutMinutes, 0),
     profileAutoCleanEnabled:
-      typeof rawSettings.profileAutoCleanEnabled === "boolean" ? rawSettings.profileAutoCleanEnabled : true,
+      typeof rawSettings.profileAutoCleanEnabled === "boolean" ? rawSettings.profileAutoCleanEnabled : false,
     legacyExtra: pickExtra(rawSettings, settingsKnown),
   };
 

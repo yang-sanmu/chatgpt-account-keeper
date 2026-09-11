@@ -62,6 +62,9 @@ export function normalizeProfileScan(raw: unknown): ProfileScanResult | null {
   if (!source.profiles.every(isProfileInfo)) return null;
   if (!source.orphans.every(isProfileInfo)) return null;
 
+  const archives = source.archives ?? [];
+  if (!Array.isArray(archives) || !archives.every(isProfileInfo)) return null;
+
   const totals = asRecord(source.totals);
   if (!totals) return null;
 
@@ -75,6 +78,7 @@ export function normalizeProfileScan(raw: unknown): ProfileScanResult | null {
   return {
     profiles: source.profiles,
     orphans: source.orphans,
+    archives,
     totals: {
       profiles: narrowed.profiles!,
       linked: narrowed.linked!,

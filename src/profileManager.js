@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { Worker } from "node:worker_threads";
 import path from "node:path";
 import { fromRoot, ensureDir } from "./paths.js";
 import { isBusy, isHeld } from "./locks.js";
@@ -296,12 +297,17 @@ export function createProfileManager({
     }
     profiles.sort((a, b) => b.bytes - a.bytes || a.name.localeCompare(b.name));
 
-    const archiveStats = statTree(resolvedArchive);
-    const archiveCount = fs.existsSync(resolvedArchive)
-      ? fs
-          .readdirSync(resolvedArchive, { withFileTypes: true })
-          .filter((entry) => entry.isDirectory() && !entry.isSymbolicLink()).length
-      : 0;
+    const archives = [];
+    if (assertRealDirectory(resolvedArchive)) {
+      for (const entry of fs.readdirSync(resolvedArchive, { withFileTypes: true })) {
+        if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
+        const target = archivePath(entry.name);
+        const stats = statProfile(target);
+        archives.push({ name: entry.name, archived: true, linked: false, nonStandardReference: false, accountIds: [], accountLabels: [],
+          busy: hasBrowserLock(target), bytes: stats.bytes, files: stats.files,
+          cacheBytes: stats.cacheBytes, cacheFiles: stats.cacheFiles });
+      }
+    }
     const trashStats = statTree(resolvedTrash);
     const trashCount = fs.existsSync(resolvedTrash)
       ? fs
@@ -314,6 +320,7 @@ export function createProfileManager({
     return {
       profiles,
       orphans: orphanProfiles,
+      archives,
       totals: {
         profiles: profiles.length,
         linked: profiles.length - orphanProfiles.length,
@@ -321,12 +328,27 @@ export function createProfileManager({
         bytes: sum(profiles, "bytes"),
         cacheBytes: sum(profiles, "cacheBytes"),
         orphanBytes: sum(orphanProfiles, "bytes"),
-        archiveCount,
-        archiveBytes: archiveStats.bytes,
+        archiveCount: archives.length,
+        archiveBytes: sum(archives, "bytes"),
         trashCount,
         trashBytes: trashStats.bytes,
       },
     };
+  }
+
+  function scanAsync(accounts = []) {
+    return new Promise((resolve, reject) => {
+      const worker = new Worker(new URL("./profileScanWorker.js", import.meta.url), {
+        workerData: {
+          workspaceRoot: resolvedWorkspace, profilesRoot: resolvedProfiles,
+          archiveRoot: resolvedArchive, trashRoot: resolvedTrash, accounts,
+          busyIds: accounts.filter((account) => accountBusy(account.id)).map((account) => account.id),
+        },
+      });
+      worker.once("message", ({ result, error }) => error ? reject(new Error(error)) : resolve(result));
+      worker.once("error", reject);
+      worker.once("exit", (code) => { if (code !== 0) reject(new Error(`Profile 扫描进程退出：${code}`)); });
+    });
   }
 
   function findOrphan(name, accounts = []) {
@@ -485,6 +507,47 @@ export function createProfileManager({
     return moveToArchive(target, { reason: "orphan-cleanup" });
   }
 
+  function archivePath(name) {
+    const raw = String(name ?? "");
+    if (!raw || raw === "." || raw === ".." || /[\\/:]/.test(raw)) {
+      throw new ProfileOperationError("归档名称不合法");
+    }
+    if (!assertRealDirectory(resolvedArchive)) throw new ProfileOperationError("归档不存在", 404);
+    const target = path.resolve(resolvedArchive, raw);
+    if (path.dirname(target) !== resolvedArchive || !assertRealDirectory(target)) {
+      throw new ProfileOperationError("归档不存在或路径不合法", 404);
+    }
+    return target;
+  }
+
+  function restoreArchive(name, accounts = []) {
+    const target = archivePath(name);
+    assertAvailable(target);
+    const manifest = path.join(target, ".keeper-archive.json");
+    if (!fs.existsSync(manifest)) throw new ProfileOperationError("归档清单缺失，无法确定原目录，不能还原");
+    if (fs.lstatSync(manifest).isSymbolicLink()) throw new ProfileOperationError("归档清单路径不安全");
+    const metadata = JSON.parse(fs.readFileSync(manifest, "utf8"));
+    const destination = accountProfilePath({ profileDir: metadata.originalProfile });
+    const { byPath, protectAll } = accountMap(accounts);
+    assertAvailable(destination, (protectAll ? accounts : byPath.get(pathKey(destination)) ?? []).map((a) => a.id));
+    if (fs.existsSync(destination)) throw new ProfileOperationError("同名 Profile 已存在，无法还原，请先处理现有目录", 409);
+    ensureDir(resolvedProfiles);
+    assertRealDirectory(resolvedProfiles);
+    renamePathSync(target, destination);
+    // 清单保留不会影响浏览器；失败时不把已完成的还原报告为失败。
+    try { fs.rmSync(path.join(destination, ".keeper-archive.json"), { force: true }); } catch {}
+    const linkedAccounts = protectAll ? accounts : byPath.get(pathKey(destination)) ?? [];
+    return {
+      restored: true, name: path.basename(destination),
+      accountIds: linkedAccounts.map((account) => account.id),
+      accountLabels: linkedAccounts.map((account) => account.email || account.gptName || account.note || account.id),
+    };
+  }
+
+  function purgeArchive(name) {
+    return purgeAt(archivePath(name));
+  }
+
   function purgeAt(target, accountId = null) {
     if (!fs.existsSync(target)) return { deleted: false, missing: true, bytes: 0 };
     assertRealDirectory(target);
@@ -637,11 +700,14 @@ export function createProfileManager({
 
   return {
     scan,
+    scanAsync,
     cleanCaches,
     inspectAccountCache,
     cleanAccountCache,
     archiveAccount,
     archiveOrphan,
+    restoreArchive,
+    purgeArchive,
     purgeAccount,
     purgeOrphan,
     removeAccountWithProfile,

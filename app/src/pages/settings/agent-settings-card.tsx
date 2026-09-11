@@ -149,6 +149,15 @@ export function AgentSettingsCard() {
         </div>
         
         <div className="flex flex-col gap-4 pt-2">
+          {([
+            ["statusCheckEnabled", "自动巡检状态", "按状态检查间隔自动检查账号，默认关闭。"],
+            ["promoCheckEnabled", "自动获取优惠资格", "检查账号状态时同步查询优惠资格，默认关闭。"],
+          ] as const).map(([key, title, description]) => (
+            <div key={key} className="flex items-center justify-between">
+              <div className="space-y-0.5"><Label htmlFor={key}>{title}</Label><p className="text-xs text-secondary">{description}</p></div>
+              <Switch id={key} checked={draft[key] === true} onCheckedChange={(checked) => setDraft({ ...draft, [key]: checked })} />
+            </div>
+          ))}
           <div className="flex items-center justify-between">
             <div className="space-y-0.5">
               <Label htmlFor="agent-headless">无头模式 (Headless)</Label>
@@ -173,8 +182,8 @@ export function AgentSettingsCard() {
           </div>
           <div className="flex items-center justify-between">
             <div className="space-y-0.5">
-              <Label htmlFor="agent-auto-clean">自动清理孤立 Profile</Label>
-              <p className="text-xs text-secondary">在后台空闲时，自动归档或清理未关联任何账号的浏览器缓存目录。</p>
+              <Label htmlFor="agent-auto-clean">自动清理 Profile 缓存</Label>
+              <p className="text-xs text-secondary">后台自动检查并清理超出预算的浏览器缓存，默认关闭。</p>
             </div>
             <Switch
               id="agent-auto-clean"

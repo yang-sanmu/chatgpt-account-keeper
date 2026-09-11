@@ -96,6 +96,7 @@ import {
   type AccountStatusPatch,
 } from "./accountModel";
 import { normalizeProfileScan, normalizeScheduler } from "./normalize";
+import { applyProfileOperation } from "./profileUpdates";
 
 export type NavKey =
   | "overview"
@@ -473,6 +474,8 @@ function reportBulk(
   );
 }
 
+let profileRescanRequested = false;
+
 export const useKeeperStore = create<KeeperStore>()((set, get) => {
   async function startSchedulerNow(remember: boolean): Promise<void> {
     if (get().schedulerStarting) return;
@@ -587,7 +590,15 @@ export const useKeeperStore = create<KeeperStore>()((set, get) => {
     // profile-scan 的结果就是扫描数据本身。profiles.scan 是操作类方法，调用它只拿到一个
     // 操作描述符；真正的 profiles 数组在这个事件里。
     if (operation.kind === "profile-scan") {
-      if (operation.state === "succeeded") {
+      if (TERMINAL_OPERATION_STATES.has(operation.state) && profileRescanRequested) {
+        profileRescanRequested = false;
+        set({ profileScanning: false });
+        void get().requestProfileScan();
+        return;
+      }
+      if (PENDING_OPERATION_STATES.has(operation.state)) {
+        set({ profileScanning: true });
+      } else if (operation.state === "succeeded") {
         set({
           profileScan: normalizeProfileScan(operation.result),
           profileScanning: false,
@@ -601,6 +612,7 @@ export const useKeeperStore = create<KeeperStore>()((set, get) => {
 
     // 其它 Profile 操作改变了磁盘状态，必须重新扫描才知道新的占用。
     if (operation.state === "succeeded" && operation.kind.startsWith("profile-")) {
+      set({ profileScan: applyProfileOperation(get().profileScan, operation) });
       void get().requestProfileScan();
     }
   }
@@ -1160,11 +1172,16 @@ export const useKeeperStore = create<KeeperStore>()((set, get) => {
     },
 
     requestProfileScan: async () => {
+      if (get().profileScanning) {
+        profileRescanRequested = true;
+        return;
+      }
       set({ profileScanning: true, profileScanFailed: false });
       try {
         await agentCall("profiles.scan", {}, await newCommandId());
       } catch (error) {
         // 记下这次失败，否则 Profile 页的自动扫描条件会重新成立，形成重试循环。
+        profileRescanRequested = false;
         set({ profileScanning: false, profileScanFailed: true });
         notify.error("扫描 Profile 目录失败", error);
       }
@@ -1315,6 +1332,7 @@ export const useKeeperStore = create<KeeperStore>()((set, get) => {
 ///
 /// 存在的原因是 zustand 的 store 是模块单例，跨测试会残留上一条用例的账号与在途 promise。
 export function __resetKeeperStoreForTests(): void {
+  profileRescanRequested = false;
   operationWaiters.clear();
   earlyTerminalOperations.clear();
   eventUnsubscribers = [];

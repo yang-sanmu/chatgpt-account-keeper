@@ -15,6 +15,7 @@ import {
   HardDrive,
   Eraser,
   ArchiveRestore,
+  Archive,
   Trash2,
   RefreshCw,
   AlertTriangle,
@@ -31,7 +32,7 @@ export function ProfilesPage() {
 
   const [showOrphansOnly, setShowOrphansOnly] = React.useState(false);
   const [actionDialog, setActionDialog] = React.useState<{
-    kind: "clean" | "archive" | "purge" | "clean-all" | "archive-all" | "purge-all";
+    kind: "clean" | "archive" | "purge" | "restore" | "purge-archive" | "clean-all" | "archive-all" | "purge-all";
     profile?: ProfileInfo;
   } | null>(null);
   
@@ -146,7 +147,7 @@ export function ProfilesPage() {
     }
   };
 
-  const list = scan ? (showOrphansOnly ? scan.orphans : [...scan.profiles, ...scan.orphans]) : [];
+  const list = scan ? (showOrphansOnly ? scan.orphans : [...scan.profiles, ...(scan.archives ?? [])]) : [];
 
   return (
     <Page>
@@ -165,7 +166,7 @@ export function ProfilesPage() {
         {/* Pure Metrics Row */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <Card className="p-4">
-            <div className="text-xs font-medium text-muted mb-1">Profile 总数</div>
+            <div className="text-xs font-medium text-muted mb-1">活动 Profile 总数</div>
             <div className="metric text-primary">{scan?.totals.profiles ?? 0}</div>
           </Card>
           <Card className="p-4">
@@ -188,6 +189,8 @@ export function ProfilesPage() {
           </Card>
         </div>
 
+        <p className="text-sm text-secondary">已归档 {scan?.totals.archiveCount ?? 0} 个 · {formatBytes(scan?.totals.archiveBytes ?? 0)}（还原后回到原目录，不会重新创建已删除的账号）</p>
+        {scanning && scan && <p className="text-xs text-muted">正在后台更新目录统计，已完成的归档和还原可继续操作。</p>}
         {/* Action Toolbar */}
         <div className="flex flex-wrap items-center justify-between gap-4 p-3 rounded-panel border border-subtle bg-panel">
           <div className="flex items-center gap-2">
@@ -250,13 +253,14 @@ export function ProfilesPage() {
         ) : (
           <div className="grid grid-cols-[repeat(auto-fill,minmax(340px,1fr))] gap-4 items-start">
             {list.map((p) => (
-              <Card key={p.name} className="flex flex-col">
+              <Card key={`${p.archived ? "archive" : "active"}:${p.name}`} className="flex flex-col">
                 <CardHeader className="pb-2">
                   <div className="flex items-center gap-2">
                     <CardTitle className="text-base truncate flex-1" title={p.name}>
                       {p.name}
                     </CardTitle>
-                    {!p.linked && <Badge variant="outline" className="text-warn border-warn text-2xs">孤儿</Badge>}
+                    {p.archived && <Badge variant="outline">已归档</Badge>}
+                    {!p.linked && !p.archived && <Badge variant="outline" className="text-warn border-warn text-2xs">孤儿</Badge>}
                     {p.busy && <Badge variant="neutral" className="text-2xs">使用中</Badge>}
                   </div>
                 </CardHeader>
@@ -281,7 +285,7 @@ export function ProfilesPage() {
                           variant="ghost"
                           size="icon-sm"
                           onClick={() => setActionDialog({ kind: "clean", profile: p })}
-                          disabled={p.busy || runningBulk}
+                          disabled={p.archived || p.busy || runningBulk}
                           aria-label="清理缓存"
                         >
                           <Eraser className="size-4" />
@@ -298,16 +302,17 @@ export function ProfilesPage() {
                           <span className="inline-block">
                             <Button
                               variant="ghost"
-                              size="icon-sm"
-                              onClick={() => setActionDialog({ kind: "archive", profile: p })}
+                              size="sm"
+                              onClick={() => setActionDialog({ kind: p.archived ? "restore" : "archive", profile: p })}
                               disabled={p.busy || runningBulk}
-                              aria-label="归档"
+                              aria-label={p.archived ? "还原" : "归档"}
                             >
-                              <ArchiveRestore className="size-4" />
+                              {p.archived ? <ArchiveRestore className="size-4" /> : <Archive className="size-4" />}
+                              {p.archived ? "还原" : "归档"}
                             </Button>
                           </span>
                         </TooltipTrigger>
-                        <TooltipContent>归档</TooltipContent>
+                        <TooltipContent>{p.archived ? "还原" : "归档"}</TooltipContent>
                       </Tooltip>
                       <Tooltip>
                         <TooltipTrigger asChild>
@@ -316,7 +321,7 @@ export function ProfilesPage() {
                               variant="ghost"
                               size="icon-sm"
                               className="text-danger hover:text-danger-content hover:bg-danger"
-                              onClick={() => setActionDialog({ kind: "purge", profile: p })}
+                              onClick={() => setActionDialog({ kind: p.archived ? "purge-archive" : "purge", profile: p })}
                               disabled={p.busy || runningBulk}
                               aria-label="彻底删除"
                             >

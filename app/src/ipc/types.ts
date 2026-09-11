@@ -127,6 +127,8 @@ export interface AgentSettings {
   headless: boolean;
   statusCheckMinutes: number;
   statusCheckOnStartup: boolean;
+  statusCheckEnabled?: boolean;
+  promoCheckEnabled?: boolean;
   openPageTimeoutMinutes: number;
   profileAutoCleanEnabled: boolean;
 }

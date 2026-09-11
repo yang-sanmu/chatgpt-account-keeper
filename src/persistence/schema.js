@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 const SCHEMA_V1 = String.raw`
 CREATE TABLE IF NOT EXISTS command_receipts (
@@ -362,6 +362,13 @@ ALTER TABLE account_status ADD COLUMN promo_stale INTEGER NOT NULL DEFAULT 0
 ALTER TABLE account_status ADD COLUMN promo_check_detail TEXT;
 `;
 
+// 已执行的迁移内容不可修改；后续调整必须追加新版本，避免校验和阻断启动。
+const SCHEMA_V5 = String.raw`
+ALTER TABLE app_settings ADD COLUMN status_check_enabled INTEGER NOT NULL DEFAULT 0 CHECK (status_check_enabled IN (0, 1));
+ALTER TABLE app_settings ADD COLUMN promo_check_enabled INTEGER NOT NULL DEFAULT 0 CHECK (promo_check_enabled IN (0, 1));
+UPDATE app_settings SET status_check_on_startup=0, profile_auto_clean_enabled=0;
+`;
+
 export const MIGRATIONS = Object.freeze([
   Object.freeze({
     version: 1,
@@ -387,6 +394,7 @@ export const MIGRATIONS = Object.freeze([
     sql: SCHEMA_V4,
     checksum: createHash("sha256").update(SCHEMA_V4).digest("hex"),
   }),
+  Object.freeze({ version: 5, name: "opt-in-automation", sql: SCHEMA_V5, checksum: createHash("sha256").update(SCHEMA_V5).digest("hex") }),
 ]);
 
 export const MIGRATION_LEDGER_SQL = String.raw`

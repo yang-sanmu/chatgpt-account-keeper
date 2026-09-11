@@ -1,6 +1,6 @@
 import { launchForAccount } from "./browser.js";
 import { readResourceJson } from "./paths.js";
-import { getAccount, updateAccount } from "./store.js";
+import { getAccount, getSettings, updateAccount } from "./store.js";
 import { isBusy, isHeld, withAccountLock } from "./locks.js";
 import { setCachedStatus } from "./statusMonitor.js";
 import {
@@ -367,6 +367,7 @@ export async function checkLoggedIn(account, runtime = {}) {
   const inspectPromo = runtime.checkPromoEligibility ?? checkPromoEligibility;
   const persistAccount = runtime.updateAccount ?? updateAccount;
   const selectors = readResourceJson("config/selectors.json");
+  const promoEnabled = (runtime.getSettings ?? getSettings)().promoCheckEnabled === true;
   let context;
   try {
     const liveAccount = findAccount(account.id);
@@ -394,21 +395,23 @@ export async function checkLoggedIn(account, runtime = {}) {
     await page.goto(selectors.url, { waitUntil: "domcontentloaded" });
     const health = await inspectSession(page);
     let promo;
-    if (health.state === SESSION_OK) {
-      try {
-        promo = await inspectPromo(page);
-      } catch (error) {
-        // 优惠是状态刷新里的附加观测；它失败不能把已由 /me 确认的健康会话降成 unknown。
+    if (promoEnabled) {
+      if (health.state === SESSION_OK) {
+        try {
+          promo = await inspectPromo(page);
+        } catch (error) {
+          // 优惠是状态刷新里的附加观测；它失败不能把已由 /me 确认的健康会话降成 unknown。
+          promo = {
+            ok: false,
+            detail: `优惠资格检查失败：${String(error?.message || error)}`,
+          };
+        }
+      } else {
         promo = {
           ok: false,
-          detail: `优惠资格检查失败：${String(error?.message || error)}`,
+          detail: "账号会话未确认，本次未检查优惠资格",
         };
       }
-    } else {
-      promo = {
-        ok: false,
-        detail: "账号会话未确认，本次未检查优惠资格",
-      };
     }
     // 只有 /me 已验证且邮箱与 session 一致的 SESSION_OK 才能写回账号资料。
     // WAF/unknown 响应里的邮箱只是未验证观测，不能永久覆盖绑定信息。
@@ -431,10 +434,10 @@ export async function checkLoggedIn(account, runtime = {}) {
       loggedIn: false,
       email: null,
       detail: `状态检查失败：${String(e.message || e)}`,
-      promo: {
+      promo: promoEnabled ? {
         ok: false,
         detail: "状态检查失败，本次未检查优惠资格",
-      },
+      } : undefined,
     };
   } finally {
     if (context) await context.close().catch(() => {});

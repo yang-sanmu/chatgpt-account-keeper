@@ -105,6 +105,9 @@ export async function runOnce(account, opts = {}) {
         }
         log.info(`「${name}」开始 agent 对话，主题「${set.topic}」(${setName})`);
         const result = await runAgent(page, selectors, set);
+        if (result.needReauth) {
+          setCachedStatus(account.id, SESSION_REAUTH, health.email, result.reason);
+        }
         log.info(`「${name}」完成 ${result.totalRounds ?? 0} 轮对话`);
         // 只有对话成功才算跑完一个有效窗口，失败不消耗计数。
         if (result.ok) {

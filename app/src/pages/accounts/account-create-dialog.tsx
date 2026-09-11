@@ -1,3 +1,4 @@
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import * as React from "react";
 import { useKeeperStore } from "@/store/keeperStore";
 import {
@@ -95,19 +96,7 @@ export function AccountCreateDialog({ open, onOpenChange }: AccountCreateDialogP
             <div className="grid grid-cols-2 gap-4">
               <div className="grid gap-2">
                 <Label>分组</Label>
-                <Select value={groupId} onValueChange={setGroupId}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">未分组</SelectItem>
-                    {groups.map((g) => (
-                      <SelectItem key={g.id} value={g.id}>
-                        {g.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <SearchableSelect label="分组" value={groupId} onValueChange={setGroupId} options={[{ value: "none", label: "未分组" }, ...groups.map((g) => ({ value: g.id, label: g.name }))]} />
               </div>
               
               <div className="grid gap-2">

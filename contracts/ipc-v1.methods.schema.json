@@ -234,6 +234,8 @@
         "headless": { "type": "boolean" },
         "statusCheckMinutes": { "type": "number", "minimum": 1 },
         "statusCheckOnStartup": { "type": "boolean" },
+        "statusCheckEnabled": { "type": "boolean" },
+        "promoCheckEnabled": { "type": "boolean" },
         "openPageTimeoutMinutes": { "type": "number", "minimum": 0 },
         "profileAutoCleanEnabled": { "type": "boolean" },
         "schedulerEnabled": { "type": "boolean" }
@@ -860,6 +862,8 @@
             "headless": { "type": "boolean" },
             "statusCheckMinutes": { "type": "number", "minimum": 1 },
             "statusCheckOnStartup": { "type": "boolean" },
+        "statusCheckEnabled": { "type": "boolean" },
+        "promoCheckEnabled": { "type": "boolean" },
             "openPageTimeoutMinutes": { "type": "number", "minimum": 0 },
             "profileAutoCleanEnabled": { "type": "boolean" }
           }
@@ -869,6 +873,8 @@
         "headless": { "type": "boolean" },
         "statusCheckMinutes": { "type": "number", "minimum": 1 },
         "statusCheckOnStartup": { "type": "boolean" },
+        "statusCheckEnabled": { "type": "boolean" },
+        "promoCheckEnabled": { "type": "boolean" },
         "openPageTimeoutMinutes": { "type": "number", "minimum": 0 },
         "profileAutoCleanEnabled": { "type": "boolean" }
       }

@@ -29,7 +29,7 @@
         "accounts.history", "history.query", "history.listAccounts",
         "groups.list", "groups.create", "groups.update", "groups.remove",
         "proxies.getState", "proxies.importSubscription", "proxies.refreshSubscription", "proxies.setRuntimeDirectory", "proxies.setNodeEnabled", "proxies.testNode", "proxies.testAll",
-        "profiles.scan", "profiles.cleanCache", "profiles.archiveOrphan", "profiles.purgeOrphan",
+        "profiles.scan", "profiles.cleanCache", "profiles.archiveOrphan", "profiles.purgeOrphan", "profiles.restoreArchive", "profiles.purgeArchive",
         "conversations.list", "conversations.upsert", "conversations.remove",
         "scheduler.getState", "scheduler.start", "scheduler.stop",
         "settings.get", "settings.update",
@@ -143,6 +143,7 @@
         "bytes", "files", "cacheBytes", "cacheFiles"
       ],
       "properties": {
+        "archived": { "type": "boolean" },
         "name": { "type": "string", "minLength": 1 },
         "linked": { "type": "boolean" },
         "accountIds": { "type": "array", "items": { "type": "string" } },
@@ -162,6 +163,7 @@
       "properties": {
         "profiles": { "type": "array", "items": { "$ref": "#/$defs/profileInfo" } },
         "orphans": { "type": "array", "items": { "$ref": "#/$defs/profileInfo" } },
+        "archives": { "type": "array", "items": { "$ref": "#/$defs/profileInfo" } },
         "totals": {
           "type": "object",
           "additionalProperties": false,
@@ -201,7 +203,7 @@
           "additionalProperties": false,
           "required": ["kind", "name", "result"],
           "properties": {
-            "kind": { "enum": ["profile-cache-clean", "profile-orphan-archive", "profile-orphan-purge"] },
+            "kind": { "enum": ["profile-cache-clean", "profile-orphan-archive", "profile-orphan-purge", "profile-archive-restore", "profile-archive-purge"] },
             "name": { "type": ["string", "null"] },
             "result": { "$ref": "#/$defs/jsonValue" }
           }

@@ -804,3 +804,57 @@ describe("排空与队列", () => {
     expect(store().queue?.workSlots.limit).toBe(4);
   });
 });
+
+
+describe("Profile 操作后即时刷新", () => {
+  it("还原立即移除旧归档路径，进行中的旧扫描不会覆盖新状态", async () => {
+    const archived = makeProfileInfo({ name: "a__archive", archived: true, linked: false });
+    const oldScan = { ...makeProfileScan(), archives: [archived] };
+    tauri.emitAgentEvent("operation.changed", makeOperation({
+      id: "initial", kind: "profile-scan", state: "succeeded", result: oldScan,
+    }));
+    let requests = 0;
+    tauri.onMethod("profiles.scan", () => {
+      requests++;
+      return makeOperation({ id: `scan-${requests}`, kind: "profile-scan", state: "queued" });
+    });
+    await store().requestProfileScan();
+    tauri.emitAgentEvent("operation.changed", makeOperation({
+      id: "restore", kind: "profile-archive-restore", resourceId: "a__archive", state: "succeeded",
+      result: { restored: true, name: "a", accountIds: [], accountLabels: [] },
+    }));
+    expect(store().profileScan?.archives).toHaveLength(0);
+    expect(store().profileScan?.orphans[0]?.name).toBe("a");
+    expect(store().profileScan?.profiles[0]?.archived).toBe(false);
+    expect(requests).toBe(1);
+    tauri.emitAgentEvent("operation.changed", makeOperation({
+      id: "scan-1", kind: "profile-scan", state: "succeeded", result: oldScan,
+    }));
+    await flush();
+    expect(requests).toBe(2);
+    expect(store().profileScan?.archives).toHaveLength(0);
+    expect(store().profileScan?.profiles[0]?.name).toBe("a");
+  });
+
+  it("归档立即切换路径和状态，删除立即移除条目", () => {
+    const profile = makeProfileInfo({ name: "a", linked: false });
+    tauri.onMethod("profiles.scan", () => makeOperation({ id: "scan", kind: "profile-scan", state: "queued" }));
+    tauri.emitAgentEvent("operation.changed", makeOperation({
+      id: "initial", kind: "profile-scan", state: "succeeded",
+      result: makeProfileScan({ profiles: [profile], orphans: [profile] }),
+    }));
+    tauri.emitAgentEvent("operation.changed", makeOperation({
+      id: "archive", kind: "profile-orphan-archive", resourceId: "a", state: "succeeded",
+      result: { archived: true, name: "a__archive" },
+    }));
+    expect(store().profileScan?.profiles).toHaveLength(0);
+    expect(store().profileScan?.archives?.[0]).toMatchObject({ name: "a__archive", archived: true });
+    expect(store().profileScan?.totals.archiveCount).toBe(1);
+    tauri.emitAgentEvent("operation.changed", makeOperation({
+      id: "purge", kind: "profile-archive-purge", resourceId: "a__archive", state: "succeeded",
+      result: { deleted: true },
+    }));
+    expect(store().profileScan?.archives).toHaveLength(0);
+    expect(store().profileScan?.totals.archiveCount).toBe(0);
+  });
+});

@@ -57,6 +57,8 @@ pub const UI_METHODS: &[&str] = &[
     "profiles.cleanCache",
     "profiles.archiveOrphan",
     "profiles.purgeOrphan",
+    "profiles.restoreArchive",
+    "profiles.purgeArchive",
     "conversations.list",
     "conversations.upsert",
     "conversations.remove",

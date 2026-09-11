@@ -506,6 +506,7 @@ test("状态检查仅在 SESSION_OK 时持久化已验证邮箱", async () => {
   const context = { close: async () => {} };
   const page = { goto: async () => {} };
   const baseRuntime = {
+    getSettings: () => ({ promoCheckEnabled: true }),
     getAccount: () => account,
     launchForAccount: async () => ({ context, page }),
     updateAccount: (...args) => updates.push(args),
@@ -579,4 +580,18 @@ test("已结束登录任务按 TTL 和容量有界清理", async () => {
     maxTasks: 200,
   });
   assert.equal(getLoginTask(ids.at(-1)), null, "超过 TTL 的终态任务应删除");
+});
+
+
+test("promo requests are opt-in even for a healthy session", async () => {
+  for (const settings of [{}, { promoCheckEnabled: false }]) {
+    const result = await checkLoggedIn({ id: "a" }, {
+      getAccount: () => ({ id: "a" }), getSettings: () => settings,
+      page: { goto: async () => {} }, updateAccount() {},
+      checkSession: async () => ({ state: "ok", email: null }),
+      checkPromoEligibility: () => assert.fail("disabled promo probe must not run"),
+    });
+    assert.equal(result.state, "ok");
+    assert.equal(result.promo, undefined);
+  }
 });

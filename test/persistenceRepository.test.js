@@ -37,6 +37,11 @@ test(
       fs.rmSync(root, { recursive: true, force: true });
     });
 
+    assert.equal(repository.getSettings().statusCheckEnabled, false);
+    assert.equal(repository.getSettings().promoCheckEnabled, false);
+    repository.updateSettings({ statusCheckEnabled: true, promoCheckEnabled: true });
+    assert.equal(repository.getSettings().statusCheckEnabled, true);
+    assert.equal(repository.getSettings().promoCheckEnabled, true);
     assert.equal(repository.getSchemaVersion(), SCHEMA_VERSION);
     assert.equal(repository.integrityCheck().ok, true);
     repository.replaceProxyNodes([

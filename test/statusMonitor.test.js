@@ -35,8 +35,8 @@ test("startup check setting only triggers an immediate check on process startup"
   assert.equal(shouldRunImmediateCheck({ statusCheckOnStartup: false }, true), false);
   assert.equal(shouldRunImmediateCheck({ statusCheckOnStartup: "false" }, true), false);
   assert.equal(shouldRunImmediateCheck({ statusCheckOnStartup: true }, false), false);
-  // 旧配置没有该字段时保持原来的启动即巡检行为。
-  assert.equal(shouldRunImmediateCheck({}, true), true);
+  // 旧配置没有该字段时默认不启动巡检。
+  assert.equal(shouldRunImmediateCheck({}, true), false);
 });
 
 test("refreshAccount returns cached state immediately for a manually held account", async () => {
@@ -412,4 +412,27 @@ test("巡检 single-flight 不重入，完成或失败后均可再次运行", as
   await assert.rejects(failing(), /boom/);
   await failing();
   assert.equal(failures, 2);
+});
+
+
+test("automatic status timer is opt-in and is removed when disabled", async () => {
+  const { StatusMonitorService } = await import("../src/statusMonitor.js");
+  let settings = {};
+  let created = 0;
+  let cleared = 0;
+  const monitor = new StatusMonitorService({
+    getSettings: () => settings,
+    setInterval: () => { created++; return 1; },
+    clearInterval: () => { cleared++; },
+    log: { info() {}, warn() {} },
+  });
+  monitor.start();
+  assert.equal(created, 0);
+  settings = { statusCheckEnabled: true };
+  monitor.restart();
+  assert.equal(created, 1);
+  settings = { statusCheckEnabled: false };
+  monitor.restart();
+  assert.equal(cleared, 1);
+  assert.equal(created, 1);
 });

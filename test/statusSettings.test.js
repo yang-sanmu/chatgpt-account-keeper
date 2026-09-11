@@ -23,7 +23,7 @@ test("设置接口只接受已知字段、严格布尔值和安全的有限间�
     null
   );
 
-  for (const key of ["headless", "statusCheckOnStartup", "profileAutoCleanEnabled"]) {
+  for (const key of ["headless", "statusCheckOnStartup", "profileAutoCleanEnabled", "statusCheckEnabled", "promoCheckEnabled"]) {
     assert.match(validateSettingsPatch({ [key]: "false" }), /布尔值/);
   }
 
@@ -70,6 +70,8 @@ test("旧版或手工损坏的本地设置在读取时统一恢复为安全值",
       headless: DEFAULT_SETTINGS.headless,
       statusCheckMinutes: 1,
       statusCheckOnStartup: DEFAULT_SETTINGS.statusCheckOnStartup,
+      statusCheckEnabled: false,
+      promoCheckEnabled: false,
       openPageTimeoutMinutes: 0,
       profileAutoCleanEnabled: DEFAULT_SETTINGS.profileAutoCleanEnabled,
     }

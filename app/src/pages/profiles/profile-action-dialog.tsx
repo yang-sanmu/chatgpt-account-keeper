@@ -17,7 +17,7 @@ import type { ProfileInfo } from "@/ipc/types";
 
 interface ProfileActionDialogProps {
   state: {
-    kind: "clean" | "archive" | "purge" | "clean-all" | "archive-all" | "purge-all";
+    kind: "clean" | "archive" | "purge" | "restore" | "purge-archive" | "clean-all" | "archive-all" | "purge-all";
     profile?: ProfileInfo;
   } | null;
   onClose: () => void;
@@ -34,7 +34,7 @@ export function ProfileActionDialog({ state, onClose, onBulkAction }: ProfileAct
 
     try {
       // 单条操作都需要一个具体的 Profile。缺了就说清楚，而不是让非空断言在运行时炸。
-      if (state.kind === "clean" || state.kind === "archive" || state.kind === "purge") {
+      if (state.kind === "clean" || state.kind === "archive" || state.kind === "purge" || state.kind === "restore" || state.kind === "purge-archive") {
         const target = state.profile;
         if (!target) {
           notify.error("操作失败", "没有指定要处理的 Profile");
@@ -60,6 +60,12 @@ export function ProfileActionDialog({ state, onClose, onBulkAction }: ProfileAct
           } else {
             notify.info("清理任务已完成", "后台没有返回可核对的清理明细");
           }
+        } else if (state.kind === "restore") {
+          await runOperation("profiles.restoreArchive", { name: target.name });
+          notify.success("还原完成", "Profile 已恢复到原目录");
+        } else if (state.kind === "purge-archive") {
+          await runOperation("profiles.purgeArchive", { name: target.name });
+          notify.success("归档已永久删除");
         } else if (state.kind === "archive") {
           await runOperation("profiles.archiveOrphan", { name: target.name });
           notify.success("归档完成", `「${target.name}」已移入归档目录，数据完整保留`);
@@ -87,7 +93,10 @@ export function ProfileActionDialog({ state, onClose, onBulkAction }: ProfileAct
   let title = "";
   let desc = <></>;
 
-  if (state?.kind === "clean") {
+  if (state?.kind === "restore") {
+    title = `还原 "${state.profile?.name}"？`;
+    desc = <>将恢复到原 Profile 目录。同名目录存在时会停止还原，不会覆盖现有数据。已删除的账号不会重新创建。</>;
+  } else if (state?.kind === "clean") {
     title = `清理 "${state.profile?.name ?? "该 Profile"}" 缓存？`;
     desc = (
       <>
@@ -103,8 +112,8 @@ export function ProfileActionDialog({ state, onClose, onBulkAction }: ProfileAct
         <strong>数据完整保留，之后可以手动恢复或关联到新账号。</strong>
       </>
     );
-  } else if (state?.kind === "purge") {
-    title = `彻底删除孤儿数据 "${state.profile?.name ?? "该 Profile"}"？`;
+  } else if (state?.kind === "purge" || state?.kind === "purge-archive") {
+    title = `彻底删除 Profile 数据 "${state.profile?.name ?? "该 Profile"}"？`;
     desc = (
       <>
         将永久删除此 Profile 的所有磁盘数据，包括 Cookies 和本地存储。
@@ -139,7 +148,7 @@ export function ProfileActionDialog({ state, onClose, onBulkAction }: ProfileAct
     );
   }
 
-  const isDanger = state?.kind === "purge" || state?.kind === "purge-all";
+  const isDanger = state?.kind === "purge" || state?.kind === "purge-archive" || state?.kind === "purge-all";
 
   return (
     <AlertDialog open={isOpen} onOpenChange={(v) => { if (!v && !submitting) onClose(); }}>

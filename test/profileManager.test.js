@@ -1,4 +1,5 @@
 import test from "node:test";
+import { assertOutgoingContract } from "../src/agent/contractValidator.js";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -398,4 +399,81 @@ test("scan reports staged deletion residue separately", () => {
   } finally {
     fx.cleanup();
   }
+});
+
+
+test("archived profiles remain visible, restore without overwriting and can be purged", () => {
+  const fx = fixture();
+  try {
+    fx.write("profiles/orphan/Default/Cookies", 25);
+    const manager = createProfileManager(fx);
+    const archived = manager.archiveOrphan("orphan");
+    assert.equal(manager.scan().archives[0].name, archived.name);
+    for (const payload of [
+      { kind: "profile-scan", name: null, result: manager.scan() },
+      { kind: "profile-archive-restore", name: archived.name, result: { restored: true } },
+      { kind: "profile-archive-purge", name: archived.name, result: { deleted: true } },
+    ]) {
+      assert.doesNotThrow(() => assertOutgoingContract({ event: "profile.changed", seq: 1,
+        instanceId: "346d2d5d-2b90-4dce-9b07-3b68fcb6f935", revision: 1,
+        occurredAt: new Date().toISOString(), payload }));
+    }
+    assert.equal(manager.scan().profiles.length, 0);
+    fx.write("profiles/orphan/keep", 1);
+    assert.throws(() => manager.restoreArchive(archived.name), /同名/);
+    manager.purgeOrphan("orphan");
+    assert.equal(manager.restoreArchive(archived.name).restored, true);
+    assert.equal(fs.statSync(path.join(fx.profilesRoot, "orphan/Default/Cookies")).size, 25);
+    assert.equal(manager.scan().archives.length, 0);
+    const again = manager.archiveOrphan("orphan");
+    assert.throws(() => manager.restoreArchive("../escape"), ProfileOperationError);
+    assert.throws(() => manager.purgeArchive("../escape"), ProfileOperationError);
+    assert.equal(manager.purgeArchive(again.name).deleted, true);
+    assert.equal(manager.scan().archives.length, 0);
+  } finally { fx.cleanup(); }
+});
+
+test("archive restore rejects a manifest outside the active profile root", () => {
+  const fx = fixture();
+  try {
+    fx.write("profiles/orphan/Default/Cookies", 25);
+    const manager = createProfileManager(fx);
+    const archived = manager.archiveOrphan("orphan");
+    fs.writeFileSync(path.join(fx.archiveRoot, archived.name, ".keeper-archive.json"), JSON.stringify({ originalProfile: "../escape" }));
+    assert.throws(() => manager.restoreArchive(archived.name), ProfileOperationError);
+    assert.equal(manager.scan().archives.length, 1);
+  } finally { fx.cleanup(); }
+});
+
+
+test("restore requires a manifest and does not guess a name containing double underscores", () => {
+  const fx = fixture();
+  try {
+    fx.write("profiles/original__name/Default/Cookies", 25);
+    const manager = createProfileManager(fx);
+    const archived = manager.archiveOrphan("original__name");
+    assert.equal(manager.restoreArchive(archived.name).name, "original__name");
+    const again = manager.archiveOrphan("original__name");
+    fs.unlinkSync(path.join(fx.archiveRoot, again.name, ".keeper-archive.json"));
+    assert.throws(() => manager.restoreArchive(again.name), /归档清单缺失/);
+    assert.equal(manager.scan().archives.length, 1);
+    assert.equal(manager.scan().profiles.length, 0);
+    assert.equal(manager.purgeArchive(again.name).deleted, true);
+  } finally { fx.cleanup(); }
+});
+
+
+test("background scan preserves busy flags without blocking the main event loop", async () => {
+  const fx = fixture();
+  try {
+    fx.write("profiles/active/Default/Cookies", 100);
+    const accounts = [{ id: "a", profileDir: "profiles/active" }];
+    const manager = createProfileManager({ ...fx, accountBusy: (id) => id === "a" });
+    const expected = manager.scan(accounts);
+    let scanFinished = false;
+    const pending = manager.scanAsync(accounts).then((result) => { scanFinished = true; return result; });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(scanFinished, false, "main loop must run before the directory scan finishes");
+    assert.deepEqual(await pending, expected);
+  } finally { fx.cleanup(); }
 });

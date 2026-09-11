@@ -5,9 +5,11 @@ export const DEFAULT_SETTINGS = Object.freeze({
   jitterMinutes: 30,
   headless: true,
   statusCheckMinutes: DEFAULT_STATUS_CHECK_MINUTES,
-  statusCheckOnStartup: true,
+  statusCheckOnStartup: false,
+  statusCheckEnabled: false,
+  promoCheckEnabled: false,
   openPageTimeoutMinutes: 0,
-  profileAutoCleanEnabled: true,
+  profileAutoCleanEnabled: false,
 });
 
 const hasOwn = (value, key) =>
@@ -18,6 +20,8 @@ const KNOWN_SETTINGS = new Set([
   "headless",
   "statusCheckMinutes",
   "statusCheckOnStartup",
+  "statusCheckEnabled",
+  "promoCheckEnabled",
   "openPageTimeoutMinutes",
   "profileAutoCleanEnabled",
 ]);
@@ -51,6 +55,8 @@ export function normalizeSettings(value) {
         ? input.headless
         : DEFAULT_SETTINGS.headless,
     statusCheckMinutes: safeStatusCheckMinutes(input.statusCheckMinutes),
+    statusCheckEnabled: input.statusCheckEnabled === true,
+    promoCheckEnabled: input.promoCheckEnabled === true,
     statusCheckOnStartup:
       typeof input.statusCheckOnStartup === "boolean"
         ? input.statusCheckOnStartup
@@ -92,6 +98,8 @@ export function validateSettingsPatch(patch) {
   for (const key of [
     "headless",
     "statusCheckOnStartup",
+    "statusCheckEnabled",
+    "promoCheckEnabled",
     "profileAutoCleanEnabled",
   ]) {
     if (hasOwn(patch, key) && typeof patch[key] !== "boolean") {

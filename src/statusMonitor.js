@@ -72,7 +72,7 @@ function normalizedPromoFields(value = {}) {
 
 function mergePromoObservation(previous, observation, checkedAt) {
   const current = normalizedPromoFields(previous);
-  if (!observation || !Object.hasOwn(observation, "promo")) return current;
+  if (!observation || observation.promo === undefined) return current;
 
   const promo = observation.promo;
   if (promo?.ok === true && isPromoEligibility(promo.eligibility)) {
@@ -410,7 +410,7 @@ export async function refreshAccount(account, opts = {}) {
 
 export function shouldRunImmediateCheck(settings, isStartup) {
   if (!isStartup) return false;
-  if (settings?.statusCheckOnStartup === undefined) return true;
+  if (settings?.statusCheckOnStartup === undefined) return false;
   return settings.statusCheckOnStartup === true;
 }
 
@@ -499,7 +499,9 @@ export class StatusMonitorService {
     const minutes = safeStatusCheckMinutes(settings.statusCheckMinutes);
     const runImmediately = shouldRunImmediateCheck(settings, runStartupCheck);
     if (this._timer) this._clearInterval(this._timer);
+    this._timer = null;
     if (runImmediately) this._trigger();
+    if (settings.statusCheckEnabled !== true) return;
     this._timer = this._setInterval(
       () => this._trigger(),
       Math.max(1, minutes) * 60 * 1000

@@ -62,7 +62,7 @@ export class ProfileMaintenanceService {
   }
 
   async runNow(accountId, { force = false } = {}) {
-    if (this._getSettings().profileAutoCleanEnabled === false && !force) {
+    if (this._getSettings().profileAutoCleanEnabled !== true && !force) {
       return { status: "disabled" };
     }
     if (!force && this._recentlyChecked(accountId)) {
@@ -79,7 +79,7 @@ export class ProfileMaintenanceService {
       }
       const account = this._getAccount(accountId);
       if (!account) return { status: "missing-account" };
-      if (this._getSettings().profileAutoCleanEnabled === false && !force) {
+      if (this._getSettings().profileAutoCleanEnabled !== true && !force) {
         return { status: "disabled" };
       }
       const accountProfile = profileKey(account.profileDir);

@@ -94,6 +94,8 @@ export type Method =
   | "profiles.cleanCache"
   | "profiles.archiveOrphan"
   | "profiles.purgeOrphan"
+  | "profiles.restoreArchive"
+  | "profiles.purgeArchive"
   | "conversations.list"
   | "conversations.upsert"
   | "conversations.remove"
@@ -159,7 +161,12 @@ export type ProfileChangedPayload =
       result: ProfileScanResult;
     }
   | {
-      kind: "profile-cache-clean" | "profile-orphan-archive" | "profile-orphan-purge";
+      kind:
+        | "profile-cache-clean"
+        | "profile-orphan-archive"
+        | "profile-orphan-purge"
+        | "profile-archive-restore"
+        | "profile-archive-purge";
       name: string | null;
       result: JsonValue;
     };
@@ -477,6 +484,8 @@ export interface SettingsResult {
   headless: boolean;
   statusCheckMinutes: number;
   statusCheckOnStartup: boolean;
+  statusCheckEnabled?: boolean;
+  promoCheckEnabled?: boolean;
   openPageTimeoutMinutes: number;
   profileAutoCleanEnabled: boolean;
   schedulerEnabled?: boolean;
@@ -995,6 +1004,8 @@ export interface SettingsUpdateParams {
     headless?: boolean;
     statusCheckMinutes?: number;
     statusCheckOnStartup?: boolean;
+    statusCheckEnabled?: boolean;
+    promoCheckEnabled?: boolean;
     openPageTimeoutMinutes?: number;
     profileAutoCleanEnabled?: boolean;
   };
@@ -1003,6 +1014,8 @@ export interface SettingsUpdateParams {
   headless?: boolean;
   statusCheckMinutes?: number;
   statusCheckOnStartup?: boolean;
+  statusCheckEnabled?: boolean;
+  promoCheckEnabled?: boolean;
   openPageTimeoutMinutes?: number;
   profileAutoCleanEnabled?: boolean;
 }
@@ -1049,6 +1062,7 @@ export interface EventBase {
  * via the `definition` "profileInfo".
  */
 export interface ProfileInfo {
+  archived?: boolean;
   name: string;
   linked: boolean;
   accountIds: string[];
@@ -1067,6 +1081,7 @@ export interface ProfileInfo {
 export interface ProfileScanResult {
   profiles: ProfileInfo[];
   orphans: ProfileInfo[];
+  archives?: ProfileInfo[];
   totals: {
     profiles: number;
     linked: number;
@@ -1134,6 +1149,8 @@ export interface IpcMethodContracts {
   "profiles.cleanCache": { params: ProfileCleanParams; result: Operation };
   "profiles.archiveOrphan": { params: NameParams; result: Operation };
   "profiles.purgeOrphan": { params: NameParams; result: Operation };
+  "profiles.restoreArchive": { params: NameParams; result: Operation };
+  "profiles.purgeArchive": { params: NameParams; result: Operation };
   "conversations.list": { params: Record<string, never>; result: ConversationMap };
   "conversations.upsert": { params: ConversationUpsertParams; result: ConversationResult };
   "conversations.remove": { params: NameParams; result: OkResult };
@@ -1170,6 +1187,8 @@ export const OPERATION_METHODS = [
   "profiles.cleanCache",
   "profiles.archiveOrphan",
   "profiles.purgeOrphan",
+  "profiles.restoreArchive",
+  "profiles.purgeArchive",
   "operations.get"
 ] as const satisfies readonly IpcMethod[];
 export type OperationMethod = (typeof OPERATION_METHODS)[number];

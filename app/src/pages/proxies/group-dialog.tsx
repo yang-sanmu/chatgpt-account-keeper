@@ -1,3 +1,4 @@
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import * as React from "react";
 import {
   Dialog,
@@ -9,13 +10,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+
 import { Loader2 } from "lucide-react";
 import { agentCall, newCommandId } from "@/ipc/bridge";
 import { notify } from "@/lib/notify";
@@ -101,19 +96,7 @@ export function GroupDialog({ state, onClose }: GroupDialogProps) {
 
           <div className="space-y-2">
             <Label htmlFor="group-proxy">绑定代理节点</Label>
-            <Select value={proxyId} onValueChange={setProxyId}>
-              <SelectTrigger id="group-proxy">
-                <SelectValue placeholder="未绑定" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="none">未绑定 (直连或系统代理)</SelectItem>
-                {proxies.nodes.map((node) => (
-                  <SelectItem key={node.id} value={node.id}>
-                    {node.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <SearchableSelect id="group-proxy" label="代理节点" value={proxyId} onValueChange={setProxyId} options={[{ value: "none", label: "未绑定 (直连或系统代理)" }, ...proxies.nodes.map((node) => ({ value: node.id, label: node.name }))]} />
           </div>
 
           <div className="grid grid-cols-2 gap-4">

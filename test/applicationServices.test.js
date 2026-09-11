@@ -128,7 +128,7 @@ function fakeRuntime(overrides = {}) {
       testAllNodes: async () => ({ results: [] }),
     },
     profileManager: {
-      scan: () => ({ profiles: [], orphans: [] }),
+      scanAsync: async () => ({ profiles: [], orphans: [] }),
       cleanCaches: () => ({ profilesCleaned: 0 }),
       archiveOrphan: (name) => ({ archived: true, name }),
       purgeOrphan: (name) => ({ deleted: true, name }),
@@ -898,4 +898,25 @@ test("scheduler account progress is published for every persisted change", async
     lastResult: null,
   });
   services.dispose();
+});
+
+
+test("concurrent profile scan requests share one background scan", async () => {
+  let finish;
+  let scans = 0;
+  const runtime = fakeRuntime();
+  runtime.profileManager.scanAsync = () => {
+    scans++;
+    return new Promise((resolve) => { finish = resolve; });
+  };
+  const services = new ApplicationServices({ runtime });
+  try {
+    const first = await services.execute(request("profiles.scan", {}));
+    const second = await services.execute(request("profiles.scan", {}));
+    assert.equal(first.id, second.id);
+    assert.equal(scans, 1);
+  } finally {
+    finish({ profiles: [], orphans: [] });
+    services.dispose();
+  }
 });

@@ -3,7 +3,9 @@
   "jitterMinutes": 30,
   "headless": true,
   "statusCheckMinutes": 15,
-  "statusCheckOnStartup": true,
+  "statusCheckOnStartup": false,
   "openPageTimeoutMinutes": 0,
-  "profileAutoCleanEnabled": true
+  "profileAutoCleanEnabled": false,
+  "statusCheckEnabled": false,
+  "promoCheckEnabled": false
 }

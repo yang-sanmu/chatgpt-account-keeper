@@ -41,6 +41,8 @@ export const METHOD_CONTRACTS = Object.freeze({
   "profiles.cleanCache": ["profileCleanParams", "operationResult"],
   "profiles.archiveOrphan": ["nameParams", "operationResult"],
   "profiles.purgeOrphan": ["nameParams", "operationResult"],
+  "profiles.restoreArchive": ["nameParams", "operationResult"],
+  "profiles.purgeArchive": ["nameParams", "operationResult"],
   "conversations.list": ["emptyParams", "conversationMap"],
   "conversations.upsert": ["conversationUpsertParams", "conversationResult"],
   "conversations.remove": ["nameParams", "okResult"],

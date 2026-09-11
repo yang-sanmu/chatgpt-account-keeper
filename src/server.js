@@ -156,8 +156,15 @@ app.delete("/api/accounts/:id", wrap(async (req, res) => {
 // ---------- Profile 存储维护 ----------
 // 扫描只读取 profiles 的直接子目录；归档放到 profiles-archive，不会再次被识别成孤儿。
 app.get("/api/profiles/scan", wrap(async (req, res) => {
-  res.json(profileManager.scan(store.getAccounts()));
+  res.json(await profileManager.scanAsync(store.getAccounts()));
 }));
+
+app.post("/api/profiles/archives/:name/restore", (req, res) => {
+  res.json(profileManager.restoreArchive(req.params.name, store.getAccounts()));
+});
+app.delete("/api/profiles/archives/:name", (req, res) => {
+  res.json(profileManager.purgeArchive(req.params.name));
+});
 
 // scope: all / linked / orphan；也可以传 name 只清理一个指定 Profile。
 app.post("/api/profiles/cache/clean", wrap(async (req, res) => {

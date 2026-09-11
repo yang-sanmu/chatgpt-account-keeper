@@ -87,6 +87,16 @@ async function composeFake(options = {}) {
   return { background, broker, operations, events, recorded, run };
 }
 
+async function waitForQueueIdle(queue) {
+  for (
+    let i = 0;
+    i < 100 && (queue.snapshot().queuedTotal > 0 || queue.activeCount() > 0);
+    i++
+  ) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
 test("业务失败仍是 failed，保留业务结果并附带 close 契约", async () => {
   // Job 计数不归零：这正是「任务失败且 Chrome 未能回收」的现场。
   const { background, operations, recorded, events, run } = await composeFake({
@@ -131,13 +141,9 @@ test("只有自动调度按独立开关复用当前页面检查优惠资格", as
     source: "scheduled",
     kind: "account-run",
   });
-  for (let i = 0; i < 100 && background.queue.activeCount() > 0; i++) {
-    await new Promise((resolve) => setTimeout(resolve, 5));
-  }
+  await waitForQueueIdle(background.queue);
   background.enqueue({ accountId: "acc-1", workKind: "account-run", kind: "account-run" });
-  for (let i = 0; i < 100 && background.queue.activeCount() > 0; i++) {
-    await new Promise((resolve) => setTimeout(resolve, 5));
-  }
+  await waitForQueueIdle(background.queue);
 
   config.scheduledPromoCheckEnabled = false;
   background.queue.submit({
@@ -146,9 +152,7 @@ test("只有自动调度按独立开关复用当前页面检查优惠资格", as
     source: "scheduled",
     kind: "account-run",
   });
-  for (let i = 0; i < 100 && background.queue.activeCount() > 0; i++) {
-    await new Promise((resolve) => setTimeout(resolve, 5));
-  }
+  await waitForQueueIdle(background.queue);
 
   assert.deepEqual(options, [true, false, false]);
 });

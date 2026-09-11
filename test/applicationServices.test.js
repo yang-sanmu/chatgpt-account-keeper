@@ -504,6 +504,88 @@ test("group and conversation change events expose the exact UI delta payloads", 
   services.dispose();
 });
 
+test("background region detection publishes a live group change event", () => {
+  let detectedRegionListener = null;
+  const runtime = fakeRuntime();
+  runtime.store.subscribeDetectedRegion = (listener) => {
+    detectedRegionListener = listener;
+    return () => {
+      detectedRegionListener = null;
+    };
+  };
+  const services = new ApplicationServices({ runtime });
+  const groupEvents = [];
+  services.events.subscribe((event) => {
+    if (event.event === "group.changed") groupEvents.push(event.payload);
+  });
+
+  detectedRegionListener({
+    id: "grp_direct",
+    name: "India",
+    proxyId: "proxy-in",
+    timezone: "Asia/Kolkata",
+    locale: "en-IN",
+  });
+
+  assert.deepEqual(groupEvents, [{
+    id: "grp_direct",
+    name: "India",
+    proxyId: "proxy-in",
+    timezone: "Asia/Kolkata",
+    locale: "en-IN",
+  }]);
+  services.dispose();
+  assert.equal(detectedRegionListener, null);
+});
+
+test("group snapshots repair a known stale automatic locale", async () => {
+  const runtime = fakeRuntime();
+  let india = {
+    id: "grp_in",
+    name: "India",
+    proxyId: "proxy-in",
+    timezone: "Asia/Kolkata",
+    locale: "en-US",
+    tzManual: false,
+  };
+  runtime.store.getGroups = () => [{ ...india }];
+  runtime.store.saveDetectedRegion = (id, region) => {
+    assert.equal(id, india.id);
+    india = { ...india, ...region };
+    return { ...india };
+  };
+  const services = new ApplicationServices({ runtime });
+
+  const groups = await services.invoke("groups.list", {});
+  assert.equal(groups[0].locale, "en-IN");
+  assert.equal(india.locale, "en-IN");
+  assert.equal(services._bootstrap().groups[0].locale, "en-IN");
+  services.dispose();
+});
+
+test("a new proxy-bound group starts region detection before it has accounts", async () => {
+  const detected = [];
+  const runtime = fakeRuntime({
+    resolveRegionForAccount: async (account) => {
+      detected.push(account);
+      return { timezoneId: "Asia/Kolkata", locale: "en-IN" };
+    },
+  });
+  runtime.proxies.nodes = [{ id: "proxy-in", name: "India", enabled: true, missing: false }];
+  const services = new ApplicationServices({ runtime });
+
+  const group = await services.invoke("groups.create", {
+    name: "India",
+    proxyId: "proxy-in",
+    timezone: null,
+    locale: null,
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(detected, [{ id: `group-probe:${group.id}`, groupId: group.id }]);
+  services.dispose();
+});
+
 test("选择器自检默认只读，deep 为 true 时才允许真发消息", async () => {
   const calls = [];
   const runtime = fakeRuntime({

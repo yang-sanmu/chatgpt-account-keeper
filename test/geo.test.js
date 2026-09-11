@@ -31,6 +31,7 @@ test("localeForCountry covers common and less-common proxy exits", () => {
   const expected = {
     KR: "ko-KR",
     US: "en-US",
+    IN: "en-IN",
     JP: "ja-JP",
     TH: "th-TH",
     BR: "pt-BR",
@@ -99,6 +100,29 @@ test("existing timezone-only group receives locale without another IP lookup", a
   assert.deepEqual(saved, [
     ["g-ph", { timezone: undefined, locale: "en-PH" }],
   ]);
+});
+
+test("an automatic India group repairs a stale en-US locale without another IP lookup", async (t) => {
+  const saved = [];
+  const restore = configureStoreBackend({
+    getGroup: () => ({
+      id: "g-in",
+      name: "印度",
+      proxyId: "proxy-in",
+      timezone: "Asia/Kolkata",
+      locale: "en-US",
+      tzManual: false,
+    }),
+    saveDetectedRegion: (id, region) => saved.push([id, region]),
+  });
+  t.after(restore);
+
+  const region = await resolveRegionForAccount({ id: "a-in", groupId: "g-in" });
+  assert.deepEqual(region, {
+    timezoneId: "Asia/Kolkata",
+    locale: "en-IN",
+  });
+  assert.deepEqual(saved, [["g-in", { timezone: undefined, locale: "en-IN" }]]);
 });
 
 test("known cold-region timezone survives when its proxy is unavailable", async (t) => {

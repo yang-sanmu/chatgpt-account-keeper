@@ -152,10 +152,15 @@ export function AgentSettingsCard() {
           {([
             ["statusCheckEnabled", "自动巡检状态", "按状态检查间隔自动检查账号，默认关闭。"],
             ["promoCheckEnabled", "自动获取优惠资格", "检查账号状态时同步查询优惠资格，默认关闭。"],
+            ["scheduledPromoCheckEnabled", "自动调度时获取优惠资格", "自动调度复用本次浏览器会话查询优惠资格，默认开启。"],
           ] as const).map(([key, title, description]) => (
             <div key={key} className="flex items-center justify-between">
               <div className="space-y-0.5"><Label htmlFor={key}>{title}</Label><p className="text-xs text-secondary">{description}</p></div>
-              <Switch id={key} checked={draft[key] === true} onCheckedChange={(checked) => setDraft({ ...draft, [key]: checked })} />
+              <Switch
+                id={key}
+                checked={draft[key] === true}
+                onCheckedChange={(checked) => setDraft({ ...draft, [key]: checked })}
+              />
             </div>
           ))}
           <div className="flex items-center justify-between">

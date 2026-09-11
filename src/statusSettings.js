@@ -8,6 +8,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   statusCheckOnStartup: false,
   statusCheckEnabled: false,
   promoCheckEnabled: false,
+  scheduledPromoCheckEnabled: true,
   openPageTimeoutMinutes: 0,
   profileAutoCleanEnabled: false,
 });
@@ -22,6 +23,7 @@ const KNOWN_SETTINGS = new Set([
   "statusCheckOnStartup",
   "statusCheckEnabled",
   "promoCheckEnabled",
+  "scheduledPromoCheckEnabled",
   "openPageTimeoutMinutes",
   "profileAutoCleanEnabled",
 ]);
@@ -57,6 +59,10 @@ export function normalizeSettings(value) {
     statusCheckMinutes: safeStatusCheckMinutes(input.statusCheckMinutes),
     statusCheckEnabled: input.statusCheckEnabled === true,
     promoCheckEnabled: input.promoCheckEnabled === true,
+    scheduledPromoCheckEnabled:
+      typeof input.scheduledPromoCheckEnabled === "boolean"
+        ? input.scheduledPromoCheckEnabled
+        : DEFAULT_SETTINGS.scheduledPromoCheckEnabled,
     statusCheckOnStartup:
       typeof input.statusCheckOnStartup === "boolean"
         ? input.statusCheckOnStartup
@@ -100,6 +106,7 @@ export function validateSettingsPatch(patch) {
     "statusCheckOnStartup",
     "statusCheckEnabled",
     "promoCheckEnabled",
+    "scheduledPromoCheckEnabled",
     "profileAutoCleanEnabled",
   ]) {
     if (hasOwn(patch, key) && typeof patch[key] !== "boolean") {

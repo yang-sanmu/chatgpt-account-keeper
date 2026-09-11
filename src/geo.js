@@ -253,10 +253,14 @@ export async function resolveRegionForAccount(account, dependencies = {}) {
   if (!group?.proxyId) return {};
 
   // 分组上已有完整值（手动设的或之前探测过的）直接用，不再发请求。旧数据只有
-  // timezone、没有 locale 时，先从无歧义的 IANA 时区回填。
+  // timezone、没有 locale 时，先从无歧义的 IANA 时区回填。自动分组上已有但与
+  // 时区明显冲突的旧 locale 也要修正，例如 Asia/Kolkata 不应继续保留 en-US。
   if (group.timezone) {
-    const locale = group.locale || localeForTimezone(group.timezone);
-    if (locale && !group.locale) {
+    const timezoneLocale = localeForTimezone(group.timezone);
+    const locale = !group.tzManual && timezoneLocale
+      ? timezoneLocale
+      : group.locale || timezoneLocale;
+    if (locale && locale !== group.locale) {
       saveDetectedRegion(groupId, { locale });
     }
     if (locale) return toLaunchRegion({ ...group, locale });

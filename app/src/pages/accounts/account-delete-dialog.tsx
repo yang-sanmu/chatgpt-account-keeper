@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useKeeperStore, type ProfileAction } from "@/store/keeperStore";
+import { useKeeperStore } from "@/store/keeperStore";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -19,34 +19,28 @@ interface AccountDeleteDialogProps {
   accounts: { id: string; name: string }[];
 }
 
-interface ProfileChoice {
-  value: ProfileAction;
+interface AccountChoice {
+  value: "disable" | "purge";
   title: string;
   detail: string;
   danger?: boolean;
   recommended?: boolean;
 }
 
-/// 三种 Profile 处置方式。
+/// 账号生命周期只有两个用户语义：暂时不用就停用，确认不要了才永久删除。
 ///
-/// 文案必须说清「Profile 留不留、能不能恢复」：Profile 目录里是登录态和几百 MB 到几 GB 的
-/// 浏览器数据，选错的代价是重新登录几十个账号。
-const PROFILE_CHOICES: ProfileChoice[] = [
+/// 归档仍保留给 Profile 页处理真正的孤儿目录，但不再作为删除账号的默认中间状态。
+const ACCOUNT_CHOICES: AccountChoice[] = [
   {
-    value: "archive",
-    title: "归档 Profile",
-    detail: "移动到归档目录。登录态和全部数据完整保留，之后可以手动恢复或关联到新账号。",
+    value: "disable",
+    title: "停用账号并保留 Profile",
+    detail: "账号继续显示在列表中，但不参与调度；登录态、历史和全部 Profile 数据均保留，可随时重新启用。",
     recommended: true,
   },
   {
-    value: "detach",
-    title: "保留 Profile，仅解除关联",
-    detail: "目录原地不动，只删掉账号记录。目录会变成孤儿，之后可以在 Profile 页处理。",
-  },
-  {
     value: "purge",
-    title: "永久删除 Profile",
-    detail: "连同 Cookie、本地存储、扩展数据一起从磁盘删除。不可恢复，也没有回收站。",
+    title: "永久删除账号和 Profile",
+    detail: "删除账号记录，并清除 Cookie、本地存储、扩展数据和其它 Profile 文件。不可恢复。",
     danger: true,
   },
 ];
@@ -56,13 +50,12 @@ export function AccountDeleteDialog({
   onOpenChange,
   accounts,
 }: AccountDeleteDialogProps) {
-  // 默认归档而不是删除：这是唯一一个既清理了列表、又不会造成不可逆损失的选项。
-  const [action, setAction] = React.useState<ProfileAction>("archive");
+  const [action, setAction] = React.useState<"disable" | "purge">("disable");
   const [deleting, setDeleting] = React.useState(false);
 
   React.useEffect(() => {
     if (open) {
-      setAction("archive");
+      setAction("disable");
       setDeleting(false);
     }
   }, [open]);
@@ -74,13 +67,13 @@ export function AccountDeleteDialog({
     setDeleting(true);
     const store = useKeeperStore.getState();
     try {
-      if (single) {
-        await store.removeAccount(single.id, action);
+      const ids = accounts.map((account) => account.id);
+      if (action === "disable") {
+        await store.bulkSetEnabled(ids, false);
+      } else if (single) {
+        await store.removeAccount(single.id, "purge");
       } else {
-        await store.bulkRemove(
-          accounts.map((account) => account.id),
-          action
-        );
+        await store.bulkRemove(ids, "purge");
       }
       onOpenChange(false);
     } catch {
@@ -96,22 +89,20 @@ export function AccountDeleteDialog({
       <AlertDialogContent className="max-w-lg">
         <AlertDialogHeader>
           <AlertDialogTitle>
-            {single ? "删除这个账号？" : `删除选中的 ${count} 个账号？`}
+            {single ? "停用或永久删除这个账号？" : `停用或永久删除选中的 ${count} 个账号？`}
           </AlertDialogTitle>
           <AlertDialogDescription>
-            {single
-              ? `账号记录、状态和历史都会被删除：${single.name}`
-              : "这些账号的记录、状态和历史都会被删除。"}
-            {" "}Chrome Profile 目录的处置方式请在下面选择。
+            {single ? `账号：${single.name}` : "请选择这些账号的处理方式。"}
+            {" "}不确定时请选择停用，之后可以直接重新启用。
           </AlertDialogDescription>
         </AlertDialogHeader>
 
         <div
           role="radiogroup"
-          aria-label="Profile 处置方式"
+          aria-label="账号处置方式"
           className="flex flex-col gap-2 py-2"
         >
-          {PROFILE_CHOICES.map((choice) => {
+          {ACCOUNT_CHOICES.map((choice) => {
             const active = action === choice.value;
             return (
               <button
@@ -174,7 +165,7 @@ export function AccountDeleteDialog({
             disabled={deleting}
           >
             {deleting && <Loader2 className="animate-spin" />}
-            {action === "purge" ? "永久删除" : "确认删除"}
+            {action === "purge" ? "永久删除" : "停用并保留"}
           </Button>
         </AlertDialogFooter>
       </AlertDialogContent>

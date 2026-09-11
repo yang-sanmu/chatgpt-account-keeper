@@ -337,7 +337,9 @@ export async function composeBackground({
   // 关闭都不归它们。
   queue.registerHandler(WORK_KINDS.accountRun, async (context) => {
     const result = await withBrowserRun(context, async ({ signal, page, account }) => {
-      const value = await runOnce(account, { page, signal });
+      const checkPromo = context.entry.effectiveSource === SOURCES.scheduled &&
+        store.getSettings().scheduledPromoCheckEnabled === true;
+      const value = await runOnce(account, { page, signal, checkPromo });
       // 原 operations.create 回调里的两件事，迁到队列后必须跟着走，否则历史不落盘、
       // 账号视图也不刷新。
       recordConversation?.(account.id, value);

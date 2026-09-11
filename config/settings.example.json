@@ -7,5 +7,6 @@
   "openPageTimeoutMinutes": 0,
   "profileAutoCleanEnabled": false,
   "statusCheckEnabled": false,
-  "promoCheckEnabled": false
+  "promoCheckEnabled": false,
+  "scheduledPromoCheckEnabled": true
 }

@@ -33,3 +33,41 @@ test("a login prompt during a conversation updates account status even with poll
     restoreStore();
   }
 });
+
+test("scheduled conversations can update promo eligibility while status polling is disabled", async () => {
+  const account = {
+    id: "scheduled-promo-without-polling",
+    rotation: { currentSet: "topic", windowsDone: 0, windowsTarget: 2 },
+  };
+  let promoChecks = 0;
+  const restoreStore = configureStoreBackend({
+    getAccount: () => account,
+    getSettings: () => ({ statusCheckEnabled: false }),
+    getConversations: () => ({ topic: { topic: "test", minRounds: 1, maxRounds: 1 } }),
+    updateAccount: () => {},
+  });
+  const restoreStatus = configureStatusBackend({ writePersistedStatuses() {} });
+  try {
+    await runOnce(account, {
+      checkPromo: true,
+      checkPromoEligibility: async () => {
+        promoChecks++;
+        return { ok: true, eligibility: "half_price" };
+      },
+      page: {
+        goto: async () => {},
+        evaluate: async () => ({ email: "promo@example.com", meStatus: 200, meValidUser: true }),
+        waitForSelector: async () => ({}),
+        waitForTimeout: async () => {},
+        $: async () => null,
+        $$: async () => [{ isVisible: async () => true }],
+      },
+    });
+    assert.equal(promoChecks, 1);
+    assert.equal(getCachedStatus(account.id).promoEligibility, "half_price");
+  } finally {
+    deleteCachedStatus(account.id);
+    restoreStatus();
+    restoreStore();
+  }
+});

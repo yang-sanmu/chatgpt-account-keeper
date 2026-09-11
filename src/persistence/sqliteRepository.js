@@ -437,6 +437,7 @@ export class KeeperRepository {
       app.profile_auto_clean_enabled !== 0 ||
       app.status_check_enabled !== 0 ||
       app.promo_check_enabled !== 0 ||
+      app.scheduled_promo_check_enabled !== 1 ||
       app.scheduler_enabled !== 0 ||
       app.legacy_extra_json !== null
     ) {
@@ -501,8 +502,9 @@ export class KeeperRepository {
           `INSERT INTO app_settings(
              singleton_id, interval_minutes, jitter_minutes, headless,
              status_check_minutes, status_check_on_startup, open_page_timeout_minutes,
-             profile_auto_clean_enabled, status_check_enabled, promo_check_enabled, scheduler_enabled, legacy_extra_json
-           ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+             profile_auto_clean_enabled, status_check_enabled, promo_check_enabled,
+             scheduled_promo_check_enabled, scheduler_enabled, legacy_extra_json
+           ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
            ON CONFLICT(singleton_id) DO UPDATE SET
              interval_minutes=excluded.interval_minutes,
              jitter_minutes=excluded.jitter_minutes,
@@ -513,6 +515,7 @@ export class KeeperRepository {
              profile_auto_clean_enabled=excluded.profile_auto_clean_enabled,
              status_check_enabled=excluded.status_check_enabled,
              promo_check_enabled=excluded.promo_check_enabled,
+             scheduled_promo_check_enabled=excluded.scheduled_promo_check_enabled,
              scheduler_enabled=0,
              legacy_extra_json=excluded.legacy_extra_json`
         )
@@ -526,6 +529,7 @@ export class KeeperRepository {
           bool(settings.profileAutoCleanEnabled, false),
           bool(settings.statusCheckEnabled),
           bool(settings.promoCheckEnabled),
+          bool(settings.scheduledPromoCheckEnabled),
           json(settings.legacyExtra)
         );
 
@@ -926,6 +930,7 @@ export class KeeperRepository {
       statusCheckOnStartup: !!row.status_check_on_startup,
       statusCheckEnabled: !!row.status_check_enabled,
       promoCheckEnabled: !!row.promo_check_enabled,
+      scheduledPromoCheckEnabled: !!row.scheduled_promo_check_enabled,
       openPageTimeoutMinutes: row.open_page_timeout_minutes,
       profileAutoCleanEnabled: !!row.profile_auto_clean_enabled,
       schedulerEnabled: !!row.scheduler_enabled,
@@ -941,6 +946,7 @@ export class KeeperRepository {
       "statusCheckOnStartup",
       "statusCheckEnabled",
       "promoCheckEnabled",
+      "scheduledPromoCheckEnabled",
       "openPageTimeoutMinutes",
       "profileAutoCleanEnabled",
       "schedulerEnabled",
@@ -963,7 +969,8 @@ export class KeeperRepository {
         `UPDATE app_settings SET
            interval_minutes=?, jitter_minutes=?, headless=?, status_check_minutes=?,
            status_check_on_startup=?, open_page_timeout_minutes=?,
-           profile_auto_clean_enabled=?, scheduler_enabled=?, status_check_enabled=?, promo_check_enabled=? WHERE singleton_id=1`
+           profile_auto_clean_enabled=?, scheduler_enabled=?, status_check_enabled=?, promo_check_enabled=?,
+           scheduled_promo_check_enabled=? WHERE singleton_id=1`
       )
       .run(
         next.intervalMinutes,
@@ -975,7 +982,8 @@ export class KeeperRepository {
         bool(next.profileAutoCleanEnabled),
         bool(next.schedulerEnabled),
         bool(next.statusCheckEnabled),
-        bool(next.promoCheckEnabled)
+        bool(next.promoCheckEnabled),
+        bool(next.scheduledPromoCheckEnabled)
       );
     return this.getSettings();
   }

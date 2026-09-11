@@ -431,5 +431,6 @@ test("a database with the already-applied v5 migration can reopen", async (t) =>
   repository = await openKeeperRepository({ filePath, backupDirectory: path.join(root, "backups") });
   assert.equal(repository.getSettings().statusCheckEnabled, true);
   assert.equal(repository.getSettings().promoCheckEnabled, true);
+  assert.equal(repository.getSettings().scheduledPromoCheckEnabled, true);
   assert.equal(repository.integrityCheck().ok, true);
 });

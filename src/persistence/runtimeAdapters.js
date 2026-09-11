@@ -91,6 +91,7 @@ export function createSqliteRuntimeAdapters(repository) {
         proxyId: proxyId || null,
         timezone: extra.timezone || null,
         locale: extra.locale || null,
+        tzManual: !!extra.timezone,
       });
     },
     updateGroup(id, patch = {}) {
@@ -115,6 +116,7 @@ export function createSqliteRuntimeAdapters(repository) {
       return repository.saveGroup({
         ...current,
         timezone: region.timezone || current.timezone,
+        // 自动值可以被后续更可靠的探测纠正；tzManual 的分组已在上面排除。
         locale: region.locale || current.locale,
       });
     },

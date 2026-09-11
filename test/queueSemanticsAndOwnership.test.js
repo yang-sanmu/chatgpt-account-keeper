@@ -47,7 +47,11 @@ async function composeFake(options = {}) {
     store: {
       getAccount: (id) => ({ id, enabled: true }),
       getAccounts: () => [{ id: "acc-1", enabled: true }],
-      getSettings: () => ({ headless: true, intervalMinutes: 180 }),
+      getSettings: () => ({
+        headless: true,
+        intervalMinutes: 180,
+        scheduledPromoCheckEnabled: options.scheduledPromoCheckEnabled,
+      }),
     },
     log: { info() {}, warn() {}, error() {} },
     // 本组测的是所有权与关闭序列，账号不绑分组代理；提供者仍是必需参数。
@@ -108,6 +112,45 @@ test("业务失败仍是 failed，保留业务结果并附带 close 契约", asy
   assert.equal(background.snapshot().chromeSlots.used >= 1, true);
   assert.ok(events.published.some((entry) => entry.name === "browserRun.changed"));
   background.browserRuns.cancelAllRechecks();
+});
+
+test("只有自动调度按独立开关复用当前页面检查优惠资格", async () => {
+  const options = [];
+  const config = {
+    scheduledPromoCheckEnabled: true,
+    runOnce: async (_account, runOptions) => {
+      options.push(runOptions.checkPromo);
+      return { ok: true };
+    },
+  };
+  const { background } = await composeFake(config);
+
+  background.queue.submit({
+    accountId: "acc-1",
+    workKind: "account-run",
+    source: "scheduled",
+    kind: "account-run",
+  });
+  for (let i = 0; i < 100 && background.queue.activeCount() > 0; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  background.enqueue({ accountId: "acc-1", workKind: "account-run", kind: "account-run" });
+  for (let i = 0; i < 100 && background.queue.activeCount() > 0; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+
+  config.scheduledPromoCheckEnabled = false;
+  background.queue.submit({
+    accountId: "acc-1",
+    workKind: "account-run",
+    source: "scheduled",
+    kind: "account-run",
+  });
+  for (let i = 0; i < 100 && background.queue.activeCount() > 0; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+
+  assert.deepEqual(options, [true, false, false]);
 });
 
 test("启动失败的所有权分叉：不确定保留 token，明确未创建才撤回", async () => {

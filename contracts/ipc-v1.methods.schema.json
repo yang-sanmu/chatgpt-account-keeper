@@ -236,6 +236,7 @@
         "statusCheckOnStartup": { "type": "boolean" },
         "statusCheckEnabled": { "type": "boolean" },
         "promoCheckEnabled": { "type": "boolean" },
+        "scheduledPromoCheckEnabled": { "type": "boolean" },
         "openPageTimeoutMinutes": { "type": "number", "minimum": 0 },
         "profileAutoCleanEnabled": { "type": "boolean" },
         "schedulerEnabled": { "type": "boolean" }
@@ -864,6 +865,7 @@
             "statusCheckOnStartup": { "type": "boolean" },
         "statusCheckEnabled": { "type": "boolean" },
         "promoCheckEnabled": { "type": "boolean" },
+        "scheduledPromoCheckEnabled": { "type": "boolean" },
             "openPageTimeoutMinutes": { "type": "number", "minimum": 0 },
             "profileAutoCleanEnabled": { "type": "boolean" }
           }
@@ -875,6 +877,7 @@
         "statusCheckOnStartup": { "type": "boolean" },
         "statusCheckEnabled": { "type": "boolean" },
         "promoCheckEnabled": { "type": "boolean" },
+        "scheduledPromoCheckEnabled": { "type": "boolean" },
         "openPageTimeoutMinutes": { "type": "number", "minimum": 0 },
         "profileAutoCleanEnabled": { "type": "boolean" }
       }

@@ -7,6 +7,7 @@ import { withAccountLock } from "./locks.js";
 import { recordConversation } from "./logger.js";
 import { checkSession, SESSION_OK, SESSION_REAUTH, SESSION_UNKNOWN } from "./health.js";
 import { setCachedStatus } from "./statusMonitor.js";
+import { checkPromoEligibility } from "./promoEligibility.js";
 import {
   PROBE_DEPTH_CONVERSATION,
   PROBE_DEPTH_PAGE,
@@ -88,7 +89,27 @@ export async function runOnce(account, opts = {}) {
         // 会话健康检查：只看 email 会把“令牌已失效”的账号误判为已登录，
         // 结果白跑一轮浏览器最后死在“找不到输入框”。这里直接快速失败并说清原因。
         const health = await checkSession(page);
-        setCachedStatus(account.id, health.state, health.email, health.detail);
+        let promo;
+        if (opts.checkPromo === true) {
+          if (health.state === SESSION_OK) {
+            try {
+              const inspectPromo = opts.checkPromoEligibility ?? checkPromoEligibility;
+              promo = await inspectPromo(page);
+            } catch (error) {
+              // 优惠接口失败不影响本轮对话；保留上次可信资格并标为待复核。
+              promo = {
+                ok: false,
+                detail: `优惠资格检查失败：${String(error?.message || error)}`,
+              };
+            }
+          } else {
+            promo = {
+              ok: false,
+              detail: "账号会话未确认，本次未检查优惠资格",
+            };
+          }
+        }
+        setCachedStatus(account.id, health.state, health.email, health.detail, { promo });
         if (health.state === SESSION_REAUTH) {
           return {
             ok: false,
@@ -658,7 +679,10 @@ export class SchedulerService {
         state.busy = true;
         let res;
         try {
-          res = await this._runOnce(acc, { headless: headless() });
+          res = await this._runOnce(acc, {
+            headless: headless(),
+            checkPromo: this._getSettings().scheduledPromoCheckEnabled === true,
+          });
           if (!res || typeof res !== "object") {
             res = { ok: false, reason: "运行未返回有效结果" };
           }

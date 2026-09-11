@@ -16,6 +16,9 @@ const GROUPS_FILE = fromRoot("config/groups.json");
 // these functions directly, so this seam changes storage without duplicating
 // browser automation or weakening the account/Profile locks.
 let configuredBackend = null;
+// 自动地区探测发生在浏览器启动链路里，不经过 ApplicationServices 的 groups.update。
+// 订阅者只关心这类后台写入；显式的新建/编辑仍由对应服务直接发布事件，避免重复通知。
+const detectedRegionListeners = new Set();
 // 一旦有写操作落到某个后端，再换后端就会让 JSON 与 SQLite 状态分叉：切换点
 // 之前的写进了文件，之后的写进了数据库，两边都成了"部分正确"。Agent 必须在
 // 任何请求可达之前完成配置，所以这里把"写之后再切换"直接判为编程错误。
@@ -55,6 +58,22 @@ export function configureStoreBackend(backend) {
 
 export function getConfiguredStoreBackend() {
   return configuredBackend;
+}
+
+export function subscribeDetectedRegion(listener) {
+  if (typeof listener !== "function") return () => {};
+  detectedRegionListeners.add(listener);
+  return () => detectedRegionListeners.delete(listener);
+}
+
+function notifyDetectedRegion(group) {
+  for (const listener of detectedRegionListeners) {
+    try {
+      listener(group);
+    } catch {
+      // 后台探测已经成功落盘；单个 UI 订阅者异常不能反过来让浏览器启动失败。
+    }
+  }
 }
 
 function backendCall(method, args) {
@@ -393,6 +412,7 @@ export function addGroup(name, proxyId = null, extra = {}) {
     // 浏览器时区/语言。null = 按节点出口 IP 自动探测，避免境外 IP 配本机时区。
     timezone: extra.timezone || null,
     locale: extra.locale || null,
+    ...(extra.timezone ? { tzManual: true } : {}),
   };
   groups.push(group);
   saveGroups(groups);
@@ -442,18 +462,24 @@ export function updateGroup(id, patch = {}) {
 }
 
 /**
- * 记录自动探测到的地区。只在用户没手动指定过时写入，
- * 且不覆盖已有值——探测是尽力而为，不该反复改写用户配置。
+ * 记录自动探测到的地区。只在用户没手动指定过时写入；自动值允许被后续探测
+ * 纠正，手工配置则由 tzManual 保护。
  */
 export function saveDetectedRegion(id, { timezone, locale } = {}) {
   const delegated = backendCall("saveDetectedRegion", [id, { timezone, locale }]);
-  if (delegated.handled) return delegated.value;
+  if (delegated.handled) {
+    if (delegated.value) notifyDetectedRegion(delegated.value);
+    return delegated.value;
+  }
   const groups = getGroups();
   const g = groups.find((x) => x.id === id);
   if (!g || g.tzManual) return null;
   if (timezone) g.timezone = timezone;
-  if (locale && !g.locale) g.locale = locale;
+  // tzManual=false 表示这些地区字段属于自动探测值。允许新探测纠正旧版本曾经
+  // 写入的错误 locale（例如 Asia/Kolkata + en-US）；手工时区仍由上面的保护保留。
+  if (locale) g.locale = locale;
   saveGroups(groups);
+  notifyDetectedRegion(g);
   return g;
 }
 

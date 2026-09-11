@@ -143,7 +143,6 @@ export function ProfilesPage() {
       notify.error("操作失败", e);
     } finally {
       setRunningBulk(false);
-      void request();
     }
   };
 

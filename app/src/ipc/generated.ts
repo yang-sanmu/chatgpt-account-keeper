@@ -486,6 +486,7 @@ export interface SettingsResult {
   statusCheckOnStartup: boolean;
   statusCheckEnabled?: boolean;
   promoCheckEnabled?: boolean;
+  scheduledPromoCheckEnabled?: boolean;
   openPageTimeoutMinutes: number;
   profileAutoCleanEnabled: boolean;
   schedulerEnabled?: boolean;
@@ -1006,6 +1007,7 @@ export interface SettingsUpdateParams {
     statusCheckOnStartup?: boolean;
     statusCheckEnabled?: boolean;
     promoCheckEnabled?: boolean;
+    scheduledPromoCheckEnabled?: boolean;
     openPageTimeoutMinutes?: number;
     profileAutoCleanEnabled?: boolean;
   };
@@ -1016,6 +1018,7 @@ export interface SettingsUpdateParams {
   statusCheckOnStartup?: boolean;
   statusCheckEnabled?: boolean;
   promoCheckEnabled?: boolean;
+  scheduledPromoCheckEnabled?: boolean;
   openPageTimeoutMinutes?: number;
   profileAutoCleanEnabled?: boolean;
 }

@@ -502,7 +502,7 @@ function normalizeData(config, profileTrees, rawHistories) {
   const rawSettings = requireObject(config.settings, "settings");
   const settingsKnown = new Set([
     "intervalMinutes", "jitterMinutes", "headless", "statusCheckMinutes",
-    "statusCheckOnStartup", "statusCheckEnabled", "promoCheckEnabled", "openPageTimeoutMinutes", "profileAutoCleanEnabled",
+    "statusCheckOnStartup", "statusCheckEnabled", "promoCheckEnabled", "scheduledPromoCheckEnabled", "openPageTimeoutMinutes", "profileAutoCleanEnabled",
   ]);
   const settings = {
     intervalMinutes: finiteNumber(rawSettings.intervalMinutes, 180, 1),
@@ -511,6 +511,10 @@ function normalizeData(config, profileTrees, rawHistories) {
     statusCheckMinutes: finiteNumber(rawSettings.statusCheckMinutes, 15, 1),
     statusCheckEnabled: rawSettings.statusCheckEnabled === true,
     promoCheckEnabled: rawSettings.promoCheckEnabled === true,
+    scheduledPromoCheckEnabled:
+      typeof rawSettings.scheduledPromoCheckEnabled === "boolean"
+        ? rawSettings.scheduledPromoCheckEnabled
+        : true,
     statusCheckOnStartup:
       typeof rawSettings.statusCheckOnStartup === "boolean" ? rawSettings.statusCheckOnStartup : false,
     openPageTimeoutMinutes: finiteNumber(rawSettings.openPageTimeoutMinutes, 0),

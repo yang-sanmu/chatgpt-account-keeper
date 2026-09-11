@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 
 const SCHEMA_V1 = String.raw`
 CREATE TABLE IF NOT EXISTS command_receipts (
@@ -369,6 +369,13 @@ ALTER TABLE app_settings ADD COLUMN promo_check_enabled INTEGER NOT NULL DEFAULT
 UPDATE app_settings SET status_check_on_startup=0, profile_auto_clean_enabled=0;
 `;
 
+// 自动调度会复用已经打开的 Chrome 检查优惠资格，不依赖后台状态巡检。
+// 默认开启，让升级用户即使关闭了巡检，也能在正常调度时补齐优惠信息。
+const SCHEMA_V6 = String.raw`
+ALTER TABLE app_settings ADD COLUMN scheduled_promo_check_enabled INTEGER NOT NULL DEFAULT 1
+  CHECK (scheduled_promo_check_enabled IN (0, 1));
+`;
+
 export const MIGRATIONS = Object.freeze([
   Object.freeze({
     version: 1,
@@ -395,6 +402,7 @@ export const MIGRATIONS = Object.freeze([
     checksum: createHash("sha256").update(SCHEMA_V4).digest("hex"),
   }),
   Object.freeze({ version: 5, name: "opt-in-automation", sql: SCHEMA_V5, checksum: createHash("sha256").update(SCHEMA_V5).digest("hex") }),
+  Object.freeze({ version: 6, name: "scheduled-promo-check", sql: SCHEMA_V6, checksum: createHash("sha256").update(SCHEMA_V6).digest("hex") }),
 ]);
 
 export const MIGRATION_LEDGER_SQL = String.raw`

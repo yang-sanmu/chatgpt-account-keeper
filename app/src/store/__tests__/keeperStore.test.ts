@@ -592,7 +592,7 @@ describe("Profile 扫描", () => {
     expect(store().profileScanFailed).toBe(false);
   });
 
-  it("其它 Profile 操作成功后自动重新扫描", async () => {
+  it("其它 Profile 操作成功后不再自动全盘扫描", async () => {
     tauri.onMethod("profiles.scan", () =>
       makeOperation({ id: "op-scan", kind: "profile-scan", state: "queued" })
     );
@@ -603,10 +603,10 @@ describe("Profile 扫描", () => {
     );
     await flush();
 
-    expect(tauri.methodSequence()).toContain("profiles.scan");
+    expect(tauri.methodSequence()).not.toContain("profiles.scan");
   });
 
-  it("profile.changed 与 operation.changed 同时到达只触发一次后续扫描", async () => {
+  it("profile.changed 与 operation.changed 同时到达也不触发全盘扫描", async () => {
     tauri.onMethod("profiles.scan", () =>
       makeOperation({ id: "op-scan", kind: "profile-scan", state: "queued" })
     );
@@ -620,7 +620,7 @@ describe("Profile 扫描", () => {
 
     expect(
       tauri.methodSequence().filter((method) => method === "profiles.scan")
-    ).toHaveLength(1);
+    ).toHaveLength(0);
   });
 
   it("伪造的扫描结果不被当成有效数据", async () => {
@@ -807,7 +807,7 @@ describe("排空与队列", () => {
 
 
 describe("Profile 操作后即时刷新", () => {
-  it("还原立即移除旧归档路径，进行中的旧扫描不会覆盖新状态", async () => {
+  it("还原立即移除旧归档路径，进行中的旧扫描不会覆盖新状态且不触发重扫", async () => {
     const archived = makeProfileInfo({ name: "a__archive", archived: true, linked: false });
     const oldScan = { ...makeProfileScan(), archives: [archived] };
     tauri.emitAgentEvent("operation.changed", makeOperation({
@@ -831,7 +831,7 @@ describe("Profile 操作后即时刷新", () => {
       id: "scan-1", kind: "profile-scan", state: "succeeded", result: oldScan,
     }));
     await flush();
-    expect(requests).toBe(2);
+    expect(requests).toBe(1);
     expect(store().profileScan?.archives).toHaveLength(0);
     expect(store().profileScan?.profiles[0]?.name).toBe("a");
   });

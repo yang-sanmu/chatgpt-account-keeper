@@ -13,9 +13,9 @@ param(
 
     [switch] $NMinusOneVerified,
 
-    # One-time authorization for v0.2.3. This publishes directly while retaining
+    # One-time authorization for v0.2.4. This publishes directly while retaining
     # updater signatures and all build and asset-integrity gates.
-    [switch] $PublishUnsignedV023,
+    [switch] $PublishUnsignedV024,
 
     # Required when making the Draft public. Covers the real Tauri updater run
     # plus the deb/rpm no-self-update and Linux compatibility checks.
@@ -190,7 +190,7 @@ function Invoke-ReleaseWorkflow {
         [bool] $Verified,
 
         [Parameter(Mandatory = $true)]
-        [bool] $PublishUnsignedV023
+        [bool] $PublishUnsignedV024
     )
 
     $arguments = @(
@@ -201,7 +201,7 @@ function Invoke-ReleaseWorkflow {
         '--raw-field', "release_notes=$releaseNotes",
         '--raw-field', "publish_draft=$($PublishDraft.ToString().ToLowerInvariant())",
         '--raw-field', "n_minus_one_verified=$($Verified.ToString().ToLowerInvariant())",
-        '--raw-field', "publish_unsigned_v0_2_3=$($PublishUnsignedV023.ToString().ToLowerInvariant())"
+        '--raw-field', "publish_unsigned_v0_2_4=$($PublishUnsignedV024.ToString().ToLowerInvariant())"
     )
 
     if (-not $PSCmdlet.ShouldProcess("$Repository $tag", "Dispatch $workflow")) {
@@ -309,16 +309,16 @@ $attestingModes = @('Release')
 if ($Mode -eq 'UploadDraft') {
     throw 'UploadDraft is no longer supported: a Windows-only local build cannot satisfy the four-platform release gate. Use -Mode Release.'
 }
-if ($PublishUnsignedV023 -and $Mode -ne 'Release') {
-    throw '-PublishUnsignedV023 is only valid with -Mode Release.'
+if ($PublishUnsignedV024 -and $Mode -ne 'Release') {
+    throw '-PublishUnsignedV024 is only valid with -Mode Release.'
 }
-if ($PublishUnsignedV023 -and $Version -ne '0.2.3') {
-    throw '-PublishUnsignedV023 is permanently restricted to version 0.2.3.'
+if ($PublishUnsignedV024 -and $Version -ne '0.2.4') {
+    throw '-PublishUnsignedV024 is permanently restricted to version 0.2.4.'
 }
-if ($PublishUnsignedV023 -and $NMinusOneVerified) {
-    throw '-PublishUnsignedV023 cannot be combined with -NMinusOneVerified.'
+if ($PublishUnsignedV024 -and $NMinusOneVerified) {
+    throw '-PublishUnsignedV024 cannot be combined with -NMinusOneVerified.'
 }
-if ($Mode -in $attestingModes -and -not $NMinusOneVerified -and -not $PublishUnsignedV023) {
+if ($Mode -in $attestingModes -and -not $NMinusOneVerified -and -not $PublishUnsignedV024) {
     throw "$Mode mode requires -NMinusOneVerified after the installed previous version has been upgraded to this candidate with Agent restart and data intact."
 }
 if ($Mode -notin $attestingModes -and $NMinusOneVerified) {
@@ -350,7 +350,7 @@ try {
             -GitHubCli $githubCli `
             -PublishDraft $false `
             -Verified $false `
-            -PublishUnsignedV023 $false
+            -PublishUnsignedV024 $false
         if ($null -eq $runId) {
             return
         }
@@ -377,11 +377,11 @@ try {
 
     $runId = Invoke-ReleaseWorkflow `
         -GitHubCli $githubCli `
-        -PublishDraft (-not $PublishUnsignedV023.IsPresent) `
+        -PublishDraft (-not $PublishUnsignedV024.IsPresent) `
         -Verified $NMinusOneVerified.IsPresent `
-        -PublishUnsignedV023 $PublishUnsignedV023.IsPresent
+        -PublishUnsignedV024 $PublishUnsignedV024.IsPresent
     if ($null -ne $runId) {
-        if ($PublishUnsignedV023) {
+        if ($PublishUnsignedV024) {
             Write-Host "Public unsigned release created: https://github.com/$Repository/releases/tag/$tag"
         }
         else {

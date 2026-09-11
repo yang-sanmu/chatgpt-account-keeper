@@ -96,7 +96,7 @@ import {
   type AccountStatusPatch,
 } from "./accountModel";
 import { normalizeProfileScan, normalizeScheduler } from "./normalize";
-import { applyProfileOperation } from "./profileUpdates";
+import { applyAccountProfileRemoval, applyProfileOperation } from "./profileUpdates";
 
 export type NavKey =
   | "overview"
@@ -475,6 +475,9 @@ function reportBulk(
 }
 
 let profileRescanRequested = false;
+// 扫描在 Worker 中运行时，归档/还原等操作仍可能先完成。保留这些增量，等旧扫描
+// 返回后重放，避免为了防止旧结果覆盖而再做一次全盘扫描。
+let profileMutationsDuringScan: Operation[] = [];
 
 export const useKeeperStore = create<KeeperStore>()((set, get) => {
   async function startSchedulerNow(remember: boolean): Promise<void> {
@@ -599,21 +602,29 @@ export const useKeeperStore = create<KeeperStore>()((set, get) => {
       if (PENDING_OPERATION_STATES.has(operation.state)) {
         set({ profileScanning: true });
       } else if (operation.state === "succeeded") {
+        const scanned = normalizeProfileScan(operation.result);
+        const reconciled = profileMutationsDuringScan.reduce(
+          (current, mutation) => applyProfileOperation(current, mutation),
+          scanned,
+        );
+        profileMutationsDuringScan = [];
         set({
-          profileScan: normalizeProfileScan(operation.result),
+          profileScan: reconciled,
           profileScanning: false,
           profileScanFailed: false,
         });
       } else if (TERMINAL_OPERATION_STATES.has(operation.state)) {
+        profileMutationsDuringScan = [];
         set({ profileScanning: false, profileScanFailed: true });
       }
       return;
     }
 
-    // 其它 Profile 操作改变了磁盘状态，必须重新扫描才知道新的占用。
+    // 其它 Profile 操作带有足够的结果数据，直接增量更新。若扫描正在后台运行，
+    // 同时记录该操作并在扫描结果返回后重放，避免旧快照覆盖新状态。
     if (operation.state === "succeeded" && operation.kind.startsWith("profile-")) {
+      if (get().profileScanning) profileMutationsDuringScan.push(operation);
       set({ profileScan: applyProfileOperation(get().profileScan, operation) });
-      void get().requestProfileScan();
     }
   }
 
@@ -635,6 +646,7 @@ export const useKeeperStore = create<KeeperStore>()((set, get) => {
       case "account.removed": {
         const id = accountIdOf(envelope.payload);
         if (!id) break;
+        const payload = asRecord(envelope.payload);
         set((state) => {
           const selected = new Set(state.selectedAccountIds);
           selected.delete(id);
@@ -642,6 +654,7 @@ export const useKeeperStore = create<KeeperStore>()((set, get) => {
             accounts: applyAccountRemoved(state.accounts, id),
             accountIds: state.accountIds.filter((item) => item !== id),
             selectedAccountIds: selected,
+            profileScan: applyAccountProfileRemoval(state.profileScan, id, payload.profile),
           };
         });
         break;
@@ -992,7 +1005,7 @@ export const useKeeperStore = create<KeeperStore>()((set, get) => {
     removeAccount: async (id, profileAction) => {
       try {
         const commandId = await newCommandId();
-        await agentCall("accounts.remove", { id, profileAction }, commandId);
+        const result = asRecord(await agentCall("accounts.remove", { id, profileAction }, commandId));
         set((state) => {
           const selected = new Set(state.selectedAccountIds);
           selected.delete(id);
@@ -1000,6 +1013,7 @@ export const useKeeperStore = create<KeeperStore>()((set, get) => {
             accounts: applyAccountRemoved(state.accounts, id),
             accountIds: state.accountIds.filter((item) => item !== id),
             selectedAccountIds: selected,
+            profileScan: applyAccountProfileRemoval(state.profileScan, id, result.profile),
           };
         });
         notify.success("账号已删除");
@@ -1108,7 +1122,7 @@ export const useKeeperStore = create<KeeperStore>()((set, get) => {
     bulkRemove: async (ids, profileAction) => {
       await runSequentially("批量删除", ids, async (id) => {
         const commandId = await newCommandId();
-        await agentCall("accounts.remove", { id, profileAction }, commandId);
+        const result = asRecord(await agentCall("accounts.remove", { id, profileAction }, commandId));
         // 只在成功后移除。乐观移除会让删除失败的账号从界面消失，下次刷新又出现。
         set((state) => {
           const selected = new Set(state.selectedAccountIds);
@@ -1117,6 +1131,7 @@ export const useKeeperStore = create<KeeperStore>()((set, get) => {
             accounts: applyAccountRemoved(state.accounts, id),
             accountIds: state.accountIds.filter((item) => item !== id),
             selectedAccountIds: selected,
+            profileScan: applyAccountProfileRemoval(state.profileScan, id, result.profile),
           };
         });
       });
@@ -1176,12 +1191,14 @@ export const useKeeperStore = create<KeeperStore>()((set, get) => {
         profileRescanRequested = true;
         return;
       }
+      profileMutationsDuringScan = [];
       set({ profileScanning: true, profileScanFailed: false });
       try {
         await agentCall("profiles.scan", {}, await newCommandId());
       } catch (error) {
         // 记下这次失败，否则 Profile 页的自动扫描条件会重新成立，形成重试循环。
         profileRescanRequested = false;
+        profileMutationsDuringScan = [];
         set({ profileScanning: false, profileScanFailed: true });
         notify.error("扫描 Profile 目录失败", error);
       }
@@ -1333,6 +1350,7 @@ export const useKeeperStore = create<KeeperStore>()((set, get) => {
 /// 存在的原因是 zustand 的 store 是模块单例，跨测试会残留上一条用例的账号与在途 promise。
 export function __resetKeeperStoreForTests(): void {
   profileRescanRequested = false;
+  profileMutationsDuringScan = [];
   operationWaiters.clear();
   earlyTerminalOperations.clear();
   eventUnsubscribers = [];

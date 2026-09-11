@@ -39,15 +39,26 @@ test(
 
     assert.equal(repository.getSettings().statusCheckEnabled, false);
     assert.equal(repository.getSettings().promoCheckEnabled, false);
-    repository.updateSettings({ statusCheckEnabled: true, promoCheckEnabled: true });
+    assert.equal(repository.getSettings().scheduledPromoCheckEnabled, true);
+    repository.updateSettings({
+      statusCheckEnabled: true,
+      promoCheckEnabled: true,
+      scheduledPromoCheckEnabled: false,
+    });
     assert.equal(repository.getSettings().statusCheckEnabled, true);
     assert.equal(repository.getSettings().promoCheckEnabled, true);
+    assert.equal(repository.getSettings().scheduledPromoCheckEnabled, false);
     assert.equal(repository.getSchemaVersion(), SCHEMA_VERSION);
     assert.equal(repository.integrityCheck().ok, true);
     repository.replaceProxyNodes([
       { id: "px1", name: "node", raw: { type: "http", server: "secret.example", port: 1 } },
     ]);
     repository.saveGroup({ id: "g1", name: "group", proxyId: "px1" });
+    const adapters = createSqliteRuntimeAdapters(repository);
+    const manualGroup = adapters.store.addGroup("manual-region", "px1", {
+      timezone: "Asia/Kolkata",
+      locale: "en-IN",
+    });
     repository.createAccount({ id: "a1", profileName: "a1", groupId: "g1" });
     repository.saveConversationSet("default", { topic: "test", minRounds: 1, maxRounds: 2 });
     repository.updateSettings({ intervalMinutes: 60, schedulerEnabled: true });
@@ -65,6 +76,7 @@ test(
 
     assert.equal(repository.getAccount("a1").profileDir, "profiles/a1");
     assert.equal(repository.getGroup("g1").proxyId, "px1");
+    assert.equal(repository.getGroup(manualGroup.id).tzManual, true);
     assert.equal(repository.getConversationSetsObject().default.topic, "test");
     assert.equal(repository.getSettings().intervalMinutes, 60);
     assert.equal(repository.getStatus("a1").stale, false);

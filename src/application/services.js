@@ -20,7 +20,11 @@ import {
   getOpenPages as defaultGetOpenPages,
 } from "../openPage.js";
 import * as proxyModule from "../proxyManager.js";
-import { clearRegionCache as defaultClearRegionCache } from "../geo.js";
+import {
+  clearRegionCache as defaultClearRegionCache,
+  localeForTimezone,
+  resolveRegionForAccount as defaultResolveRegionForAccount,
+} from "../geo.js";
 import {
   getAllCachedStatus as defaultGetAllCachedStatus,
   getCachedStatus as defaultGetCachedStatus,
@@ -139,6 +143,7 @@ export function createDefaultRuntime(overrides = {}) {
     closeAllOpenPages: defaultCloseAllOpenPages,
     getOpenPages: defaultGetOpenPages,
     clearRegionCache: defaultClearRegionCache,
+    resolveRegionForAccount: defaultResolveRegionForAccount,
     getAllCachedStatus: defaultGetAllCachedStatus,
     getCachedStatus: defaultGetCachedStatus,
     deleteCachedStatus: defaultDeleteCachedStatus,
@@ -434,6 +439,11 @@ export class ApplicationServices {
     });
     if (typeof history === "function") subscriptions.push(history);
 
+    const detectedRegion = this.runtime.store.subscribeDetectedRegion?.((group) => {
+      this.events.publish("group.changed", group);
+    });
+    if (typeof detectedRegion === "function") subscriptions.push(detectedRegion);
+
     const schedule = this.runtime.scheduler.subscribe?.((change) => {
       if (change.kind === "scheduler") {
         this.events.publish("scheduler.changed", publicSchedulerStatus(this.runtime));
@@ -646,7 +656,7 @@ export class ApplicationServices {
         .map((account) => publicAccount(account, this.runtime, context)),
       statuses: this.runtime.getAllCachedStatus(),
       openPages: this.runtime.getOpenPages(),
-      groups: this.runtime.store.getGroups(),
+      groups: this._groupsList(),
       proxies: this._proxiesGetState(),
       conversations: this.runtime.store.getConversations(),
       scheduler: publicSchedulerStatus(this.runtime),
@@ -1101,7 +1111,27 @@ export class ApplicationServices {
   }
 
   _groupsList() {
-    return this.runtime.store.getGroups();
+    return this.runtime.store.getGroups().map((group) => {
+      if (group.tzManual || !group.timezone) return group;
+      const expectedLocale = localeForTimezone(group.timezone);
+      if (!expectedLocale || expectedLocale === group.locale) return group;
+      return this.runtime.store.saveDetectedRegion?.(group.id, { locale: expectedLocale }) ?? {
+        ...group,
+        locale: expectedLocale,
+      };
+    });
+  }
+
+  _probeGroupRegion(group) {
+    if (!group?.proxyId || group.timezone || typeof this.runtime.resolveRegionForAccount !== "function") {
+      return;
+    }
+    // 新建分组还没有成员账号，也应立即探测绑定节点。地区解析只需要 groupId；
+    // 使用内部占位 id 不会创建账号或进入调度。
+    void this.runtime.resolveRegionForAccount({
+      id: `group-probe:${group.id}`,
+      groupId: group.id,
+    }).catch((error) => this.runtime.reportBackgroundError?.(error));
   }
 
   async _groupsCreate(params) {
@@ -1112,6 +1142,7 @@ export class ApplicationServices {
     });
     if (group.proxyId) await this.runtime.proxies.reconcile();
     this.events.publish("group.changed", group);
+    this._probeGroupRegion(group);
     return group;
   }
 
@@ -1130,6 +1161,7 @@ export class ApplicationServices {
     }
     this.runtime.bumpConfigEpoch?.();
     this.events.publish("group.changed", group);
+    if (Object.hasOwn(patch, "proxyId")) this._probeGroupRegion(group);
     return group;
   }
 
@@ -1291,10 +1323,11 @@ export class ApplicationServices {
           message: params.name ? `正在清理 ${params.name} 的可重建缓存` : "正在清理可重建缓存",
           progress: 0.2,
         });
-        return this.runtime.profileManager.cleanCaches(this.runtime.store.getAccounts(), {
+        const result = this.runtime.profileManager.cleanCaches(this.runtime.store.getAccounts(), {
           scope,
           name: params.name ? String(params.name) : null,
         });
+        return { ...result, scope, name: params.name ? String(params.name) : null };
       },
       { stage: "queued", message: "等待清理 Profile 缓存" }
     );

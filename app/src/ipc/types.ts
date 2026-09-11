@@ -129,6 +129,7 @@ export interface AgentSettings {
   statusCheckOnStartup: boolean;
   statusCheckEnabled?: boolean;
   promoCheckEnabled?: boolean;
+  scheduledPromoCheckEnabled?: boolean;
   openPageTimeoutMinutes: number;
   profileAutoCleanEnabled: boolean;
 }

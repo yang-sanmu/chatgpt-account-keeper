@@ -3,6 +3,7 @@ import path from "node:path";
 import net from "node:net";
 import { spawn } from "node:child_process";
 import YAML from "yaml";
+import { parseCustomProxies, appendCustomProxies } from "./customProxy.js";
 import {
   fromRoot,
   fromCacheRoot,
@@ -51,6 +52,9 @@ export const DEFAULT_CLASH_VERGE_DIR = process.platform === "win32"
   ? "C:\\Program Files\\Clash Verge"
   : null;
 let proxyStoreBackend = null;
+// Retain deleted slots for this Agent lifetime so existing Chrome proxy ports
+// do not move when an unused node is removed. No deleted credentials are kept.
+let portOrderAfterRemoval = null;
 // 最近一次测速结果：nodeId -> { ok, delay, message, testedAt }。
 // 测速本身是短生命周期的独立进程，结果不落库；但界面需要在节点行上一直显示
 // 上次延迟，否则用户点完“测速”只能去任务中心翻 Operation 结果。
@@ -61,9 +65,12 @@ export function configureProxyStoreBackend(backend) {
     throw new TypeError("proxy store backend must be an object or null");
   }
   const previous = proxyStoreBackend;
+  const previousPortOrder = portOrderAfterRemoval;
   proxyStoreBackend = backend;
+  portOrderAfterRemoval = null;
   return () => {
     proxyStoreBackend = previous;
+    portOrderAfterRemoval = previousPortOrder;
   };
 }
 
@@ -152,7 +159,7 @@ export function getNodes({ safe = true } = {}) {
  * 真实 URL 只留在本地 config/proxies.json。
  */
 export function getSubscriptionInfo() {
-  const { subscription } = readStore();
+  const { subscription, nodes } = readStore();
   if (!subscription?.url) return null;
   let host = "";
   try {
@@ -166,7 +173,7 @@ export function getSubscriptionInfo() {
     // 旧订阅记录可能没有 updatedAt；公开 DTO 用 null 保持字段稳定，避免序列化时
     // undefined 直接把键吞掉。
     updatedAt: subscription.updatedAt ?? null,
-    count: getNodes().length,
+    count: nodes.filter((node) => !node.id.startsWith("custom_")).length,
   };
 }
 
@@ -289,7 +296,8 @@ export async function importSubscription(url) {
       .filter(Boolean)
   );
   const nodes = mergeProxyNodes(list, prev.nodes, referencedIds);
-  if (!nodes.some((node) => !node.missing)) {
+  const count = nodes.filter((node) => !node.missing && !node.id.startsWith("custom_")).length;
+  if (!count) {
     throw new Error("订阅里没有包含合法端口的可用代理节点");
   }
 
@@ -305,9 +313,10 @@ export async function importSubscription(url) {
     if (!liveIds.has(id)) nodeLatency.delete(id);
   }
 
-  log.info(`订阅导入完成：${nodes.filter((n) => !n.missing).length} 个节点`);
+  log.info(`订阅导入完成：${count} 个节点`);
+  portOrderAfterRemoval = null;
   await restart();
-  return { count: nodes.filter((n) => !n.missing).length, total: nodes.length };
+  return { count, total: nodes.length };
 }
 
 /**
@@ -317,6 +326,16 @@ export async function refreshSubscription() {
   const { subscription } = readStore();
   if (!subscription?.url) throw badRequest("尚未配置订阅地址");
   return importSubscription(subscription.url);
+}
+
+export async function importCustom(input, protocol = "http") {
+  const imported = parseCustomProxies(input, protocol);
+  const previous = readStore();
+  const nodes = appendCustomProxies(previous.nodes, imported);
+  writeStore({ ...previous, nodes });
+  for (const node of imported) nodeLatency.delete(node.id);
+  // New nodes are not routed until selected by a group. Import need not stop Chrome traffic.
+  return { count: new Set(imported.map((node) => node.id)).size, total: nodes.length };
 }
 
 export async function setNodeEnabled(id, enabled) {
@@ -331,6 +350,66 @@ export async function setNodeEnabled(id, enabled) {
   return getNodes().find((x) => x.id === id) ?? null;
 }
 
+function requireCustomNode(store, id) {
+  const node = store.nodes.find((item) => item.id === id);
+  if (!node || !node.id.startsWith("custom_")) throw badRequest("自定义节点不存在");
+  return node;
+}
+
+export function getCustom(id) {
+  const node = requireCustomNode(readStore(), id);
+  return { id: node.id, name: node.name, protocol: node.raw.tls ? "https" : node.raw.type,
+    server: node.raw.server, port: node.raw.port,
+    username: node.raw.username ?? "", password: node.raw.password ?? "" };
+}
+
+export async function saveCustom(params) {
+  const { id, protocol, port, username = "", password = "" } = params;
+  const name = typeof params.name === "string" ? params.name.trim() : "";
+  const server = typeof params.server === "string" ? params.server.trim() : "";
+  if (!name || name.length > 200 || /[\x00-\x1f\x7f]/.test(name)) throw badRequest("节点名称须为 1–200 个字符，且不能包含控制字符");
+  if (!["http", "https", "socks5"].includes(protocol) || !Number.isInteger(port) || port < 1 || port > 65535 || !server || /[\s/@?#\\]/.test(server)) throw badRequest("请填写有效的协议、服务器和端口（1–65535）");
+  if (typeof username !== "string" || typeof password !== "string" || (password && !username)) throw badRequest("填写密码时必须填写用户名");
+  const host = server.includes(":") && !server.startsWith("[") ? `[${server}]` : server;
+  const auth = username ? `${encodeURIComponent(username)}:${encodeURIComponent(password)}@` : "";
+  const [parsed] = parseCustomProxies(`${protocol}://${auth}${host}:${port}`);
+  const store = readStore();
+  const old = id ? requireCustomNode(store, id) : store.nodes.find((node) => node.id === parsed.id);
+  const nodeId = old?.id ?? parsed.id;
+  const node = { ...parsed, id: nodeId, name, enabled: old ? old.enabled !== false : true,
+    raw: { ...parsed.raw, name: old?.raw.name ?? parsed.raw.name } };
+  const connectionChanged = old && JSON.stringify(old.raw) !== JSON.stringify(node.raw);
+  const nodes = old ? store.nodes.map((item) => item.id === old.id ? node : item) : [...store.nodes, node];
+  writeStore({ ...store, nodes });
+  if (connectionChanged) {
+    nodeLatency.delete(nodeId);
+    if (referencedProxyIds().has(nodeId)) await restart();
+  }
+  return { ok: true };
+}
+
+export async function renameCustom(id, value) {
+  const name = typeof value === "string" ? value.trim() : "";
+  if (!name || name.length > 200 || /[\x00-\x1f\x7f]/.test(name)) throw badRequest("节点名称须为 1–200 个字符，且不能包含控制字符");
+  const store = readStore();
+  requireCustomNode(store, id).name = name;
+  // Runtime names are stable IDs; changing the display name does not restart traffic.
+  writeStore(store);
+  return { ok: true };
+}
+
+export async function removeCustom(id) {
+  const store = readStore();
+  requireCustomNode(store, id);
+  if (referencedProxyIds().has(id)) throw badRequest("该节点正被分组使用，请先修改分组的代理出口再删除");
+  portMapFrom(store.nodes);
+  const portOrder = portOrderAfterRemoval ?? store.nodes.map((node) => node.id);
+  writeStore({ ...store, nodes: store.nodes.filter((node) => node.id !== id) });
+  portOrderAfterRemoval = portOrder;
+  nodeLatency.delete(id);
+  return { ok: true };
+}
+
 export async function clearNodes() {
   const previous = readStore();
   writeStore({
@@ -340,6 +419,7 @@ export async function clearNodes() {
     clashVergeDir: previous.clashVergeDir,
   });
   nodeLatency.clear();
+  portOrderAfterRemoval = null;
   await runLifecycleTransition(() => stopAndWait());
 }
 
@@ -391,7 +471,13 @@ async function resolveFreeBasePort() {
 }
 
 function portMapFrom(nodes, basePort = currentBasePort()) {
-  return assignStablePorts(nodes, {
+  if (portOrderAfterRemoval) {
+    const known = new Set(portOrderAfterRemoval);
+    for (const node of nodes) {
+      if (!known.has(node.id)) portOrderAfterRemoval.push(node.id);
+    }
+  }
+  return assignStablePorts(portOrderAfterRemoval?.map((id) => ({ id })) ?? nodes, {
     basePort,
     reservedPorts: [apiPortFor(basePort)],
   });
@@ -455,7 +541,7 @@ function buildConfig(basePort = currentBasePort()) {
       type: "http",
       listen: "127.0.0.1",
       port: ports.get(n.id),
-      proxy: n.name,
+      proxy: n.raw.name,
     }));
 
   return {
@@ -773,7 +859,7 @@ function waitPort(port, timeoutMs, shouldStop = () => false) {
 
 async function measureTestNode(node) {
   const url = `http://127.0.0.1:${TEST_API_PORT}/proxies/${encodeURIComponent(
-    node.name
+    node.raw.name
   )}/delay?timeout=8000&url=${encodeURIComponent("https://www.gstatic.com/generate_204")}`;
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(15000) });

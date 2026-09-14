@@ -57,7 +57,9 @@ export function mergeProxyNodes(rawNodes, previousNodes, referencedIds) {
   }
 
   for (const old of previousNodes) {
-    if (!seen.has(old.id) && referencedIds.has(old.id)) {
+    if (old.id.startsWith("custom_")) {
+      nodes.push(old);
+    } else if (!seen.has(old.id) && referencedIds.has(old.id)) {
       nodes.push({ ...old, missing: true });
     }
   }

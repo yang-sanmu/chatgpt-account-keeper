@@ -166,7 +166,9 @@ export function createSqliteRuntimeAdapters(repository) {
         mihomoPath: value.mihomoPath ?? null,
         clashVergeDir: value.clashVergeDir ?? null,
       });
-      repository.replaceProxyNodes(value.nodes ?? []);
+      // The manager's array order defines local proxy ports. Refreshing a
+      // subscription can move retained custom nodes, so discard stale positions.
+      repository.replaceProxyNodes((value.nodes ?? []).map((node, sortOrder) => ({ ...node, sortOrder })));
       return value;
     },
   };

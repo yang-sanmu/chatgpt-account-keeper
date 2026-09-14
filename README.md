@@ -49,6 +49,29 @@ Keeper.Agent
 - 旧 JSON/JSONL/Profile 到 SQLite 的原生预览、空间/运行锁检查、进度显示和校验式复制迁移；失败不修改旧数据。
 - Agent 自行写入用户状态目录的脱敏诊断日志，不依赖 Desktop 输出管道；桌面断线会自动重连并在事件缺口后重新获取完整快照。
 
+## 导入自定义代理
+
+“分组与代理”页面分别显示订阅节点和自定义节点。订阅节点列表默认折叠，可按需展开。点击“新增节点”或节点行的“编辑”，可在弹窗中填写名称、协议、服务器、端口、用户名和密码；无认证时账密均留空。编辑保留节点 ID、启停状态和分组绑定，修改已使用节点的连接信息会重新连接代理。自定义节点也可删除；重复导入保留已设置的名称。被分组引用的节点需先修改该分组出口后才能删除，删除闲置节点不会重启其他节点的代理连接。
+
+在“分组与代理”的“自定义 HTTP / SOCKS5 代理”中手动选择 HTTP 或 SOCKS5，粘贴 `hostname:port@username:password` 格式节点（也支持 `\@` 分隔），每行一条，点击“导入自定义代理”。用户名中的地区、会话参数和密码原样保留。例如：
+
+```text
+proxy.example.com:3000@user-region-Rand-sid-example-t-5:password
+```
+
+也支持以下格式（URL 或 curl 中的显式协议优先于手动选择）：
+
+```text
+http://user:password@proxy.example.com:3000
+https://user:password@proxy.example.com:443
+socks5://user:password@proxy.example.com:1080#我的节点
+curl -x proxy.example.com:3000 -U "user:password" ipinfo.io
+```
+
+也可使用不带认证的 `主机:端口`（默认 HTTP）、`curl --proxy`、`--proxy-user`、`--socks5` 和 `--socks5-hostname`。curl 内容只解析代理参数，不会执行命令或访问其中的目标网址。URL 中用户名、密码的特殊字符需百分号编码；curl 的 `-U` 支持引号内的原始用户名和密码。每次最多导入 100 条，格式错误时整批不保存。
+
+导入后可测速，并在分组中选择该节点作为账号出口。相同连接信息重复导入会去重，刷新 Clash 订阅会保留自定义节点。认证信息保存在本机代理配置中，不在节点列表或导入错误中回显；连接仍使用应用的私有 mihomo 内核。
+
 ## 开发与构建
 
 要求：

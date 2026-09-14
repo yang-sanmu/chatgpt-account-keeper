@@ -28,7 +28,7 @@
         "browser.startLogin", "browser.getTask", "browser.openPage", "browser.closePage", "browser.listOpenPages",
         "accounts.history", "history.query", "history.listAccounts",
         "groups.list", "groups.create", "groups.update", "groups.remove",
-        "proxies.getState", "proxies.importSubscription", "proxies.refreshSubscription", "proxies.setRuntimeDirectory", "proxies.setNodeEnabled", "proxies.testNode", "proxies.testAll",
+        "proxies.getState", "proxies.importSubscription", "proxies.importCustom", "proxies.getCustom", "proxies.saveCustom", "proxies.renameCustom", "proxies.removeCustom", "proxies.refreshSubscription", "proxies.setRuntimeDirectory", "proxies.setNodeEnabled", "proxies.testNode", "proxies.testAll",
         "profiles.scan", "profiles.cleanCache", "profiles.archiveOrphan", "profiles.purgeOrphan", "profiles.restoreArchive", "profiles.purgeArchive",
         "conversations.list", "conversations.upsert", "conversations.remove",
         "scheduler.getState", "scheduler.start", "scheduler.stop",

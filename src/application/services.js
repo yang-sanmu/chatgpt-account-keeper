@@ -78,6 +78,10 @@ export const MUTATING_METHODS = new Set([
   "groups.update",
   "groups.remove",
   "proxies.importSubscription",
+  "proxies.importCustom",
+  "proxies.renameCustom",
+  "proxies.saveCustom",
+  "proxies.removeCustom",
   "proxies.refreshSubscription",
   "proxies.setRuntimeDirectory",
   "proxies.setNodeEnabled",
@@ -544,6 +548,21 @@ export class ApplicationServices {
     add("groups.remove", this._groupsRemove);
     add("proxies.getState", this._proxiesGetState);
     add("proxies.importSubscription", this._proxiesImport);
+    add("proxies.importCustom", this._proxiesImportCustom);
+    add("proxies.getCustom", (params) => this.runtime.proxies.getCustom(requireId(params)));
+    add("proxies.saveCustom", (params) => this._proxyOperation("proxy-custom-save", params.id ?? null, async () => {
+      const result = await this.runtime.proxies.saveCustom(params);
+      this.runtime.clearRegionCache();
+      this.runtime.bumpConfigEpoch?.();
+      return result;
+    }));
+    add("proxies.renameCustom", (params) => this._proxyOperation("proxy-custom-rename", requireId(params), () => this.runtime.proxies.renameCustom(params.id, params.name)));
+    add("proxies.removeCustom", (params) => this._proxyOperation("proxy-custom-remove", requireId(params), async () => {
+      const result = await this.runtime.proxies.removeCustom(params.id);
+      this.runtime.clearRegionCache();
+      this.runtime.bumpConfigEpoch?.();
+      return result;
+    }));
     add("proxies.refreshSubscription", this._proxiesRefresh);
     add("proxies.setRuntimeDirectory", this._proxiesSetDirectory);
     add("proxies.setNodeEnabled", this._proxiesSetNodeEnabled);
@@ -1219,6 +1238,15 @@ export class ApplicationServices {
       },
       { stage: "queued", message: "等待导入订阅" }
     );
+  }
+
+  _proxiesImportCustom(params) {
+    assertInput(typeof params.input === "string" && params.input.trim(), "代理内容不能为空");
+    return this._proxyOperation("proxy-custom-import", null, async () => {
+      const result = await this.runtime.proxies.importCustom(params.input, params.protocol);
+      this.runtime.clearRegionCache();
+      return result;
+    }, { stage: "queued", message: "等待导入自定义代理" });
   }
 
   _proxiesRefresh() {

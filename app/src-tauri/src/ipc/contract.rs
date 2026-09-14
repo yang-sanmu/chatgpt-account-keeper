@@ -48,6 +48,11 @@ pub const UI_METHODS: &[&str] = &[
     "groups.remove",
     "proxies.getState",
     "proxies.importSubscription",
+    "proxies.importCustom",
+    "proxies.getCustom",
+    "proxies.saveCustom",
+    "proxies.renameCustom",
+    "proxies.removeCustom",
     "proxies.refreshSubscription",
     "proxies.setRuntimeDirectory",
     "proxies.setNodeEnabled",
@@ -160,7 +165,7 @@ mod tests {
 
         // 数量固定，防止有人一边加一边删还让上面两条都过。
         assert_eq!(INTERNAL_METHODS.len(), 5);
-        assert_eq!(UI_METHODS.len(), 47);
+        assert_eq!(UI_METHODS.len(), 52);
     }
 
     #[test]

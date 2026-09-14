@@ -8,6 +8,8 @@ import { openKeeperRepository } from "../src/persistence/sqliteRepository.js";
 import { SCHEMA_VERSION } from "../src/persistence/schema.js";
 import { createSqliteRuntimeAdapters } from "../src/persistence/runtimeAdapters.js";
 import { OperationRegistry } from "../src/application/operations.js";
+import { parseCustomProxies, appendCustomProxies } from "../src/customProxy.js";
+import { mergeProxyNodes, assignStablePorts } from "../src/proxyUtils.js";
 
 const require = createRequire(import.meta.url);
 let Database = null;
@@ -18,6 +20,34 @@ try {
   // The source module deliberately supports driver injection. Packaging adds
   // this RID/ABI-specific native dependency; pure migration tests still run.
 }
+
+test("custom proxy order and credentials survive subscription refresh through SQLite", { skip: !Database }, async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "keeper-custom-proxy-"));
+  const repository = await openKeeperRepository({ filePath: path.join(root, "keeper.db"), Database });
+  try {
+    const { proxy } = createSqliteRuntimeAdapters(repository);
+    const custom = parseCustomProxies("localhost:1080@user:p@ss:word", "socks5");
+    proxy.writeProxyStore({ nodes: custom });
+    const initial = proxy.readProxyStore();
+    const refreshed = mergeProxyNodes([
+      { name: "first", type: "http", server: "localhost", port: 3000 },
+      { name: "second", type: "http", server: "localhost", port: 3001 },
+    ], initial.nodes, new Set());
+    proxy.writeProxyStore({ ...initial, nodes: refreshed });
+    const saved = proxy.readProxyStore();
+    assert.deepEqual(saved.nodes.map((node) => node.id), refreshed.map((node) => node.id));
+    assert.deepEqual(assignStablePorts(saved.nodes, { basePort: 21000 }), assignStablePorts(refreshed, { basePort: 21000 }));
+    assert.equal(saved.nodes[2].raw.password, "p@ss:word");
+    assert.equal(saved.nodes[2].raw.type, "socks5");
+    const repeated = appendCustomProxies(saved.nodes, custom);
+    proxy.writeProxyStore({ ...saved, nodes: repeated });
+    assert.deepEqual(proxy.readProxyStore().nodes.map((node) => node.id), saved.nodes.map((node) => node.id));
+  } finally {
+    repository.close();
+    assert.equal(path.dirname(root), os.tmpdir());
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test(
   "SQLite repository exposes synchronous Agent CRUD and durable receipts",

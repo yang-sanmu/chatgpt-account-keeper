@@ -80,7 +80,7 @@ test("IPC v1 schema rejects unknown methods and unstable error codes", () => {
 });
 
 test("every advertised IPC method has runtime parameter and result contracts", () => {
-  assert.equal(Object.keys(methodSchema.$defs).length, 53);
+  assert.equal(Object.keys(methodSchema.$defs).length, 56);
   assert.deepEqual(
     Object.keys(METHOD_CONTRACTS).sort(),
     [...schema.$defs.method.enum].sort()

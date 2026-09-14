@@ -12,6 +12,9 @@ import { cn } from "@/lib/utils";
 import { RelativeTime } from "@/components/ui/relative-time";
 import { formatDateTime } from "@/lib/format";
 import { agentCall, newCommandId } from "@/ipc/bridge";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { CustomNodeDialog } from "./custom-node-dialog";
+import type { ProxyNode } from "@/ipc/types";
 
 export function ProxiesSection() {
   const proxies = useKeeperStore((s) => s.proxies);
@@ -20,6 +23,45 @@ export function ProxiesSection() {
   const [importing, setImporting] = React.useState(false);
   const [refreshing, setRefreshing] = React.useState(false);
   const [testingAll, setTestingAll] = React.useState(false);
+  const [customInput, setCustomInput] = React.useState("");
+  const [importingCustom, setImportingCustom] = React.useState(false);
+  const [customProtocol, setCustomProtocol] = React.useState<"http" | "socks5">("http");
+  const [editing, setEditing] = React.useState<{ node: ProxyNode; action: "remove" } | null>(null);
+  const [nodeEditor, setNodeEditor] = React.useState<{ id?: string } | null>(null);
+  const [subscriptionOpen, setSubscriptionOpen] = React.useState(false);
+  const [saving, setSaving] = React.useState(false);
+  const groups = useKeeperStore((s) => s.groups);
+  const customNodes = proxies.nodes.filter((node) => node.id.startsWith("custom_"));
+  const subscriptionNodes = proxies.nodes.filter((node) => !node.id.startsWith("custom_"));
+  const referencedGroups = editing ? groups.filter((group) => group.proxyId === editing.node.id) : [];
+
+  const handleSaveNode = async () => {
+    if (!editing || saving) return;
+    setSaving(true);
+    try {
+      await runOperation("proxies.removeCustom", { id: editing.node.id });
+      notify.success("节点已删除");
+      setEditing(null);
+    } catch (error) {
+      notify.error("操作失败", error);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleImportCustom = async () => {
+    if (!customInput.trim() || importingCustom) return;
+    setImportingCustom(true);
+    try {
+      await runOperation("proxies.importCustom", { input: customInput.trim(), protocol: customProtocol });
+      setCustomInput("");
+      notify.success("导入成功", "可在分组中选择自定义节点作为出口");
+    } catch (error) {
+      notify.error("导入失败", error);
+    } finally {
+      setImportingCustom(false);
+    }
+  };
 
   const handleImport = async () => {
     if (!subUrl.trim()) return notify.warning("URL 不能为空", "请输入订阅链接");
@@ -92,6 +134,70 @@ export function ProxiesSection() {
     
     return <span className={cn("tabular", colorClass)}>{ms} ms</span>;
   };
+
+  const renderNodes = (nodes: ProxyNode[], custom: boolean) => (<div className="border border-line rounded-panel overflow-hidden">
+            <table aria-label={custom ? "自定义节点" : "订阅节点"} className="w-full text-sm">
+              <thead className="bg-sunken border-b border-subtle">
+                <tr>
+                  <th className="text-left font-normal text-muted px-4 py-2 w-12">状态</th>
+                  <th className="text-left font-normal text-muted px-4 py-2">节点名称</th>
+                  <th className="text-left font-normal text-muted px-4 py-2 w-48">服务器</th>
+                  <th className="text-left font-normal text-muted px-4 py-2 w-24">协议</th>
+                  <th className="text-left font-normal text-muted px-4 py-2 w-24">本地端口</th>
+                  <th className="text-left font-normal text-muted px-4 py-2 w-24">延迟</th>
+                  <th className="text-right font-normal text-muted px-4 py-2 w-16">操作</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-subtle bg-panel">
+                {nodes.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="text-center text-muted py-8">{custom ? "暂无自定义节点" : "暂无订阅节点"}</td>
+                  </tr>
+                ) : (
+                  nodes.map((node) => (
+                    <tr key={node.id} className={cn(!node.enabled && "opacity-60")}>
+                      <td className="px-4 py-2">
+                        <Switch
+                          checked={node.enabled}
+                          onCheckedChange={(c) => handleToggleNode(node.id, c)}
+                          aria-label="启用/停用节点"
+                        />
+                      </td>
+                      <td className="px-4 py-2 truncate max-w-[200px]" title={node.name}>
+                        {node.name}
+                      </td>
+                      <td className="px-4 py-2 truncate text-secondary" title={node.server ? `${node.server}:${node.port}` : ""}>
+                        {node.server ? `${node.server}:${node.port}` : "—"}
+                      </td>
+                      <td className="px-4 py-2 text-secondary">
+                        {node.type || "—"}
+                      </td>
+                      <td className="px-4 py-2 text-secondary tabular">
+                        {node.localPort || "—"}
+                      </td>
+                      <td className="px-4 py-2" title={node.latencyTestedAt ? `测于: ${formatDateTime(node.latencyTestedAt, { seconds: true })}\n${node.latencyMessage || ""}` : ""}>
+                        {formatLatency(node.latencyMs, node.latencyOk)}
+                      </td>
+                      <td className="px-4 py-2 text-right">
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          onClick={() => handleTestNode(node.id)}
+                          aria-label="测速"
+                        >
+                          <Play className="size-3.5" />
+                        </Button>
+                        {custom && <>
+                          <Button variant="ghost" size="sm" onClick={() => setNodeEditor({ id: node.id })}>编辑</Button>
+                          <Button variant="ghost" size="sm" onClick={() => setEditing({ node, action: "remove" })}>删除</Button>
+                        </>}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>);
 
   const mihomoState = proxies.status.running ? "ok" : "unknown";
   const mihomoLabel = proxies.status.running ? "Mihomo 运行中" : "Mihomo 未运行";
@@ -168,67 +274,69 @@ export function ProxiesSection() {
             </div>
           </div>
 
-          <div className="border border-line rounded-panel overflow-hidden">
-            <table className="w-full text-sm">
-              <thead className="bg-sunken border-b border-subtle">
-                <tr>
-                  <th className="text-left font-normal text-muted px-4 py-2 w-12">状态</th>
-                  <th className="text-left font-normal text-muted px-4 py-2">节点名称</th>
-                  <th className="text-left font-normal text-muted px-4 py-2 w-48">服务器</th>
-                  <th className="text-left font-normal text-muted px-4 py-2 w-24">协议</th>
-                  <th className="text-left font-normal text-muted px-4 py-2 w-24">本地端口</th>
-                  <th className="text-left font-normal text-muted px-4 py-2 w-24">延迟</th>
-                  <th className="text-right font-normal text-muted px-4 py-2 w-16">操作</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-subtle bg-panel">
-                {proxies.nodes.length === 0 ? (
-                  <tr>
-                    <td colSpan={7} className="text-center text-muted py-8">暂无节点，请先导入订阅</td>
-                  </tr>
-                ) : (
-                  proxies.nodes.map((node) => (
-                    <tr key={node.id} className={cn(!node.enabled && "opacity-60")}>
-                      <td className="px-4 py-2">
-                        <Switch
-                          checked={node.enabled}
-                          onCheckedChange={(c) => handleToggleNode(node.id, c)}
-                          aria-label="启用/停用节点"
-                        />
-                      </td>
-                      <td className="px-4 py-2 truncate max-w-[200px]" title={node.name}>
-                        {node.name}
-                      </td>
-                      <td className="px-4 py-2 truncate text-secondary" title={node.server ? `${node.server}:${node.port}` : ""}>
-                        {node.server ? `${node.server}:${node.port}` : "—"}
-                      </td>
-                      <td className="px-4 py-2 text-secondary">
-                        {node.type || "—"}
-                      </td>
-                      <td className="px-4 py-2 text-secondary tabular">
-                        {node.localPort || "—"}
-                      </td>
-                      <td className="px-4 py-2" title={node.latencyTestedAt ? `测于: ${formatDateTime(node.latencyTestedAt, { seconds: true })}\n${node.latencyMessage || ""}` : ""}>
-                        {formatLatency(node.latencyMs, node.latencyOk)}
-                      </td>
-                      <td className="px-4 py-2 text-right">
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          onClick={() => handleTestNode(node.id)}
-                          aria-label="测速"
-                        >
-                          <Play className="size-3.5" />
-                        </Button>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+          <Button variant="outline" aria-expanded={subscriptionOpen} aria-controls="subscription-nodes" onClick={() => setSubscriptionOpen(!subscriptionOpen)}>
+            {subscriptionOpen ? "收起" : "展开"}订阅节点（{subscriptionNodes.length}）
+          </Button>
+          {subscriptionOpen && <div id="subscription-nodes">{renderNodes(subscriptionNodes, false)}</div>}
+          <div className="rounded-panel border border-line p-4 space-y-3">
+            <label htmlFor="custom-proxy-input" className="text-sm font-medium text-primary">自定义 HTTP / SOCKS5 代理</label>
+            <p id="custom-proxy-help" className="text-xs text-secondary">
+              每行一条 hostname:port@username:password，支持 @ 或 \@ 分隔。导入后在分组中选择节点；刷新订阅会保留自定义节点。
+            </p>
+            <div className="flex items-center gap-3">
+              <label htmlFor="custom-proxy-protocol" className="text-sm text-secondary">代理协议</label>
+              <select id="custom-proxy-protocol" value={customProtocol}
+                onChange={(e) => setCustomProtocol(e.target.value as "http" | "socks5")}
+                disabled={importingCustom}
+                className="rounded-md border border-line bg-sunken px-3 py-2 text-sm">
+                <option value="http">HTTP</option>
+                <option value="socks5">SOCKS5</option>
+              </select>
+            </div>
+            <textarea
+              id="custom-proxy-input"
+              aria-describedby="custom-proxy-help"
+              value={customInput}
+              onChange={(e) => setCustomInput(e.target.value)}
+              disabled={importingCustom}
+              rows={3}
+              maxLength={65536}
+              autoComplete="off"
+              spellCheck={false}
+              className="w-full rounded-md border border-line bg-sunken px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary"
+              placeholder={'proxy.example.com:3000@username:password\nproxy.example.com:1080@username:password'}
+            />
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-xs text-muted">最多 100 条。也支持代理 URL 和 curl 命令，其显式协议优先。</span>
+              <Button onClick={handleImportCustom} disabled={importingCustom || !customInput.trim()}>
+                {importingCustom && <Loader2 className="mr-2 size-4 animate-spin" />}
+                导入自定义代理
+              </Button>
+            </div>
           </div>
+
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold">自定义节点</h3>
+            <Button onClick={() => setNodeEditor({})}>新增节点</Button>
+          </div>
+          {renderNodes(customNodes, true)}
         </CardContent>
       </Card>
+      {nodeEditor && <CustomNodeDialog nodeId={nodeEditor.id} onClose={() => setNodeEditor(null)} />}
+      <Dialog open={!!editing} onOpenChange={(open) => { if (!open && !saving) setEditing(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>删除自定义节点</DialogTitle>
+            <DialogDescription>{referencedGroups.length ? '该节点正被分组使用，请先修改这些分组的代理出口：' + referencedGroups.map(g => g.name).join('、') : '确认删除节点“' + (editing?.node.name ?? '') + '”？'}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditing(null)} disabled={saving}>取消</Button>
+            <Button onClick={handleSaveNode} disabled={saving || referencedGroups.length > 0}>
+              {saving ? "处理中…" : "确认删除"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

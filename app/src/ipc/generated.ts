@@ -85,6 +85,11 @@ export type Method =
   | "groups.remove"
   | "proxies.getState"
   | "proxies.importSubscription"
+  | "proxies.importCustom"
+  | "proxies.getCustom"
+  | "proxies.saveCustom"
+  | "proxies.renameCustom"
+  | "proxies.removeCustom"
   | "proxies.refreshSubscription"
   | "proxies.setRuntimeDirectory"
   | "proxies.setNodeEnabled"
@@ -285,6 +290,9 @@ export interface KeeperIPCV1GeneratedSchema {
   historyQueryParams?: HistoryQueryParams;
   groupCreateParams?: GroupCreateParams;
   groupUpdateParams?: GroupUpdateParams;
+  customProxyParams?: CustomProxyParams;
+  customProxyDetails?: CustomProxyDetails;
+  renameCustomProxyParams?: RenameCustomProxyParams;
   subscriptionParams?: SubscriptionParams;
   runtimeDirectoryParams?: RuntimeDirectoryParams;
   nodeEnabledParams?: NodeEnabledParams;
@@ -946,6 +954,35 @@ export interface GroupUpdateParams {
 }
 /**
  * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
+ * via the `definition` "customProxyParams".
+ */
+export interface CustomProxyParams {
+  input: string;
+  protocol?: "http" | "socks5";
+}
+/**
+ * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
+ * via the `definition` "customProxyDetails".
+ */
+export interface CustomProxyDetails {
+  id?: string;
+  name: string;
+  protocol: "http" | "socks5" | "https";
+  server: string;
+  port: number;
+  username: string;
+  password: string;
+}
+/**
+ * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
+ * via the `definition` "renameCustomProxyParams".
+ */
+export interface RenameCustomProxyParams {
+  id: string;
+  name: string;
+}
+/**
+ * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
  * via the `definition` "subscriptionParams".
  */
 export interface SubscriptionParams {
@@ -1143,6 +1180,11 @@ export interface IpcMethodContracts {
   "groups.remove": { params: IdParams; result: OkResult };
   "proxies.getState": { params: Record<string, never>; result: ProxyStateResult };
   "proxies.importSubscription": { params: SubscriptionParams; result: Operation };
+  "proxies.importCustom": { params: CustomProxyParams; result: Operation };
+  "proxies.getCustom": { params: IdParams; result: CustomProxyDetails };
+  "proxies.saveCustom": { params: CustomProxyDetails; result: Operation };
+  "proxies.renameCustom": { params: RenameCustomProxyParams; result: Operation };
+  "proxies.removeCustom": { params: IdParams; result: Operation };
   "proxies.refreshSubscription": { params: Record<string, never>; result: Operation };
   "proxies.setRuntimeDirectory": { params: RuntimeDirectoryParams; result: Operation };
   "proxies.setNodeEnabled": { params: NodeEnabledParams; result: Operation };
@@ -1181,6 +1223,10 @@ export const OPERATION_METHODS = [
   "browser.startLogin",
   "browser.openPage",
   "proxies.importSubscription",
+  "proxies.importCustom",
+  "proxies.saveCustom",
+  "proxies.renameCustom",
+  "proxies.removeCustom",
   "proxies.refreshSubscription",
   "proxies.setRuntimeDirectory",
   "proxies.setNodeEnabled",

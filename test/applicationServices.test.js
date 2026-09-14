@@ -325,6 +325,23 @@ test("account updates use a strict allowlist and validate window ranges", async 
   );
 });
 
+test("custom proxy import forwards selected protocol and returns a secret-free operation", async () => {
+  const runtime = fakeRuntime();
+  let received;
+  runtime.proxies.importCustom = async (...args) => {
+    received = args;
+    return { count: 1, total: 1 };
+  };
+  const services = new ApplicationServices({ runtime });
+  const operation = await services.invoke("proxies.importCustom", {
+    input: "localhost:1080@private-user:private-password", protocol: "socks5",
+  });
+  const result = await services.operations.waitForTerminal(operation.id);
+  assert.deepEqual(received, ["localhost:1080@private-user:private-password", "socks5"]);
+  assert.equal(result.state, "succeeded");
+  assert.ok(!JSON.stringify(result).includes("private-password"));
+});
+
 test("配置相关服务 handler 完整触发 configEpoch", async () => {
   const runtime = fakeRuntime();
   let bumps = 0;

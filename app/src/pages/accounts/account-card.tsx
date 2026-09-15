@@ -34,7 +34,9 @@ import {
   Trash2,
   ChevronDown,
   Loader2,
+  Copy,
 } from "lucide-react";
+import { notify } from "@/lib/notify";
 import {
   useAccountRecord,
   useAccountActions,
@@ -120,6 +122,23 @@ export const AccountCard = React.memo(({ id, onDelete }: AccountCardProps) => {
     handleDraftChange({ [field]: value });
   };
 
+  const handleCopyAccount = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const selection = window.getSelection()?.toString();
+    if (selection && selection.length > 0) return;
+
+    const textToCopy = acc.email || acc.note;
+    if (!textToCopy) {
+      notify.info("该账号尚未登录，暂无可复制的账号邮箱");
+      return;
+    }
+
+    if (navigator.clipboard?.writeText) {
+      void navigator.clipboard.writeText(textToCopy);
+    }
+    notify.success(acc.email ? "已复制账号" : "已复制账号备注", textToCopy);
+  };
+
   const handleSave = () => {
     actions.save(id, record.draft);
   };
@@ -165,8 +184,24 @@ export const AccountCard = React.memo(({ id, onDelete }: AccountCardProps) => {
             aria-label="选择账号"
           />
           <div className="min-w-0 flex-1">
-            <CardTitle className="truncate text-base" title={acc.email || "未登录"}>
-              {displayEmail(acc.email, emailsRevealed)}
+            <CardTitle
+              className={cn(
+                "group truncate text-base inline-flex items-center gap-1.5 max-w-full",
+                (acc.email || acc.note) && "cursor-pointer hover:text-accent transition-colors"
+              )}
+              title={
+                acc.email
+                  ? `${acc.email} (点击复制账号)`
+                  : acc.note
+                  ? `${acc.note} (点击复制备注)`
+                  : "未登录"
+              }
+              onClick={acc.email || acc.note ? handleCopyAccount : undefined}
+            >
+              <span className="truncate">{displayEmail(acc.email, emailsRevealed)}</span>
+              {(acc.email || acc.note) && (
+                <Copy className="size-3.5 shrink-0 opacity-0 transition-opacity group-hover:opacity-60" />
+              )}
             </CardTitle>
           </div>
           {acc.gptName && (

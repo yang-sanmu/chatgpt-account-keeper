@@ -217,8 +217,8 @@
     /* 13px 基准：这是个信息密度优先的运维界面，不是内容阅读界面。 */
     font-size: 13px;
     line-height: 1.5;
-    /* 桌面客户端里文本框以外的区域不该能选中——拖选出一片蓝色是网页习惯，不是应用习惯。 */
-    user-select: none;
+    /* 允许页面内容选中文本以便复制。 */
+    user-select: text;
     overflow: hidden;
   }
 

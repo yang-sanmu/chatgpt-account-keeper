@@ -566,6 +566,13 @@ select option:checked {
   font-weight: 600;
   color: var(--text-primary);
   font-size: 14px;
+  cursor: pointer;
+  transition: var(--transition-fast);
+}
+
+.acc-email:hover {
+  color: var(--primary-color, #10a37f);
+  text-decoration: underline;
 }
 
 .acc-note {

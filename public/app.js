@@ -190,7 +190,9 @@ function renderAccounts() {
     tr.innerHTML = `
       <td>
         <div class="acc-info-cell">
-          <div class="acc-email" data-email="${a.id}">${
+          <div class="acc-email" data-email="${a.id}" title="${
+            a.email ? `${escapeHtml(a.email)} (点击复制)` : ""
+          }">${
             a.email ? escapeHtml(a.email) : "<span class='time-ago'>未绑定邮箱</span>"
           }</div>
           <input class="acc-note" data-note="${a.id}" value="${escapeHtml(
@@ -525,6 +527,21 @@ function bindAccountActions() {
 
   $$("[data-del]").forEach((el) =>
     el.addEventListener("click", () => delAccount(el.dataset.del))
+  );
+
+  // 点击账号名称复制账号
+  $$(".acc-email[data-email]").forEach((el) =>
+    el.addEventListener("click", () => {
+      const id = el.dataset.email;
+      const acc = accountsCache.find((x) => x.id === id);
+      const textToCopy = acc?.email || acc?.note;
+      if (!textToCopy) {
+        toast("该账号尚未绑定邮箱", "info");
+        return;
+      }
+      navigator.clipboard.writeText(textToCopy);
+      toast("已复制账号: " + textToCopy, "success");
+    })
   );
 }
 

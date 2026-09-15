@@ -83,45 +83,45 @@ test("normal Draft creation requires N-1 verification and every platform signing
   assert.match(releaseSource, /"\$minisign_bin" -V/);
 });
 
-test("the unsigned public-release exception is locked to v0.2.4", () => {
+test("the unsigned public-release exception is locked to v0.2.5", () => {
   const inputs = release.on.workflow_dispatch.inputs;
   const requestGate = release.jobs.gate.steps.find(
-    (step) => step.name === "Validate the one-time unsigned v0.2.4 request",
+    (step) => step.name === "Validate the one-time unsigned v0.2.5 request",
   );
   const markerGate = release.jobs.aggregate.steps.find(
-    (step) => step.name === "Require explicit unsigned markers for the one-time v0.2.4 release",
+    (step) => step.name === "Require explicit unsigned markers for the one-time v0.2.5 release",
   );
   const createRelease = release.jobs.aggregate.steps.find(
     (step) => step.name === "Create the single GitHub Draft or one-time public Release",
   );
 
-  assert.equal(inputs.publish_unsigned_v0_2_4.default, false);
-  assert.match(requestGate.run, /VERSION" != '0\.2\.4'/);
+  assert.equal(inputs.publish_unsigned_v0_2_5.default, false);
+  assert.match(requestGate.run, /VERSION" != '0\.2\.5'/);
   assert.match(requestGate.run, /publish_draft/);
   assert.match(requestGate.run, /n_minus_one_verified/);
   assert.match(markerGate.run, /UNSIGNED-\$rid\.txt/);
-  assert.match(createRelease.if, /publish_unsigned_v0_2_4/);
+  assert.match(createRelease.if, /publish_unsigned_v0_2_5/);
   assert.match(createRelease.run, /release_visibility=\(--latest\)/);
   assert.match(releaseSource, /TAURI_SIGNING_PRIVATE_KEY is required/);
 
-  assert.match(publishScript, /\[switch\] \$PublishUnsignedV024/);
-  assert.match(publishScript, /Version -ne '0\.2\.4'/);
-  assert.match(publishScript, /publish_unsigned_v0_2_4=/);
+  assert.match(publishScript, /\[switch\] \$PublishUnsignedV025/);
+  assert.match(publishScript, /Version -ne '0\.2\.5'/);
+  assert.match(publishScript, /publish_unsigned_v0_2_5=/);
 });
 
 test("unsigned release rejects other versions and conflicting attestations before dispatch", {
   skip: process.platform !== "win32",
 }, () => {
   for (const [args, expected] of [
-    [["-Version", "0.2.3", "-Mode", "Release"], /restricted to version 0\.2\.4/],
-    [["-Version", "0.2.5", "-Mode", "Release"], /restricted to version 0\.2\.4/],
-    [["-Version", "0.2.4", "-Mode", "Candidate"], /only valid with -Mode Release/],
-    [["-Version", "0.2.4", "-Mode", "Release", "-NMinusOneVerified"], /cannot be combined/],
+    [["-Version", "0.2.4", "-Mode", "Release"], /restricted to version 0\.2\.5/],
+    [["-Version", "0.2.6", "-Mode", "Release"], /restricted to version 0\.2\.5/],
+    [["-Version", "0.2.5", "-Mode", "Candidate"], /only valid with -Mode Release/],
+    [["-Version", "0.2.5", "-Mode", "Release", "-NMinusOneVerified"], /cannot be combined/],
   ]) {
     const result = spawnSync("pwsh", [
       "-NoProfile", "-NonInteractive", "-File",
       path.join(repositoryRoot, "scripts", "publish-windows-release.ps1"),
-      "-PublishUnsignedV024", ...args,
+      "-PublishUnsignedV025", ...args,
     ], { encoding: "utf8", timeout: 30_000 });
     assert.equal(result.error, undefined);
     assert.notEqual(result.status, 0);

@@ -1,7 +1,7 @@
 /**
  * ChatGPT Plus 优惠资格探测。
  *
- * 这里只读取两个稳定的后端 JSON 接口，不读取页面文案或 DOM，因此不受出口节点语言
+ * 这里只读取后端 JSON 接口，不读取页面文案或 DOM，因此不受出口节点语言
  * 影响。资格判断只接受已实测的精确响应：HTTP 200、coupon 与请求一致，并且 state 为
  * eligible / not_eligible。接口形态变化时返回 unknown，由状态缓存保留上次可信结果。
  */
@@ -24,7 +24,16 @@ export const PROMO_CAMPAIGNS = Object.freeze([
     eligibility: PROMO_FREE_TRIAL,
   }),
   Object.freeze({
+    // 活动标识必须精确匹配：1 个月是 month，2/3 个月是 months。
     coupon: "plus-1-month-50-pct-off",
+    eligibility: PROMO_HALF_PRICE,
+  }),
+  Object.freeze({
+    coupon: "plus-2-months-50-pct-off",
+    eligibility: PROMO_HALF_PRICE,
+  }),
+  Object.freeze({
+    coupon: "plus-3-months-50-pct-off",
     eligibility: PROMO_HALF_PRICE,
   }),
 ]);
@@ -108,12 +117,17 @@ export async function promoProbeInPage(options = {}) {
       }
       const validObject =
         !!payload && typeof payload === "object" && !Array.isArray(payload);
-      if (
-        !validObject ||
-        payload.coupon !== coupon ||
-        (payload.state !== "eligible" && payload.state !== "not_eligible")
-      ) {
-        return { ok: false, coupon, detail: "优惠接口返回结构不符合预期" };
+      if (!validObject || payload.coupon !== coupon) {
+        return { ok: false, coupon, detail: `${coupon}：优惠接口返回结构不符合预期` };
+      }
+      if (payload.state === "offline") {
+        return {
+          ok: false, coupon,
+          detail: `${coupon}：优惠接口返回 offline，无法确认资格；请核对优惠券名称、登录认证及活动是否仍可用`,
+        };
+      }
+      if (payload.state !== "eligible" && payload.state !== "not_eligible") {
+        return { ok: false, coupon, detail: `${coupon}：优惠接口返回未知状态，无法确认资格` };
       }
       return { ok: true, coupon, eligible: payload.state === "eligible" };
     } catch (error) {
@@ -137,8 +151,11 @@ export async function promoProbeInPage(options = {}) {
 }
 
 function classifyCampaigns(campaigns) {
-  const free = campaigns[PROMO_CAMPAIGNS[0].coupon] === true;
-  const half = campaigns[PROMO_CAMPAIGNS[1].coupon] === true;
+  const eligibleFor = (eligibility) => PROMO_CAMPAIGNS.some(
+    (campaign) => campaign.eligibility === eligibility && campaigns[campaign.coupon] === true
+  );
+  const free = eligibleFor(PROMO_FREE_TRIAL);
+  const half = eligibleFor(PROMO_HALF_PRICE);
   if (free && half) return PROMO_BOTH;
   if (free) return PROMO_FREE_TRIAL;
   if (half) return PROMO_HALF_PRICE;

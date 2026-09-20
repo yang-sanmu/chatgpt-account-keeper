@@ -40,7 +40,7 @@ Keeper.Agent
 ## 当前可用功能
 
 - 账号新增、启用/停用、登录、明确强制重登、状态刷新和立即运行；状态刷新同时检查并区分
-  Plus 免费试用与半价优惠资格，账号页可按优惠结果筛选。
+  Plus 免费试用与 1/2/3 个月半价优惠资格，账号页可按优惠结果筛选。
 - 用对应账号 Profile 打开/关闭真实 Google Chrome。
 - 自动调度启停、持久化与重启恢复；错过任务每账号最多补跑一次并增加抖动。
 - 独立 Profile、账号锁、WAF/unknown 状态保护、Headless Chrome 身份覆盖。
@@ -48,6 +48,13 @@ Keeper.Agent
 - 账号搜索/筛选/编辑/删除，分组与代理管理，会话集编辑，Profile 扫描/清理/归档/永久删除，已删除账号历史和 Agent 设置均已接入 IPC v1。
 - 旧 JSON/JSONL/Profile 到 SQLite 的原生预览、空间/运行锁检查、进度显示和校验式复制迁移；失败不修改旧数据。
 - Agent 自行写入用户状态目录的脱敏诊断日志，不依赖 Desktop 输出管道；桌面断线会自动重连并在事件缺口后重新获取完整快照。
+
+优惠检查使用当前账号 `/api/auth/session` 返回的 accessToken，在页面内携带
+`Authorization: Bearer …` 请求 `/backend-api/promo_campaign/check_coupon`，并设置
+`is_coupon_from_query_param=true`。半价券标识分别为 `plus-1-month-50-pct-off`、
+`plus-2-months-50-pct-off`、`plus-3-months-50-pct-off`（1 个月用单数 `month`）。
+任一期限符合资格都归入现有“半价优惠”标签和筛选。直接在地址栏打开接口不等同于
+带认证的检查；`offline` 不能据此判定账号无优惠，程序会保留上次可信结果并标记待复核。
 
 ## 导入自定义代理
 

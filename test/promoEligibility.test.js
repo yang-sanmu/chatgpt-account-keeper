@@ -6,12 +6,16 @@ import {
   PROMO_FREE_TRIAL,
   PROMO_HALF_PRICE,
   PROMO_NONE,
+  PROMO_CAMPAIGNS,
 } from "../src/promoEligibility.js";
 
 const FREE_COUPON = "plus-1-month-free";
 const HALF_COUPON = "plus-1-month-50-pct-off";
+const HALF_TWO_COUPON = "plus-2-months-50-pct-off";
+const HALF_THREE_COUPON = "plus-3-months-50-pct-off";
 
 function promoPage(states, overrides = {}) {
+  states = { [HALF_TWO_COUPON]: "not_eligible", [HALF_THREE_COUPON]: "not_eligible", ...states };
   return {
     evaluate: async (probe, options) => {
       const previousFetch = globalThis.fetch;
@@ -39,6 +43,33 @@ function promoPage(states, overrides = {}) {
       }
     },
   };
+}
+
+test("检查免费试用和 1/2/3 个月半价的准确优惠券名称", () => {
+  assert.deepEqual(PROMO_CAMPAIGNS.map(({ coupon }) => coupon), [
+    FREE_COUPON, HALF_COUPON, HALF_TWO_COUPON, HALF_THREE_COUPON,
+  ]);
+});
+
+for (const coupon of [HALF_TWO_COUPON, HALF_THREE_COUPON]) {
+  for (const free of [false, true]) {
+    test(`${coupon} 有资格${free ? "，且有免费试用" : ""}`, async () => {
+      const result = await checkPromoEligibility(promoPage({
+        [FREE_COUPON]: free ? "eligible" : "not_eligible",
+        [HALF_COUPON]: "not_eligible",
+        [coupon]: "eligible",
+      }));
+      assert.deepEqual(result, { ok: true, eligibility: free ? PROMO_BOTH : PROMO_HALF_PRICE });
+    });
+  }
+  test(`${coupon} offline 不误判成无优惠`, async () => {
+    const result = await checkPromoEligibility(promoPage({
+      [FREE_COUPON]: "not_eligible", [HALF_COUPON]: "not_eligible", [coupon]: "offline",
+    }));
+    assert.equal(result.ok, false);
+    assert.ok(result.detail.includes(coupon));
+    assert.match(result.detail, /offline/);
+  });
 }
 
 for (const [name, states, expected] of [

@@ -685,6 +685,27 @@ test("自检拒绝未知账号、非法 deep 和被占用的账号", async () =>
   );
 });
 
+test("login forwards window and one-off promo options, retaining legacy defaults", async () => {
+  const options = [];
+  const services = new ApplicationServices({ runtime: fakeRuntime({
+    startLogin: async (_account, opts) => {
+      options.push(opts);
+      return { taskId: "login_1", status: "success" };
+    },
+  }) });
+  for (const params of [
+    { accountId: "acc_1", closeOnSuccess: false, checkPromoOnSuccess: true },
+    { accountId: "acc_1" },
+  ]) {
+    const operation = await services.execute(request("browser.startLogin", params));
+    assert.equal((await services.operations.waitForTerminal(operation.id)).state, "succeeded");
+  }
+  assert.deepEqual(options, [
+    { force: false, closeOnSuccess: false, checkPromoOnSuccess: true },
+    { force: false, closeOnSuccess: true, checkPromoOnSuccess: false },
+  ]);
+});
+
 test("Chrome missing keeps its stable code through run, open-page, and login operations", async () => {
   const runtime = fakeRuntime({
     runOnce: async () => ({ ok: false, reason: "未找到本机 Google Chrome", code: "CHROME_NOT_FOUND" }),

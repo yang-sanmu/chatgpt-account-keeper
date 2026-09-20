@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
+import { closePageForAccount, getOpenPages, openPageForAccount } from "../src/openPage.js";
 import {
   prepareSessionForLogin,
   shouldClearSessionBeforeLogin,
@@ -12,9 +14,154 @@ import {
 } from "../src/loginProvider.js";
 import {
   markHeld,
+  isBusy,
+  isHeld,
   releaseHeld,
   withAccountLock,
 } from "../src/locks.js";
+
+async function waitForLogin(predicate) {
+  const deadline = Date.now() + 1000;
+  while (!predicate() && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.ok(predicate(), "登录任务未达到预期状态");
+}
+
+for (const closeOnSuccess of [false, true]) {
+  for (const alreadyLoggedIn of [false, true]) {
+    test(`新增登录检查一次优惠并管理窗口：自动关闭=${closeOnSuccess}，已有会话=${alreadyLoggedIn}`, async (t) => {
+      const account = { id: `new-login-${closeOnSuccess}-${alreadyLoggedIn}-${Date.now()}` };
+      const observations = [];
+      const calls = [];
+      let focused = false;
+      const page = {
+        goto: async () => {},
+        waitForTimeout: async () => {},
+        url: () => "https://chatgpt.com/",
+        bringToFront: async () => { focused = true; },
+      };
+      const context = new EventEmitter();
+      let closed = false;
+      context.pages = () => closed ? [] : [page];
+      context.close = async () => {
+        if (closed) return;
+        closed = true;
+        context.emit("close");
+      };
+      t.after(async () => {
+        await closePageForAccount(account.id);
+        await context.close();
+      });
+      let checks = 0;
+      const started = await startLogin(account, { closeOnSuccess, checkPromoOnSuccess: true }, {
+        acquireInteractiveChrome: async () => ({
+          context, page,
+          release: async () => { calls.push("release"); await context.close(); },
+        }),
+        checkSession: async () => ++checks === 1 && !alreadyLoggedIn
+          ? { state: "out", email: null }
+          : { state: "ok", email: "new@example.com" },
+        checkPromoEligibility: async (currentPage) => {
+          assert.equal(currentPage, page);
+          assert.equal(closed, false);
+          calls.push("promo");
+          return { ok: true, eligibility: "half_price" };
+        },
+        setCachedStatus: (...args) => observations.push(args),
+      });
+      await waitForLogin(() => getLoginTask(started.taskId)?.status === "success");
+      assert.deepEqual(observations.at(-1), [
+        account.id, "ok", "new@example.com", null,
+        { promo: { ok: true, eligibility: "half_price" } },
+      ]);
+      assert.equal(closed, closeOnSuccess);
+      if (!closeOnSuccess) {
+        assert.deepEqual(calls, ["promo"]);
+        assert.ok(getOpenPages()[account.id]);
+        assert.equal(isHeld(account.id), true);
+        assert.equal(isBusy(account.id), true);
+        // 任务清理不能遗失仍打开的窗口；打开网页复用同一 Chrome。
+        pruneLoginTasks({ now: Date.now() + 3600000, maxTasks: 0 });
+        assert.equal((await openPageForAccount(account)).reused, true);
+        assert.equal(focused, true);
+        if (alreadyLoggedIn) await context.close();
+        else assert.equal(await closePageForAccount(account.id), true);
+      }
+      await waitForLogin(() => !isBusy(account.id));
+      assert.deepEqual(calls, ["promo", "release"]);
+      assert.equal(isHeld(account.id), false);
+      assert.equal(getOpenPages()[account.id], undefined);
+      assert.equal(getLoginTask(started.taskId)?.status, "success");
+    });
+  }
+}
+
+test("关闭保留的登录窗口时，账号锁必须等 Chrome 完整回收后才释放", async (t) => {
+  const account = { id: `login-delayed-release-${Date.now()}` };
+  const page = { goto: async () => {}, url: () => "https://chatgpt.com/" };
+  const context = new EventEmitter();
+  let closed = false;
+  let closeCalls = 0;
+  let releaseCalls = 0;
+  let finishRelease;
+  const releaseGate = new Promise((resolve) => { finishRelease = resolve; });
+  context.pages = () => closed ? [] : [page];
+  context.close = async () => {
+    closeCalls++;
+    if (closed) return;
+    closed = true;
+    context.emit("close");
+  };
+  t.after(async () => {
+    finishRelease();
+    await closePageForAccount(account.id);
+    await waitForLogin(() => !isBusy(account.id));
+  });
+  const started = await startLogin(account, { closeOnSuccess: false }, {
+    acquireInteractiveChrome: async () => ({
+      context, page,
+      release: async () => {
+        releaseCalls++;
+        await context.close();
+        await releaseGate;
+      },
+    }),
+    checkSession: async () => ({ state: "ok", email: "new@example.com" }),
+    setCachedStatus: () => {},
+  });
+  await waitForLogin(() => getLoginTask(started.taskId)?.status === "success");
+  const closing = closePageForAccount(account.id);
+  // 让 close 事件触发的后台 finally 完整执行，但暂不确认进程树回收。
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(isBusy(account.id), true, "进程树回收完成前不能释放 Profile 锁");
+  assert.equal(isHeld(account.id), true);
+  assert.equal(closeCalls, 1, "并发回收必须复用同一关闭操作");
+  finishRelease();
+  await closing;
+  await waitForLogin(() => !isBusy(account.id));
+  assert.equal(releaseCalls, 1);
+  assert.equal(getOpenPages()[account.id], undefined);
+});
+
+test("优惠检查异常不会把成功登录改为失败，并保存待复核观测", async () => {
+  const account = { id: `login-promo-failure-${Date.now()}` };
+  const observations = [];
+  const calls = [];
+  const started = await startLogin(account, { closeOnSuccess: true, checkPromoOnSuccess: true }, {
+    launchForAccount: async () => ({
+      context: { close: async () => { calls.push("close"); } },
+      page: { goto: async () => {} },
+    }),
+    checkSession: async () => ({ state: "ok", email: "new@example.com" }),
+    checkPromoEligibility: async () => { calls.push("promo"); throw new Error("offline"); },
+    setCachedStatus: (...args) => observations.push(args),
+  });
+  await waitForLogin(() => getLoginTask(started.taskId)?.status === "success");
+  assert.deepEqual(calls, ["promo", "close"]);
+  assert.equal(observations.at(-1)[4].promo.ok, false);
+  assert.match(observations.at(-1)[4].promo.detail, /offline/);
+});
 
 test("只有用户明确强制重登时才允许清 Session", () => {
   assert.equal(shouldClearSessionBeforeLogin({ force: true }), true);

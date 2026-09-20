@@ -17,7 +17,7 @@ import * as log from "./logger.js";
 /**
  * “打开网页”：用账号的持久化 profile 打开一个有头浏览器窗口，交给用户自己用。
  *
- * 与登录流程的区别：登录流程一检测到登录成功就收窗口；这里**不会**自动关，
+ * 登录成功后选择保留的窗口也交由这里管理。这里**不会**立即自动关，
  * 一直开到用户手动关闭为止（默认不限时，可在设置里配 openPageTimeoutMinutes 兜底）。
  *
  * 窗口开着期间持有账号锁，避免调度器同时打开同一个 profile
@@ -208,36 +208,7 @@ export async function openPageForAccount(account, url, runtime = {}) {
         session.notifiedOpen = true;
         notifyOpenPages({ accountId: account.id, open: true, url: target, openedAt: session.openedAt });
 
-        // 用户关掉窗口 => context 触发 close。让看守循环立即醒来，
-        // 不必等满一次状态采样间隔才清除 openSessions。
-        let closed = false;
-
-        // 默认不限时；设置里配了正数才启用兜底超时。
-        const limitMin = Number(getSettings().openPageTimeoutMinutes) || 0;
-        const deadline = limitMin > 0 ? Date.now() + limitMin * 60000 : Infinity;
-
-        while (!closed && !session.cancelled && Date.now() < deadline) {
-          const waitMs = Math.min(SAMPLE_INTERVAL_MS, deadline - Date.now());
-          closed = await waitForContextCloseOrTimeout(context, waitMs);
-          if (closed || session.cancelled) break;
-          // 从这个活页面采样登录状态：用户刚在窗口里重新登录，面板能马上看到。
-          try {
-            if (context.pages().length === 0) break;
-            const live = context.pages()[0];
-            if (live.url().includes("chatgpt.com")) {
-              const health = await checkSession(live);
-              setCachedStatus(account.id, health.state, health.email, health.detail);
-            }
-          } catch {
-            // 窗口可能正在关闭，忽略本次采样
-          }
-        }
-
-        if (!closed && !session.cancelled && limitMin > 0) {
-          log.warn(`「${name}」网页窗口已开启超过 ${limitMin} 分钟（设置的兜底超时），自动关闭`);
-        } else {
-          log.info(`「${name}」网页窗口已关闭，账号占用已释放`);
-        }
+        await watchOpenSession(account, session);
       });
     } catch (e) {
       const msg = String(e.message || e);
@@ -267,20 +238,90 @@ export async function openPageForAccount(account, url, runtime = {}) {
 }
 
 /**
+ * 接管登录成功后保留的窗口，不重新启动 Chrome。调用方须在整个 await 期间持有账号锁。
+ * onReady 在窗口登记后执行，让登录任务可完成，而 Profile 与 Chrome 槽保留到关窗。
+ */
+export async function retainLoginPage(account, { context, page, release }, onReady) {
+  const url = page.url();
+  const session = {
+    url,
+    openedAt: new Date().toISOString(),
+    context,
+    page,
+    launched: Promise.resolve({ ok: true, url }),
+    cancelled: false,
+    notifiedOpen: true,
+    releaseRun: release,
+    cancel() { this.cancelled = true; },
+  };
+  openSessions.set(account.id, session);
+  markHeld(account.id);
+  // 先监听关闭再发布事件，避免观察者立即关窗时错过 close。
+  const watching = watchOpenSession(account, session);
+  try {
+    notifyOpenPages({ accountId: account.id, open: true, url, openedAt: session.openedAt });
+    onReady();
+    await watching;
+  } finally {
+    session.cancelled = true;
+    await closeSessionChrome(session, context, "user-closed");
+    await watching.catch(() => {});
+    if (openSessions.get(account.id) === session) {
+      openSessions.delete(account.id);
+      releaseHeld(account.id);
+      notifyOpenPages({ accountId: account.id, open: false });
+    }
+  }
+}
+
+async function watchOpenSession(account, session) {
+  const { context } = session;
+  const name = displayName(account);
+  const limitMin = Number(getSettings().openPageTimeoutMinutes) || 0;
+  const deadline = limitMin > 0 ? Date.now() + limitMin * 60000 : Infinity;
+  let closed = false;
+  while (!session.cancelled && Date.now() < deadline) {
+    if (context.pages().length === 0) { closed = true; break; }
+    closed = await waitForContextCloseOrTimeout(
+      context, Math.min(SAMPLE_INTERVAL_MS, deadline - Date.now())
+    );
+    if (closed || session.cancelled) break;
+    try {
+      const live = context.pages()[0];
+      if (!live) { closed = true; break; }
+      if (live.url().includes("chatgpt.com")) {
+        const health = await checkSession(live);
+        setCachedStatus(account.id, health.state, health.email, health.detail);
+      }
+    } catch {
+      // 窗口可能正在关闭，忽略本次采样。
+    }
+  }
+  if (!closed && !session.cancelled && limitMin > 0) {
+    log.warn(`「${name}」网页窗口已开启超过 ${limitMin} 分钟（设置的兜底超时），自动关闭`);
+  } else {
+    log.info(`「${name}」网页窗口已关闭，正在回收账号资源`);
+  }
+}
+
+/**
  * 从面板主动关闭某账号打开的窗口。
  */
 /**
  * 收口一个打开网页的 Chrome。有 BrowserRun 时必须经它：直接 context.close() 只断开
  * 控制连接，Job 无人 dispose，Chrome 槽也不会释放。
  */
-async function closeSessionChrome(session, context, reason) {
-  if (session.releaseRun) {
+function closeSessionChrome(session, context, reason) {
+  // 面板关窗与 close 事件触发的 finally 会并发进入。必须共同等待完整的
+  // BrowserRun 回收，不能在 releaseRun 被取走后退回 context.close 并提前放锁。
+  if (!session.closePromise) {
     const release = session.releaseRun;
     session.releaseRun = null;
-    await release(reason).catch(() => {});
-    return;
+    session.closePromise = Promise.resolve()
+      .then(() => release ? release(reason) : context?.close())
+      .catch(() => {});
   }
-  if (context) await context.close().catch(() => {});
+  return session.closePromise;
 }
 
 export async function closePageForAccount(accountId) {
@@ -290,7 +331,8 @@ export async function closePageForAccount(accountId) {
   if (s.context || s.releaseRun) await closeSessionChrome(s, s.context, "user-requested");
   // 后台看守循环的 finally 也会删除并通知；这里先删是为了让调用方立刻看到关闭结果，
   // 重复通知由 wasOpen 判断挡掉。
-  if (openSessions.delete(accountId)) {
+  if (openSessions.get(accountId) === s) {
+    openSessions.delete(accountId);
     releaseHeld(accountId);
     if (s.notifiedOpen) notifyOpenPages({ accountId, open: false });
   }

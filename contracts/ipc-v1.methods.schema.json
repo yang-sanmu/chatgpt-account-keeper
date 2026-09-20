@@ -632,7 +632,9 @@
       "additionalProperties": false,
       "properties": {
         "reason": { "type": "string" },
-        "force": { "type": "boolean" }
+        "force": { "type": "boolean" },
+        "closeOnSuccess": { "type": "boolean", "description": "登录成功后关闭浏览器，省略时保持旧版自动关闭行为" },
+        "checkPromoOnSuccess": { "type": "boolean", "description": "登录成功后复用当前页面检查一次优惠资格，不受自动巡检设置影响" }
       }
     },
     "bootstrapResult": {

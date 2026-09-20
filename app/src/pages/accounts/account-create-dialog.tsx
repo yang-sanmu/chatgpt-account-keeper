@@ -12,6 +12,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select,
   SelectContent,
@@ -37,6 +38,7 @@ export function AccountCreateDialog({ open, onOpenChange }: AccountCreateDialogP
   const [minWindows, setMinWindows] = React.useState(1);
   const [maxWindows, setMaxWindows] = React.useState(3);
   const [submitting, setSubmitting] = React.useState(false);
+  const [closeOnSuccess, setCloseOnSuccess] = React.useState(false);
 
   // 每次打开重置表单
   React.useEffect(() => {
@@ -47,6 +49,7 @@ export function AccountCreateDialog({ open, onOpenChange }: AccountCreateDialogP
       setMinWindows(1);
       setMaxWindows(3);
       setSubmitting(false);
+      setCloseOnSuccess(false);
     }
   }, [open]);
 
@@ -55,18 +58,21 @@ export function AccountCreateDialog({ open, onOpenChange }: AccountCreateDialogP
     setSubmitting(true);
     
     try {
-      await useKeeperStore.getState().createAccount({
+      const created = await useKeeperStore.getState().createAccount({
         note,
         groupId: groupId === "none" ? null : groupId,
         switchRule,
         minWindows,
         maxWindows,
         enabled: true,
-      });
+      }, { closeOnSuccess });
+      // store 已显示失败原因；保留表单供用户重试。
+      if (!created) return;
       // 成功后由 store 发起通知并调起登录，只需关闭弹窗
       onOpenChange(false);
     } catch (err) {
       notify.error("创建账号失败", err);
+    } finally {
       setSubmitting(false);
     }
   };
@@ -78,7 +84,7 @@ export function AccountCreateDialog({ open, onOpenChange }: AccountCreateDialogP
           <DialogHeader>
             <DialogTitle>新建账号</DialogTitle>
             <DialogDescription>
-              创建成功后，系统会自动打开浏览器窗口要求您完成首次登录。
+              创建后自动打开浏览器，登录成功后会检查一次优惠资格。
             </DialogDescription>
           </DialogHeader>
           
@@ -136,6 +142,17 @@ export function AccountCreateDialog({ open, onOpenChange }: AccountCreateDialogP
                 />
               </div>
             </div>
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id="create-close-on-success"
+                checked={closeOnSuccess}
+                onCheckedChange={(checked) => setCloseOnSuccess(checked === true)}
+              />
+              <Label htmlFor="create-close-on-success">登录成功后自动关闭浏览器</Label>
+            </div>
+            <p className="text-xs text-muted">
+              默认保留窗口；勾选后会在优惠资格检查完成后关闭。
+            </p>
           </div>
           
           <DialogFooter>

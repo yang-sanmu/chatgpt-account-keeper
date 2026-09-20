@@ -1039,12 +1039,18 @@ export class ApplicationServices {
     const account = this.runtime.store.getAccount(accountId);
     if (!account) fail(ERROR_CODES.NOT_FOUND, "账号不存在");
     assertInput(params.force === undefined || typeof params.force === "boolean", "force 必须是布尔值");
+    assertInput(params.closeOnSuccess === undefined || typeof params.closeOnSuccess === "boolean", "closeOnSuccess 必须是布尔值");
+    assertInput(params.checkPromoOnSuccess === undefined || typeof params.checkPromoOnSuccess === "boolean", "checkPromoOnSuccess 必须是布尔值");
     return this.operations.create(
       "account-login",
       async ({ update }) => {
         const started = await this.runtime.startLogin(
           account,
-          { force: params.force === true },
+          {
+            force: params.force === true,
+            closeOnSuccess: params.closeOnSuccess !== false,
+            checkPromoOnSuccess: params.checkPromoOnSuccess === true,
+          },
           { acquireInteractiveChrome: this.runtime.acquireInteractiveChrome }
         );
         if (started.status === "failed") throw loginFailure(started);

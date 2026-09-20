@@ -827,6 +827,14 @@ export interface PrepareUpdateResult {
 export interface ShutdownParams {
   reason?: string;
   force?: boolean;
+  /**
+   * 登录成功后关闭浏览器，省略时保持旧版自动关闭行为
+   */
+  closeOnSuccess?: boolean;
+  /**
+   * 登录成功后复用当前页面检查一次优惠资格，不受自动巡检设置影响
+   */
+  checkPromoOnSuccess?: boolean;
 }
 /**
  * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema

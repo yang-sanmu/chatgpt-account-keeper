@@ -15,6 +15,7 @@ import {
   shouldClearSessionBeforeLogin,
 } from "./sessionPolicy.js";
 import { checkPromoEligibility } from "./promoEligibility.js";
+import { retainLoginPage } from "./openPage.js";
 import * as log from "./logger.js";
 
 export { shouldClearSessionBeforeLogin } from "./sessionPolicy.js";
@@ -102,6 +103,7 @@ export async function closeAllLoginTasks() {
 /**
  * 发起某账号的登录。立即返回 taskId，浏览器窗口在后台打开。
  * 用户登录成功后，任务状态变为 success。
+ * opts.closeOnSuccess = false 时保留窗口；opts.checkPromoOnSuccess = true 时检查一次优惠。
  *
  * opts.force = true 时，进入前先清掉旧会话。用于“改了密码/加了双重认证”的账号：
  * 这类账号的旧 cookie 仍能让 /api/auth/session 返回 email，若不清就会一进来
@@ -111,6 +113,7 @@ export async function startLogin(account, opts = {}, runtime = {}) {
   pruneLoginTasks();
   const launchBrowser = runtime.launchForAccount ?? launchForAccount;
   const inspectSession = runtime.checkSession ?? checkSession;
+  const inspectPromo = runtime.checkPromoEligibility ?? checkPromoEligibility;
   const clearBrowserSession = runtime.clearSession ?? clearSession;
   const cacheStatus = runtime.setCachedStatus ?? setCachedStatus;
   const requestedForce = shouldClearSessionBeforeLogin(opts);
@@ -244,6 +247,36 @@ export async function startLogin(account, opts = {}, runtime = {}) {
       task.context = context;
       task.page = page;
 
+      const completeLogin = async (health) => {
+        let promo;
+        if (opts.checkPromoOnSuccess === true) {
+          task.status = "saving";
+          task.message = "登录成功，正在检查优惠资格…";
+          try {
+            promo = await inspectPromo(page);
+          } catch (error) {
+            promo = { ok: false, detail: `优惠资格检查失败：${String(error?.message || error)}` };
+          }
+        }
+        const finish = () => finishSuccess(task, account, health, cacheStatus, promo);
+        if (opts.closeOnSuccess === false) {
+          // 交给打开网页管理器，登录任务完成后仍持有当前账号锁，直到窗口关闭。
+          const retained = { context, page, release: releaseChrome };
+          context = null;
+          releaseChrome = null;
+          delete task.context;
+          delete task.page;
+          await retainLoginPage(account, retained, finish);
+        } else {
+          task.status = "saving";
+          task.message = "登录成功，正在保存 Session…";
+          // 自动关闭模式必须等 Profile 完全关闭再报告成功，避免后续操作抢先启动。
+          await closeChrome();
+          context = null;
+          finish();
+        }
+      };
+
       // 清登录数据是不可逆操作，只能响应用户明确点击“重新登录/强制重登”。
       // 自动健康判定即使得到 reauth，也可能来自未来尚未识别的 WAF/接口变化；
       // 普通“登录”绝不能据此清掉仍可能有效的 Session。
@@ -274,12 +307,7 @@ export async function startLogin(account, opts = {}, runtime = {}) {
       if (!force) cacheChangedNonOkObservation(current);
 
       if (!force && current.state === SESSION_OK) {
-        // 本来就是好的，直接完成，不折腾用户。
-        task.status = "saving";
-        task.message = "正在确认并保存登录状态…";
-        await closeChrome();
-        context = null;
-        finishSuccess(task, account, current, cacheStatus);
+        await completeLogin(current);
         return;
       }
 
@@ -306,14 +334,7 @@ export async function startLogin(account, opts = {}, runtime = {}) {
 
       if (health?.state === SESSION_OK) {
         await page.waitForTimeout(1000); // 确保登录态落盘
-        // 必须等持久化 Profile 完全关闭后才能向前端报告成功。
-        // 否则用户立刻点“运行”时，新浏览器可能赶在 Cookie 落盘前启动，
-        // 看起来就是“登录显示成功，但立即运行仍提示未登录”。
-        task.status = "saving";
-        task.message = "登录成功，正在保存 Session…";
-        await closeChrome();
-        context = null;
-        finishSuccess(task, account, health, cacheStatus);
+        await completeLogin(health);
       } else {
         task.status = "timeout";
         task.finishedAt = new Date().toISOString();
@@ -323,6 +344,10 @@ export async function startLogin(account, opts = {}, runtime = {}) {
             : "5 分钟内未检测到登录成功";
       }
     } catch (e) {
+      if (task.status === "success") {
+        log.error(`账号 ${account.id} 登录后窗口管理出错: ${String(e.message || e)}`);
+        return;
+      }
       task.status = "failed";
       task.finishedAt = new Date().toISOString();
       if (e?.code) task.code = String(e.code);
@@ -342,12 +367,16 @@ export async function startLogin(account, opts = {}, runtime = {}) {
   return { taskId, status: task.status, force: task.force };
 }
 
-function finishSuccess(task, account, health, cacheStatus = setCachedStatus) {
+function finishSuccess(task, account, health, cacheStatus = setCachedStatus, promo) {
   updateAccount(account.id, {
     email: health.email,
     gptName: health.name ?? null,
   });
-  cacheStatus(account.id, SESSION_OK, health.email);
+  if (promo !== undefined) {
+    cacheStatus(account.id, SESSION_OK, health.email, null, { promo });
+  } else {
+    cacheStatus(account.id, SESSION_OK, health.email);
+  }
   task.email = health.email;
   task.status = "success";
   task.finishedAt = new Date().toISOString();

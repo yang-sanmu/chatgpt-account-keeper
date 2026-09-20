@@ -241,12 +241,12 @@ interface KeeperActions {
   editAccount: (id: string, patch: AccountDraft) => void;
   discardAccountEdits: (id: string) => void;
   saveAccount: (id: string, patch: AccountDraft) => Promise<void>;
-  createAccount: (patch: AccountDraft) => Promise<Account | null>;
+  createAccount: (patch: AccountDraft, options?: { closeOnSuccess?: boolean }) => Promise<Account | null>;
   removeAccount: (id: string, profileAction: ProfileAction) => Promise<void>;
   refreshAccountStatus: (id: string) => Promise<void>;
   runAccountNow: (id: string) => Promise<void>;
   checkAccountSelectors: (id: string, deep?: boolean) => Promise<void>;
-  startLogin: (id: string, force?: boolean) => Promise<void>;
+  startLogin: (id: string, force?: boolean, options?: { closeOnSuccess?: boolean; checkPromoOnSuccess?: boolean }) => Promise<void>;
   closeLogin: () => void;
   toggleAccountPage: (id: string, currentlyOpen: boolean) => Promise<void>;
 
@@ -979,7 +979,7 @@ export const useKeeperStore = create<KeeperStore>()((set, get) => {
       }
     },
 
-    createAccount: async (patch) => {
+    createAccount: async (patch, options = {}) => {
       try {
         const commandId = await newCommandId();
         const created = normalizeAccount(
@@ -994,7 +994,10 @@ export const useKeeperStore = create<KeeperStore>()((set, get) => {
         });
         notify.success("账号已创建", "正在准备登录");
         // 新账号唯一有意义的下一步就是登录，直接拉起登录窗口。
-        await get().startLogin(created.id, false);
+        await get().startLogin(created.id, false, {
+          closeOnSuccess: options.closeOnSuccess ?? false,
+          checkPromoOnSuccess: true,
+        });
         return created;
       } catch (error) {
         notify.error("创建账号失败", error);
@@ -1050,12 +1053,12 @@ export const useKeeperStore = create<KeeperStore>()((set, get) => {
       }
     },
 
-    startLogin: async (id, force = false) => {
+    startLogin: async (id, force = false, options = {}) => {
       try {
         const commandId = await newCommandId();
         const operation = await agentCall(
           "browser.startLogin",
-          { accountId: id, force },
+          { accountId: id, force, ...options },
           commandId
         );
         const record = get().accounts[id];

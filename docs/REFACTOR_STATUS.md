@@ -107,7 +107,7 @@ against `docs/PLAN.md` section 一之二.
 | Private runtime stage and no Chromium | DONE | Package verifier, private Agent smoke, and the exact staged Desktop lifecycle pass without a bundled browser or legacy panel. |
 | Notify/download/safe-point policies | PARTIAL | The monitor remains alive before a download exists, waits for zero blockers, and failed drain/checkpoint attempts restore status monitoring, scheduling and write availability. Installed N-1 → N acceptance still belongs to the signed-release phase. |
 | Signed stable release gate | DEFERRED | Authenticode, Apple Developer ID/notarization and Linux Minisign credentials are still absent. The explicitly authorized unsigned releases do not complete this gate. |
-| Draft GitHub Release workflow/SBOM/licenses | DONE | The workflow, package verifier, private-runtime licenses and CycloneDX/SPDX SBOM generation are implemented. Normal releases remain gated by platform signing and an attested N-1 → N run; exact `v0.2.7` has a one-time direct-public exception. |
+| Draft GitHub Release workflow/SBOM/licenses | DONE | The workflow, package verifier, private-runtime licenses and CycloneDX/SPDX SBOM generation are implemented. Normal releases remain gated by platform signing and an attested N-1 → N run; exact `v0.2.8` has a one-time direct-public exception. |
 
 ## M6 — macOS/Linux
 

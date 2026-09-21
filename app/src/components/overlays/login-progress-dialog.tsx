@@ -17,6 +17,18 @@ import { displayEmail } from "@/lib/format";
 /// 已经超时结束的登录在界面上永远转圈。
 const TERMINAL_STATES = new Set(["succeeded", "failed", "timed_out", "cancelled"]);
 
+/// 登录任务各阶段的标题。
+///
+/// Agent 把除 waiting 之外的所有阶段都发成 state=running（见 services.js 的 _browserStartLogin），
+/// 所以光看 state 只能说出"正在登录"。但登录检测通过之后还有保存 Session 和查优惠两步，
+/// 每步都要几秒；标题一直停在"正在登录"，用户会以为登录本身卡住了 —— 实际上账号早就登进去了。
+/// 这里按 stage 给出真实阶段，stage 是 Agent 直接发的登录任务状态。
+const STAGE_TITLES: Record<string, string> = {
+  clearing: "正在清除旧登录态",
+  saving: "正在保存登录状态",
+  promo: "正在检查优惠资格",
+};
+
 export function LoginProgressDialog() {
   const { login, closeLogin, emailsRevealed } = useKeeperStore(
     useShallow((state) => ({
@@ -46,7 +58,11 @@ export function LoginProgressDialog() {
           <DialogTitle className="flex items-center gap-2">
             {succeeded && <CheckCircle2 className="size-4 text-ok" />}
             {failed && <TriangleAlert className="size-4 text-danger" />}
-            {succeeded ? "登录完成" : failed ? "登录未完成" : "正在登录"}
+            {succeeded
+              ? "登录完成"
+              : failed
+                ? "登录未完成"
+                : (operation?.stage ? STAGE_TITLES[operation.stage] : null) ?? "正在登录"}
           </DialogTitle>
           <DialogDescription>
             {displayEmail(login?.accountEmail, emailsRevealed)}
@@ -83,6 +99,13 @@ export function LoginProgressDialog() {
           )}
 
           {percent !== null && !terminal && !waitingUser && <Progress value={percent} />}
+
+          {!terminal && (
+            <p className="text-sm text-muted">
+              关闭此进度弹窗不会中断后台任务。优惠检查期间请保持 Chrome 页面打开；
+              提前关闭 Chrome 可能中断检查，优惠结果将标记为待复核。
+            </p>
+          )}
 
           {/* 失败时把稳定错误码显示出来。它是用户报障时唯一有用的信息。 */}
           {failed && operation?.error && (

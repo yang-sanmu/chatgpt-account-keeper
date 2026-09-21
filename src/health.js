@@ -48,6 +48,10 @@ export async function sessionProbeInPage(options = {}) {
     Number.isFinite(options.retryDelayMs) && options.retryDelayMs >= 0
       ? options.retryDelayMs
       : 1_500;
+  // 会话重试次数。默认 3 次是为了"刚导航完会话还没就绪"的场景；已经在外层循环里反复
+  // 轮询的调用方（登录等待）传 1，否则内层重试会把每轮探测拖长 3 秒以上，用户登录完
+  // 要等更久才被发现。由 checkSession 校验后传入。
+  const maxAttempts = options.attempts ?? 3;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const isPlainObject = (value) => {
     if (!value || typeof value !== "object" || Array.isArray(value)) return false;
@@ -157,7 +161,7 @@ export async function sessionProbeInPage(options = {}) {
 
   // 刚导航完就查，偶尔会赶在会话态就绪之前，导致 session 返回空用户 ——
   // 那会把正常账号误判成“未登录”。所以拿不到用户时重试几次再下结论。
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
     out.sessionAttempts++;
     try {
       const { response: res, text } = await fetchTextWithTimeout(
@@ -190,7 +194,7 @@ export async function sessionProbeInPage(options = {}) {
     }
     if (sess?.user?.email) break;
     out.retried = attempt + 1;
-    if (attempt < 2) await sleep(retryDelayMs);
+    if (attempt < maxAttempts - 1) await sleep(retryDelayMs);
   }
 
   // 挑战页可能在第一次 session 请求后才替换当前文档。必须在所有重试结束
@@ -278,6 +282,10 @@ export async function checkSession(page, options = {}) {
       Number.isFinite(options.retryDelayMs) && options.retryDelayMs >= 0
         ? options.retryDelayMs
         : 1_500,
+    attempts:
+      Number.isFinite(options.attempts) && options.attempts > 0
+        ? Math.floor(options.attempts)
+        : 3,
   };
   let probe;
   let timeout;

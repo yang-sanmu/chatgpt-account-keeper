@@ -81,6 +81,40 @@ describe("Agent 实际发的四个状态都要有中文名", () => {
     expect(none.label).toBe("正常");
     expect(stalePromo.label).toContain("免费试用（待复核）");
   });
+
+  // 新账号登录后优惠检查失败时 eligibility 仍是 null。此前这里返回 null，卡片上一个字都
+  // 没有，用户只在进度弹窗里看到「结果待复核」—— 既没有结果，也没有线索说明发生了什么。
+  it("一次都没查出资格时显示「未获取」，而不是什么都不显示", () => {
+    const never = describeAccountStatus("ok", {
+      stale: false,
+      enabled: true,
+      promoEligibility: null,
+      promoStale: true,
+    });
+    expect(never.label).toContain("优惠未获取");
+    expect(never.label).not.toContain("待复核");
+  });
+
+  it("未开启优惠检查的账号不显示任何优惠文案", () => {
+    // promoStale 为假意味着从没试过，这跟「试了没成功」不是一回事，不该占用文案。
+    const untouched = describeAccountStatus("ok", {
+      stale: false,
+      enabled: true,
+      promoEligibility: null,
+      promoStale: false,
+    });
+    expect(untouched.label).toBe("正常");
+  });
+
+  it("无优惠的结论过期后也要标出来，不能静默沿用", () => {
+    const staleNone = describeAccountStatus("ok", {
+      stale: false,
+      enabled: true,
+      promoEligibility: "none",
+      promoStale: true,
+    });
+    expect(staleNone.label).toContain("无优惠（待复核）");
+  });
 });
 
 describe("需要用户处理的状态", () => {

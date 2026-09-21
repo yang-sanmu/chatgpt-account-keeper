@@ -342,7 +342,7 @@ export interface OpenPageMap {
 export interface LoginTaskResult {
   accountId: string;
   force: boolean;
-  status: "opening" | "clearing" | "waiting" | "saving" | "success" | "failed" | "timeout";
+  status: "opening" | "clearing" | "waiting" | "promo" | "saving" | "success" | "failed" | "timeout";
   message: string;
   startedAt: string;
   finishedAt?: string;
@@ -827,14 +827,6 @@ export interface PrepareUpdateResult {
 export interface ShutdownParams {
   reason?: string;
   force?: boolean;
-  /**
-   * 登录成功后关闭浏览器，省略时保持旧版自动关闭行为
-   */
-  closeOnSuccess?: boolean;
-  /**
-   * 登录成功后复用当前页面检查一次优惠资格，不受自动巡检设置影响
-   */
-  checkPromoOnSuccess?: boolean;
 }
 /**
  * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
@@ -928,6 +920,14 @@ export interface AccountRemoveParams {
 export interface LoginParams {
   accountId: string;
   force?: boolean;
+  /**
+   * 登录成功后关闭浏览器，省略时保持旧版自动关闭行为
+   */
+  closeOnSuccess?: boolean;
+  /**
+   * 登录成功后复用当前页面检查一次优惠资格，不受自动巡检设置影响
+   */
+  checkPromoOnSuccess?: boolean;
 }
 /**
  * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema

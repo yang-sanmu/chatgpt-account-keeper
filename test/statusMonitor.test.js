@@ -316,6 +316,133 @@ test("优惠资格成功结果更新，接口失败时保留上次可信资格�
   assert.equal(none.promoCheckDetail, null);
 });
 
+// eligibility 把两个独立维度压进一个枚举（both = 两个都有），所以"部分确认"的结果只能
+// 补充、不能覆盖。缓存是 both、本次只复核到半价（免费试用那张券 503）时，若直接写下界，
+// 账号会被记成 half_price 并从「免费试用」筛选里消失 —— 一次接口抖动就丢掉一个真实资格。
+test("部分确认不抹掉此前确认过的另一维资格", () => {
+  const t0 = Date.parse("2026-09-02T00:00:00.000Z");
+  const both = mergeStatusObservation(
+    null,
+    { state: "ok", email: "promo@example.com", promo: { ok: true, eligibility: "both" } },
+    { nowMs: t0 }
+  );
+  assert.equal(both.promoEligibility, "both");
+
+  const partial = mergeStatusObservation(
+    both,
+    {
+      state: "ok",
+      email: "promo@example.com",
+      promo: { ok: false, eligibility: "half_price", detail: "免费试用券返回 503" },
+    },
+    { nowMs: t0 + 60_000 }
+  );
+  assert.equal(partial.promoEligibility, "both", "未复核到的免费试用必须保留");
+  assert.equal(partial.promoStale, true);
+  assert.equal(partial.promoCheckDetail, "免费试用券返回 503");
+
+  // 反向补充：缓存只有半价，本次确认了免费试用，应升级成 both。
+  const half = mergeStatusObservation(
+    null,
+    { state: "ok", email: "promo@example.com", promo: { ok: true, eligibility: "half_price" } },
+    { nowMs: t0 }
+  );
+  const upgraded = mergeStatusObservation(
+    half,
+    {
+      state: "ok",
+      email: "promo@example.com",
+      promo: { ok: false, eligibility: "free_trial", detail: "半价券超时" },
+    },
+    { nowMs: t0 + 60_000 }
+  );
+  assert.equal(upgraded.promoEligibility, "both");
+  assert.equal(upgraded.promoStale, true);
+
+  // 部分结果是 none（两维都没查到）时不能把旧资格清成 none。
+  const keptNone = mergeStatusObservation(
+    both,
+    {
+      state: "ok",
+      email: "promo@example.com",
+      promo: { ok: false, eligibility: "none", detail: "两张券都超时" },
+    },
+    { nowMs: t0 + 120_000 }
+  );
+  assert.equal(keptNone.promoEligibility, "both");
+  assert.equal(keptNone.promoStale, true);
+});
+
+// 成功的完整检查仍然可以下调资格：那是四张券都确认过的权威结论，
+// 优惠用完了本来就该从 both 变回 half_price。
+test("完整成功的检查可以下调资格，不受部分合并规则限制", () => {
+  const t0 = Date.parse("2026-09-02T00:00:00.000Z");
+  const both = mergeStatusObservation(
+    null,
+    { state: "ok", email: "promo@example.com", promo: { ok: true, eligibility: "both" } },
+    { nowMs: t0 }
+  );
+  const downgraded = mergeStatusObservation(
+    both,
+    { state: "ok", email: "promo@example.com", promo: { ok: true, eligibility: "half_price" } },
+    { nowMs: t0 + 60_000 }
+  );
+  assert.equal(downgraded.promoEligibility, "half_price");
+  assert.equal(downgraded.promoStale, false);
+
+  const none = mergeStatusObservation(
+    downgraded,
+    { state: "ok", email: "promo@example.com", promo: { ok: true, eligibility: "none" } },
+    { nowMs: t0 + 120_000 }
+  );
+  assert.equal(none.promoEligibility, "none");
+  assert.equal(none.promoStale, false);
+});
+
+// 失败的观测也可能带回一个已确认的资格下界（半价查到了、免费试用那张券超时）。
+// 丢掉它会让新账号在界面上完全没有优惠信息，只剩一句「待复核」。
+test("失败观测带回的部分资格被采纳，同时标记待复核", () => {
+  const t0 = Date.parse("2026-09-02T00:00:00.000Z");
+  const partial = mergeStatusObservation(
+    null,
+    {
+      state: "ok",
+      email: "promo@example.com",
+      promo: { ok: false, eligibility: "half_price", detail: "免费试用券返回 503" },
+    },
+    { nowMs: t0 }
+  );
+  assert.equal(partial.promoEligibility, "half_price");
+  assert.equal(partial.promoCheckedAt, "2026-09-02T00:00:00.000Z");
+  assert.equal(partial.promoStale, true);
+  assert.equal(partial.promoCheckDetail, "免费试用券返回 503");
+
+  // 部分结果与缓存取并集：这里补上了免费试用，于是升级为 both，但仍是待复核。
+  // （注意是并集而非覆盖 —— 见「部分确认不抹掉此前确认过的另一维资格」。）
+  const upgraded = mergeStatusObservation(
+    partial,
+    {
+      state: "ok",
+      email: "promo@example.com",
+      promo: { ok: false, eligibility: "both", detail: "半价 2 个月券超时" },
+    },
+    { nowMs: t0 + 60_000 }
+  );
+  assert.equal(upgraded.promoEligibility, "both");
+  assert.equal(upgraded.promoCheckedAt, "2026-09-02T00:01:00.000Z");
+  assert.equal(upgraded.promoStale, true);
+
+  // 不带 eligibility 的失败仍只保留上次值，不清空。
+  const kept = mergeStatusObservation(
+    upgraded,
+    { state: "ok", email: "promo@example.com", promo: { ok: false, detail: "页面已关闭" } },
+    { nowMs: t0 + 120_000 }
+  );
+  assert.equal(kept.promoEligibility, "both");
+  assert.equal(kept.promoCheckedAt, upgraded.promoCheckedAt);
+  assert.equal(kept.promoStale, true);
+});
+
 for (const [name, observation, expectedStale] of [
   ["新邮箱尚未检查优惠", { state: "ok", email: "new@example.com" }, false],
   [

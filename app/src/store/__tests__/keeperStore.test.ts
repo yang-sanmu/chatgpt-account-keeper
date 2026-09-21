@@ -706,6 +706,37 @@ describe("账号编辑经由 store", () => {
     expect(store().accounts["acc-1"]?.inFlight).toBeNull();
   });
 
+  it("登录完成事件早于响应时，弹窗使用已收到的完成状态", async () => {
+    tauri.onMethod("browser.startLogin", () => {
+      tauri.emitAgentEvent("operation.changed", makeOperation({
+        id: "op-login-fast", kind: "account-login", state: "succeeded",
+        message: "登录成功，优惠资格检查完成",
+      }));
+      return makeOperation({ id: "op-login-fast", kind: "account-login", state: "running" });
+    });
+    await store().startLogin("acc-1");
+    expect(store().login?.operation?.state).toBe("succeeded");
+    expect(store().login?.operation?.message).toBe("登录成功，优惠资格检查完成");
+  });
+
+  it("关闭登录进度弹窗不会关闭 Chrome 或取消后台检查", async () => {
+    tauri.onMethod("browser.startLogin", () => makeOperation({
+      id: "op-login-background", kind: "account-login", state: "running",
+      message: "登录成功，正在检查优惠资格…",
+    }));
+    await store().startLogin("acc-1");
+    const callsBeforeClose = tauri.calls.length;
+    store().closeLogin();
+    expect(store().login).toBeNull();
+    expect(tauri.calls).toHaveLength(callsBeforeClose);
+    tauri.emitAgentEvent("operation.changed", makeOperation({
+      id: "op-login-background", kind: "account-login", state: "succeeded",
+      message: "登录成功，优惠资格检查完成",
+    }));
+    expect(store().login).toBeNull();
+    expect(store().operations.find((item) => item.id === "op-login-background")?.state).toBe("succeeded");
+  });
+
   it("创建账号后直接拉起登录", async () => {
     tauri.onMethod("accounts.create", () => makeAccount({ id: "acc-new", email: null }));
     tauri.onMethod("browser.startLogin", () =>

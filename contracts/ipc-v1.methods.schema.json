@@ -27,7 +27,7 @@
         "accountId": { "type": "string", "minLength": 1 },
         "force": { "type": "boolean" },
         "status": {
-          "enum": ["opening", "clearing", "waiting", "saving", "success", "failed", "timeout"]
+          "enum": ["opening", "clearing", "waiting", "promo", "saving", "success", "failed", "timeout"]
         },
         "message": { "type": "string" },
         "startedAt": { "type": "string", "format": "date-time" },
@@ -632,9 +632,7 @@
       "additionalProperties": false,
       "properties": {
         "reason": { "type": "string" },
-        "force": { "type": "boolean" },
-        "closeOnSuccess": { "type": "boolean", "description": "登录成功后关闭浏览器，省略时保持旧版自动关闭行为" },
-        "checkPromoOnSuccess": { "type": "boolean", "description": "登录成功后复用当前页面检查一次优惠资格，不受自动巡检设置影响" }
+        "force": { "type": "boolean" }
       }
     },
     "bootstrapResult": {
@@ -755,7 +753,9 @@
       "required": ["accountId"],
       "properties": {
         "accountId": { "type": "string", "minLength": 1 },
-        "force": { "type": "boolean" }
+        "force": { "type": "boolean" },
+        "closeOnSuccess": { "type": "boolean", "description": "登录成功后关闭浏览器，省略时保持旧版自动关闭行为" },
+        "checkPromoOnSuccess": { "type": "boolean", "description": "登录成功后复用当前页面检查一次优惠资格，不受自动巡检设置影响" }
       }
     },
     "historyQueryParams": {

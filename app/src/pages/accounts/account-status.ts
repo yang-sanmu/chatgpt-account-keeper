@@ -54,11 +54,18 @@ export const PROMO_LABELS: Record<Exclude<PromoEligibility, "none">, string> = {
   both: "免费试用 + 半价优惠",
 };
 
+/// 优惠资格的显示文案。
+///
+/// 「未获取」和「待复核」必须分开：待复核意味着有一个上次查到的资格值等着确认，未获取意味着
+/// 一次都没查出来过。新账号登录后检查失败时命中的是后者 —— 此前这里因为 eligibility 为 null
+/// 直接返回 null，卡片上什么都不显示，用户只在进度弹窗里看到一句「结果待复核」，既没有结果
+/// 也没有任何线索。stale 时永远给出一个标签，包括「无优惠」：那也是个可能已经过期的结论。
 function promoStatusLabel(
   eligibility: PromoEligibility | null | undefined,
   stale: boolean | undefined
 ): string | null {
-  if (!eligibility || eligibility === "none") return null;
+  if (!eligibility) return stale ? "优惠未获取" : null;
+  if (eligibility === "none") return stale ? "无优惠（待复核）" : null;
   const label = PROMO_LABELS[eligibility];
   return stale ? `${label}（待复核）` : label;
 }

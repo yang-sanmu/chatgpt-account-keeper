@@ -181,7 +181,8 @@ export async function startLogin(account, opts = {}, runtime = {}) {
   const task = {
     accountId: account.id,
     force: requestedForce,
-    status: "opening", // opening -> waiting -> saving -> success | failed | timeout
+    // opening -> waiting -> [promo] -> saving -> success | failed | timeout
+    status: "opening",
     message: "正在打开浏览器…",
     startedAt: new Date().toISOString(),
   };
@@ -250,7 +251,9 @@ export async function startLogin(account, opts = {}, runtime = {}) {
       const completeLogin = async (health) => {
         let promo;
         if (opts.checkPromoOnSuccess === true) {
-          task.status = "saving";
+          // 单独的 promo 阶段，不复用 saving：前端要能说出"正在检查优惠资格"，
+          // 否则这几秒里标题一直是"正在登录"，看起来像登录本身卡住了。
+          task.status = "promo";
           task.message = "登录成功，正在检查优惠资格…";
           try {
             promo = await inspectPromo(page);
@@ -259,7 +262,7 @@ export async function startLogin(account, opts = {}, runtime = {}) {
           }
         }
         const finish = () => finishSuccess(task, account, health, cacheStatus, promo);
-        if (opts.closeOnSuccess === false) {
+        if (opts.closeOnSuccess === false && !page.isClosed?.()) {
           // 交给打开网页管理器，登录任务完成后仍持有当前账号锁，直到窗口关闭。
           const retained = { context, page, release: releaseChrome };
           context = null;
@@ -319,13 +322,17 @@ export async function startLogin(account, opts = {}, runtime = {}) {
 
       // 真相来源：session 有 email **且** 后端鉴权通过，才算真正登录。
       // 只看 email 会把“令牌已失效”的旧会话误判为成功。
+      //
+      // 这里每轮只探一次（attempts: 1）：内层默认的 3 次重试是给"刚导航完会话未就绪"
+      // 用的，而本循环自己就在反复轮询，内外叠加会让每轮多花 3 秒以上 —— 用户在浏览器里
+      // 登录完成后，要等当前这一轮走完重试才被发现，白等好几秒。
       const deadline = Date.now() + 5 * 60 * 1000;
       let health = null;
       while (Date.now() < deadline) {
-        health = await inspectSession(page);
+        health = await inspectSession(page, { attempts: 1 });
         if (health.state === SESSION_OK) break;
         if (!force) cacheChangedNonOkObservation(health);
-        await page.waitForTimeout(2000);
+        await page.waitForTimeout(1000);
       }
       if (!force && health?.state !== SESSION_OK) {
         // 相同的异常不需要每两秒落盘，但任务结束时要记录最后检查时间。
@@ -333,7 +340,7 @@ export async function startLogin(account, opts = {}, runtime = {}) {
       }
 
       if (health?.state === SESSION_OK) {
-        await page.waitForTimeout(1000); // 确保登录态落盘
+        await page.waitForTimeout(1000); // 确保登录态落盘（关窗口前必须等，Cookie 才写得进 Profile）
         await completeLogin(health);
       } else {
         task.status = "timeout";
@@ -380,7 +387,13 @@ function finishSuccess(task, account, health, cacheStatus = setCachedStatus, pro
   task.email = health.email;
   task.status = "success";
   task.finishedAt = new Date().toISOString();
-  task.message = `登录成功: ${health.email}`;
+  // 优惠检查失败时必须说清原因：只说「待复核」既不是结果也不是线索，用户无从判断是页面
+  // 关早了、接口不可用，还是网络超时。登录本身的成败与优惠检查无关，措辞上要分开。
+  task.message = promo === undefined
+    ? `登录成功: ${health.email}`
+    : promo.ok === true
+      ? "登录成功，优惠资格检查完成"
+      : `登录成功；优惠资格未查到：${promo.detail || "本次未能确认优惠资格"}`;
   log.info(`账号 ${account.id} 绑定邮箱: ${health.email}`);
 }
 

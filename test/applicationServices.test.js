@@ -685,6 +685,22 @@ test("自检拒绝未知账号、非法 deep 和被占用的账号", async () =>
   );
 });
 
+test("登录结束必须替换优惠检查中的进度文案", async () => {
+  let completed = false;
+  const services = new ApplicationServices({ runtime: fakeRuntime({
+    startLogin: async () => ({ taskId: "login_1", status: "saving" }),
+    getLoginTask: () => completed
+      ? { status: "success", message: "登录成功，优惠资格检查未完成，结果待复核" }
+      : { status: "saving", message: "登录成功，正在检查优惠资格…" },
+    sleep: async () => { completed = true; },
+  }) });
+  const operation = await services.execute(request("browser.startLogin", { accountId: "acc_1" }));
+  const finished = await services.operations.waitForTerminal(operation.id);
+  assert.equal(finished.state, "succeeded");
+  assert.equal(finished.stage, "complete");
+  assert.equal(finished.message, "登录成功，优惠资格检查未完成，结果待复核");
+});
+
 test("login forwards window and one-off promo options, retaining legacy defaults", async () => {
   const options = [];
   const services = new ApplicationServices({ runtime: fakeRuntime({

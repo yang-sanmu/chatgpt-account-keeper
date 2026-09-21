@@ -1070,6 +1070,7 @@ export class ApplicationServices {
           // 没有状态、出口和轮换字段的账号，界面上刚登录成功的账号反而变空。
           const latest = this.runtime.store.getAccount(accountId);
           if (latest) this.events.publish("account.changed", publicAccount(latest, this.runtime));
+          update({ stage: "complete", message: task.message ?? "登录成功" });
           return task;
         }
         if (task.status === "timeout") {

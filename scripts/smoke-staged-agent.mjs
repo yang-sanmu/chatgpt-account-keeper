@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
+import assert from "node:assert/strict";
 
 const stage = path.resolve(process.argv[2] ?? "");
 if (!process.argv[2] || !fs.statSync(stage, { throwIfNoEntry: false })?.isDirectory()) {
@@ -76,7 +77,10 @@ function clientFor(socket) {
     const timer = setTimeout(() => reject(new Error(`IPC timeout: ${method}`)), 5_000);
     pending.set(requestId, (envelope) => {
       clearTimeout(timer);
-      if (envelope.error) reject(new Error(`${envelope.error.code}: ${envelope.error.message}`));
+      if (envelope.error) reject(Object.assign(
+        new Error(`${envelope.error.code}: ${envelope.error.message}`),
+        { code: envelope.error.code }
+      ));
       else resolve(envelope.result);
     });
     socket.write(encodeFrame({
@@ -115,6 +119,20 @@ try {
   const bootstrap = await call("system.bootstrap");
   if (!Array.isArray(bootstrap.accounts)) throw new Error("invalid bootstrap snapshot");
   if (!fs.existsSync(path.join(dataRoot, "keeper.db"))) throw new Error("SQLite database was not initialized");
+  // 校验发布包里的实际契约：随机不存在的账号应走到业务层并返回 NOT_FOUND，
+  // 不能在入站校验阶段拒绝新参数。不会创建账号或启动 Chrome。
+  for (const closeOnSuccess of [false, true]) {
+    await assert.rejects(
+      () => call("browser.startLogin", {
+        accountId: `release-smoke-missing-${randomUUID()}`,
+        force: false,
+        closeOnSuccess,
+        checkPromoOnSuccess: true,
+      }, randomUUID()),
+      (error) => error.code === "NOT_FOUND",
+      "发布包必须接受新增账号的登录选项"
+    );
+  }
   await call("system.shutdown", { reason: "release-smoke" }, randomUUID());
   await new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error("staged Agent did not stop")), 5_000);

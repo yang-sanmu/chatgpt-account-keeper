@@ -356,6 +356,32 @@ test("IPC requires hello, returns stable envelopes, and streams events", async (
   assert.equal(typeof event.seq, "number");
 });
 
+test("新增账号登录参数经真实 IPC 到达业务层，不被入站契约拒绝", { timeout: 5000 }, async (t) => {
+  const runtime = minimalRuntime();
+  runtime.store.getAccount = () => null;
+  const services = new ApplicationServices({ runtime });
+  const server = new AgentIpcServer({ services, endpoint: testEndpoint() });
+  await server.listen();
+  t.after(() => server.close());
+  const client = await connect(server.endpoint);
+  t.after(() => client.socket.destroy());
+  client.send({
+    id: "hello", method: "system.hello",
+    params: { protocol: { major: 1, minor: 0 }, clientVersion: "test", capabilities: [] },
+  });
+  assert.ok((await client.next()).result);
+  for (const closeOnSuccess of [false, true]) {
+    client.send({
+      id: `login-${closeOnSuccess}`, method: "browser.startLogin", commandId: randomUUID(),
+      params: { accountId: "missing-account", force: false, closeOnSuccess, checkPromoOnSuccess: true },
+    });
+    const response = await client.next();
+    assert.equal(response.id, `login-${closeOnSuccess}`);
+    // 未知账号应通过契约后由业务层拒绝；不需要启动真实 Chrome。
+    assert.equal(response.error?.code, "NOT_FOUND", JSON.stringify(response));
+  }
+});
+
 test("IPC mutation without commandId is rejected without invoking the method", async (t) => {
   const services = new ApplicationServices({ runtime: minimalRuntime() });
   const server = new AgentIpcServer({ services, endpoint: testEndpoint() });

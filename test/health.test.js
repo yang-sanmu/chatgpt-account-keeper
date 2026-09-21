@@ -618,3 +618,48 @@ test("clearSession 不会把同名 Cookie 旋转新值误判为已清除", async
   assert.equal(result.cookiesVerified, false);
   assert.match(result.errors.join(" "), /auth@\.chatgpt\.com\//);
 });
+
+// 登录等待循环每 1 秒就会再探一次，内层默认的 3 次重试（每次间隔 1.5 秒）在那里是重复的：
+// 用户在浏览器里登录完成后，要等当前这一轮走完重试才被发现，白等好几秒。所以调用方
+// 必须能把重试压到 1 次。重试本身不能删 —— 刚导航完会话未就绪时仍要靠它。
+test("attempts 可把会话重试压到一次，避免登录轮询里叠加重试", async () => {
+  let sessionCalls = 0;
+  const page = {
+    evaluate: async (probeFn, options) => {
+      const hadDocument = Object.hasOwn(globalThis, "document");
+      const previousDocument = globalThis.document;
+      const previousFetch = globalThis.fetch;
+      globalThis.document = {
+        title: "ChatGPT",
+        body: { innerText: "" },
+        querySelector: () => null,
+        querySelectorAll: () => [],
+      };
+      globalThis.fetch = async (url) => {
+        if (url === "/api/auth/session") {
+          sessionCalls++;
+          // 始终不给用户信息，逼探测器用尽它允许的重试次数。
+          return new Response("{}", {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        throw new Error(`unexpected URL: ${url}`);
+      };
+      try {
+        return await probeFn(options);
+      } finally {
+        if (hadDocument) globalThis.document = previousDocument;
+        else delete globalThis.document;
+        globalThis.fetch = previousFetch;
+      }
+    },
+  };
+
+  await checkSession(page, { attempts: 1, retryDelayMs: 0, fetchTimeoutMs: 50 });
+  assert.equal(sessionCalls, 1);
+
+  sessionCalls = 0;
+  await checkSession(page, { retryDelayMs: 0, fetchTimeoutMs: 50 });
+  assert.equal(sessionCalls, 3, "不传 attempts 时仍保留默认的三次重试");
+});

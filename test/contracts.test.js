@@ -122,6 +122,34 @@ test("every advertised IPC method has runtime parameter and result contracts", (
   }]));
 });
 
+test("新增账号登录选项通过真实 Agent 入站契约校验，且不污染退出参数", () => {
+  const request = (method, params) => ({ id: "login-options", method, params });
+  for (const closeOnSuccess of [false, true]) {
+    for (const checkPromoOnSuccess of [false, true]) {
+      assert.doesNotThrow(() => assertRequestContract(request("browser.startLogin", {
+        accountId: "acc-new", force: false, closeOnSuccess, checkPromoOnSuccess,
+      })));
+    }
+  }
+  // 旧客户端仍能省略两个选项。
+  assert.doesNotThrow(() => assertRequestContract(request("browser.startLogin", {
+    accountId: "acc-old", force: true,
+  })));
+  for (const key of ["closeOnSuccess", "checkPromoOnSuccess"]) {
+    for (const value of ["true", 1, null]) {
+      assert.throws(() => assertRequestContract(request("browser.startLogin", {
+        accountId: "acc-new", [key]: value,
+      })), (error) => error.code === "VALIDATION_FAILED");
+    }
+    assert.throws(() => assertRequestContract(request("system.shutdown", {
+      reason: "user-exit-all", force: true, [key]: true,
+    })), (error) => error.code === "VALIDATION_FAILED");
+  }
+  assert.doesNotThrow(() => assertRequestContract(request("system.shutdown", {
+    reason: "user-exit-all", force: true,
+  })));
+});
+
 test("实证过的事件字段与 operation 状态由出站契约封住", () => {
   const event = (name, payload) => ({
     event: name,
@@ -281,5 +309,29 @@ test("队列与 BrowserRun 的新方法、事件与 DTO 四处同步", () => {
       },
     }),
     true
+  );
+});
+
+// 登录任务的每个阶段都必须能过 browser.getTask 的结果契约。
+//
+// 优惠检查期间任务处于 promo 阶段（不复用 saving，否则前端只能说"正在登录"）。
+// 契约枚举漏掉这个值时，界面每次轮询任务都会撞上契约校验失败 —— 而且恰好只在
+// 新建账号后的那几秒内发生，最难复现。这里把 loginProvider 会写的状态全列出来。
+test("登录任务的所有阶段都被 browser.getTask 的结果契约接受", () => {
+  const base = {
+    accountId: "acc-1",
+    force: false,
+    message: "阶段消息",
+    startedAt: new Date().toISOString(),
+  };
+  for (const status of [
+    "opening", "clearing", "waiting", "promo", "saving", "success", "failed", "timeout",
+  ]) {
+    assertMethodResultContract("browser.getTask", { ...base, status });
+  }
+  assert.throws(
+    () => assertMethodResultContract("browser.getTask", { ...base, status: "not-a-stage" }),
+    /不符合契约/,
+    "未知阶段仍应被拒绝，枚举不能放开成任意字符串"
   );
 });

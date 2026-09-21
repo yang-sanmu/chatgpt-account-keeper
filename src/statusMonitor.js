@@ -12,7 +12,7 @@ import {
   writePersistedStatuses,
 } from "./statusCacheStore.js";
 import { safeStatusCheckMinutes } from "./statusSettings.js";
-import { isPromoEligibility } from "./promoEligibility.js";
+import { isPromoEligibility, mergePartialEligibility } from "./promoEligibility.js";
 import * as log from "./logger.js";
 
 // 缓存每个账号的登录状态，前端读缓存 => 刷新即显示，无需现开浏览器。
@@ -84,8 +84,15 @@ function mergePromoObservation(previous, observation, checkedAt) {
     };
   }
 
+  // 失败的观测仍可能带回一个已确认的资格下界（例如半价查到了、免费试用那张券超时）。
+  // 它比「什么都没有」有用，所以采纳 —— 但只能**补充**，不能覆盖：eligibility 把两个独立
+  // 维度压进一个枚举，直接写下界会把本次没复核到的那一维抹掉（both 被写成 half_price，
+  // 账号从「免费试用」筛选里消失）。所以按维度取并集，并统一标记待复核。
+  const merged = mergePartialEligibility(current.promoEligibility, promo?.eligibility);
+  const gainedInfo = merged !== null && merged !== current.promoEligibility;
   return {
     ...current,
+    ...(gainedInfo ? { promoEligibility: merged, promoCheckedAt: checkedAt } : null),
     promoStale: true,
     promoCheckDetail:
       typeof promo?.detail === "string" && promo.detail.trim()

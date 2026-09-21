@@ -144,6 +144,43 @@ test("关闭保留的登录窗口时，账号锁必须等 Chrome 完整回收后
   assert.equal(getOpenPages()[account.id], undefined);
 });
 
+test("优惠检查中关闭 Chrome 会结束检查并保留登录成功，不登记已关闭的窗口", async (t) => {
+  const account = { id: `login-close-promo-${Date.now()}` };
+  const observations = [];
+  const page = new EventEmitter();
+  const context = new EventEmitter();
+  let closed = false;
+  let evaluating = false;
+  page.goto = async () => {};
+  page.url = () => "https://chatgpt.com/";
+  page.isClosed = () => closed;
+  page.evaluate = () => { evaluating = true; return new Promise(() => {}); };
+  context.pages = () => closed ? [] : [page];
+  context.close = async () => {
+    if (closed) return;
+    closed = true;
+    page.emit("close");
+    context.emit("close");
+  };
+  t.after(() => context.close());
+  const started = await startLogin(account, { closeOnSuccess: false, checkPromoOnSuccess: true }, {
+    launchForAccount: async () => ({ context, page }),
+    checkSession: async () => ({ state: "ok", email: "new@example.com" }),
+    setCachedStatus: (...args) => observations.push(args),
+  });
+  await waitForLogin(() => evaluating);
+  await context.close();
+  await waitForLogin(() => getLoginTask(started.taskId)?.status === "success" && !isBusy(account.id));
+  // 终态文案必须带上失败原因。只说「待复核」既不是结果也不是线索，用户无从判断是
+  // 页面关早了、接口不可用还是超时 —— 而这是新建账号后唯一能看到的信息。
+  const message = getLoginTask(started.taskId).message;
+  assert.match(message, /登录成功/);
+  assert.match(message, /页面已关闭/);
+  assert.match(observations.at(-1)[4].promo.detail, /页面已关闭/);
+  assert.equal(getOpenPages()[account.id], undefined);
+  assert.equal(page.listenerCount("close"), 0);
+});
+
 test("优惠检查异常不会把成功登录改为失败，并保存待复核观测", async () => {
   const account = { id: `login-promo-failure-${Date.now()}` };
   const observations = [];
@@ -742,3 +779,57 @@ test("promo requests are opt-in even for a healthy session", async () => {
     assert.equal(result.promo, undefined);
   }
 });
+
+// 优惠检查要几秒，期间任务状态必须与"正在登录"可区分。Agent 把除 waiting 之外的阶段
+// 都发成 state=running，前端只能靠 stage 说出真实阶段；沿用 saving 的话标题会一直停在
+// "正在登录"，用户以为登录卡住了 —— 其实账号早就登进去了。
+test("优惠检查期间任务处于独立的 promo 阶段", async () => {
+  const account = { id: `login-promo-stage-${Date.now()}` };
+  const seen = [];
+  let releasePromo;
+  const promoGate = new Promise((resolve) => { releasePromo = resolve; });
+  const started = await startLogin(account, { closeOnSuccess: true, checkPromoOnSuccess: true }, {
+    launchForAccount: async () => ({
+      context: { close: async () => {} },
+      page: { goto: async () => {}, waitForTimeout: async () => {} },
+    }),
+    checkSession: async () => ({ state: "ok", email: "new@example.com" }),
+    checkPromoEligibility: async () => {
+      seen.push(getLoginTask(started.taskId).status);
+      await promoGate;
+      return { ok: true, eligibility: "half_price" };
+    },
+    setCachedStatus: () => {},
+  });
+  await waitForLogin(() => seen.length === 1);
+  assert.deepEqual(seen, ["promo"], "优惠检查期间不能复用 saving 阶段");
+  releasePromo();
+  await waitForLogin(() => getLoginTask(started.taskId)?.status === "success");
+});
+
+// 登录等待循环每轮只探一次会话。内层默认 3 次重试（间隔 1.5 秒）在这里是重复的：
+// 用户登录完成后要等当轮重试走完才被发现，看起来就是"登录完了还卡在正在登录"。
+test("登录等待轮询每轮只做一次会话探测", async () => {
+  const account = { id: `login-poll-attempts-${Date.now()}` };
+  const optionsSeen = [];
+  let checks = 0;
+  const started = await startLogin(account, { closeOnSuccess: true }, {
+    launchForAccount: async () => ({
+      context: { close: async () => {} },
+      page: { goto: async () => {}, waitForTimeout: async () => {} },
+    }),
+    checkSession: async (_page, options) => {
+      checks++;
+      // 第一次是 preflight（导航后立即检查，应保留默认重试）；之后才是等待轮询。
+      if (checks > 1) optionsSeen.push(options);
+      return checks < 3 ? { state: "out", email: null } : { state: "ok", email: "new@example.com" };
+    },
+    setCachedStatus: () => {},
+  });
+  await waitForLogin(() => getLoginTask(started.taskId)?.status === "success");
+  assert.ok(optionsSeen.length > 0, "等待轮询至少探测一次");
+  for (const options of optionsSeen) {
+    assert.equal(options?.attempts, 1);
+  }
+});
+

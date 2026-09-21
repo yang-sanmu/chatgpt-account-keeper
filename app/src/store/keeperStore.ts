@@ -221,6 +221,8 @@ interface KeeperState {
   historyDrawerAccountId: string | null;
 }
 
+type LoginOptions = Pick<IpcParams<"browser.startLogin">, "closeOnSuccess" | "checkPromoOnSuccess">;
+
 interface KeeperActions {
   bootstrapApp: () => Promise<void>;
   teardown: () => void;
@@ -241,12 +243,12 @@ interface KeeperActions {
   editAccount: (id: string, patch: AccountDraft) => void;
   discardAccountEdits: (id: string) => void;
   saveAccount: (id: string, patch: AccountDraft) => Promise<void>;
-  createAccount: (patch: AccountDraft, options?: { closeOnSuccess?: boolean }) => Promise<Account | null>;
+  createAccount: (patch: AccountDraft, options?: Pick<LoginOptions, "closeOnSuccess">) => Promise<Account | null>;
   removeAccount: (id: string, profileAction: ProfileAction) => Promise<void>;
   refreshAccountStatus: (id: string) => Promise<void>;
   runAccountNow: (id: string) => Promise<void>;
   checkAccountSelectors: (id: string, deep?: boolean) => Promise<void>;
-  startLogin: (id: string, force?: boolean, options?: { closeOnSuccess?: boolean; checkPromoOnSuccess?: boolean }) => Promise<void>;
+  startLogin: (id: string, force?: boolean, options?: LoginOptions) => Promise<void>;
   closeLogin: () => void;
   toggleAccountPage: (id: string, currentlyOpen: boolean) => Promise<void>;
 
@@ -1062,14 +1064,15 @@ export const useKeeperStore = create<KeeperStore>()((set, get) => {
           commandId
         );
         const record = get().accounts[id];
-        set({
+        set((state) => ({
           login: {
             accountId: id,
             accountEmail: record?.effective.email ?? null,
             accountNote: record?.effective.note ?? "",
-            operation,
+            // 完成事件可能早于调用响应；不能用旧响应覆盖已收到的终态。
+            operation: state.operations.find((item) => item.id === operation.id) ?? operation,
           },
-        });
+        }));
       } catch (error) {
         notify.error("发起登录失败", error);
       }

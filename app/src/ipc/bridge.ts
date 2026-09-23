@@ -302,6 +302,9 @@ export function normalizeAccount(raw: unknown): Account {
     status = r.status;
   } else if (typeof r.state === "string" && r.state.length > 0) {
     status = r.state;
+  } else if (Object.hasOwn(r, "state") && r.state === null) {
+    // 尚未检查不等于退出；loggedIn=false 在新协议中也用于未确认的状态。
+    status = "unknown";
   } else if (r.loggedIn === false) {
     // loggedIn 只能区分登录/未登录，对应 Agent 的 out。不要合成 needs_login：
     // 那个值 Agent 从来不发（真实取值见 src/health.js），造出来只会多一个没人认识的状态。

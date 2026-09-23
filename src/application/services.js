@@ -18,6 +18,7 @@ import {
   closePageForAccount as defaultClosePageForAccount,
   closeAllOpenPages as defaultCloseAllOpenPages,
   getOpenPages as defaultGetOpenPages,
+  subscribeOpenPageStatus as defaultSubscribeOpenPageStatus,
 } from "../openPage.js";
 import * as proxyModule from "../proxyManager.js";
 import {
@@ -159,6 +160,7 @@ export function createDefaultRuntime(overrides = {}) {
     listHistoryAccounts: defaultListHistoryAccounts,
     subscribeHistory: defaultSubscribeHistory,
     subscribeOpenPages: defaultSubscribeOpenPages,
+    subscribeOpenPageStatus: defaultSubscribeOpenPageStatus,
     isBusy: defaultIsBusy,
     isHeld: defaultIsHeld,
     // 由组合根注入；没有后台队列的入口（旧 CLI / 测试替身）保持 null。
@@ -235,6 +237,8 @@ export function publicAccount(account, runtime, context = accountViewContext(run
   const node = proxyId ? context.nodes.get(proxyId) ?? null : null;
   return {
     ...account,
+    // 兼容旧版开窗采样只写状态缓存、没有回填账号资料的记录。
+    email: account.email?.trim() || (status.state === "ok" ? status.email : null) || null,
     state: status.state ?? null,
     loggedIn: !!status.loggedIn,
     statusDetail: status.detail ?? null,
@@ -434,6 +438,12 @@ export class ApplicationServices {
       });
     });
     if (typeof openPages === "function") subscriptions.push(openPages);
+
+    const openPageStatus = this.runtime.subscribeOpenPageStatus?.(({ accountId }) => {
+      const account = this.runtime.store.getAccount(accountId);
+      if (account) this.events.publish("account.changed", publicAccount(account, this.runtime));
+    });
+    if (typeof openPageStatus === "function") subscriptions.push(openPageStatus);
 
     const history = this.runtime.subscribeHistory?.((change) => {
       this.events.publish("history.appended", {

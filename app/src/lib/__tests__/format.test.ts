@@ -20,11 +20,11 @@ describe("邮箱脱敏与显示开关", () => {
     expect(maskEmail("basketball7@icloud.com")).toBe("ba***7@i***d.com");
   });
 
-  it("未登录（null / 空串 / 空白）统一显示未登录", () => {
-    expect(maskEmail(null)).toBe("未登录");
-    expect(maskEmail(undefined)).toBe("未登录");
-    expect(maskEmail("")).toBe("未登录");
-    expect(maskEmail("   ")).toBe("未登录");
+  it("邮箱未识别（null / 空串 / 空白）统一显示邮箱未识别", () => {
+    expect(maskEmail(null)).toBe("邮箱未识别");
+    expect(maskEmail(undefined)).toBe("邮箱未识别");
+    expect(maskEmail("")).toBe("邮箱未识别");
+    expect(maskEmail("   ")).toBe("邮箱未识别");
   });
 
   it("极短的用户名与域名也不会越界", () => {
@@ -41,11 +41,11 @@ describe("邮箱脱敏与显示开关", () => {
     expect(maskEmail("user@localhost")).toBe("us***r@l***t");
   });
 
-  it("开关决定明文还是脱敏，但未登录不受开关影响", () => {
+  it("开关决定明文还是脱敏，但邮箱未识别不受开关影响", () => {
     expect(displayEmail("basketball7@icloud.com", true)).toBe("basketball7@icloud.com");
     expect(displayEmail("basketball7@icloud.com", false)).toBe("ba***7@i***d.com");
-    expect(displayEmail(null, true)).toBe("未登录");
-    expect(displayEmail(null, false)).toBe("未登录");
+    expect(displayEmail(null, true)).toBe("邮箱未识别");
+    expect(displayEmail(null, false)).toBe("邮箱未识别");
   });
 });
 

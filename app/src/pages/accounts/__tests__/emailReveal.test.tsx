@@ -36,13 +36,13 @@ describe("邮箱显示开关", () => {
         displayEmail(store().accounts[id]?.effective.email, store().emailsRevealed)
       );
 
-    expect(emails()).toEqual(["ba***7@i***d.com", "未登录"]);
+    expect(emails()).toEqual(["ba***7@i***d.com", "邮箱未识别"]);
 
     store().setEmailsRevealed(true);
-    expect(emails()).toEqual(["basketball7@icloud.com", "未登录"]);
+    expect(emails()).toEqual(["basketball7@icloud.com", "邮箱未识别"]);
 
     store().setEmailsRevealed(false);
-    expect(emails()).toEqual(["ba***7@i***d.com", "未登录"]);
+    expect(emails()).toEqual(["ba***7@i***d.com", "邮箱未识别"]);
   });
 
   it("开关状态不会被全量快照重置", () => {
@@ -56,9 +56,9 @@ describe("邮箱显示开关", () => {
     expect(store().emailsRevealed).toBe(true);
   });
 
-  it("未登录账号在两种模式下都显示未登录，不泄露空值形态", () => {
-    expect(displayEmail(null, false)).toBe("未登录");
-    expect(displayEmail(null, true)).toBe("未登录");
-    expect(displayEmail("", true)).toBe("未登录");
+  it("邮箱未识别账号在两种模式下都显示邮箱未识别，不泄露空值形态", () => {
+    expect(displayEmail(null, false)).toBe("邮箱未识别");
+    expect(displayEmail(null, true)).toBe("邮箱未识别");
+    expect(displayEmail("", true)).toBe("邮箱未识别");
   });
 });

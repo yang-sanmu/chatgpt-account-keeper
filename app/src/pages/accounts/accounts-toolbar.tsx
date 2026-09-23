@@ -54,7 +54,8 @@ export function AccountsToolbar({ onCreateClick }: AccountsToolbarProps) {
           <SelectItem value="node_missing">节点已失效</SelectItem>
           <SelectItem value="disabled">已停用</SelectItem>
           <SelectItem value="page_open">网页已打开</SelectItem>
-          <SelectItem value="unknown">未知</SelectItem>
+          <SelectItem value="unknown">无法确认</SelectItem>
+          <SelectItem value="email_missing">邮箱未识别</SelectItem>
         </SelectContent>
       </Select>
 

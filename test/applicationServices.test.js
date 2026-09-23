@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
+import { publicAccount } from "../src/application/services.js";
 import path from "node:path";
 import {
   ApplicationServices,
@@ -980,6 +981,35 @@ test("history append publishes an event instead of requiring a poll", async () =
   assert.equal(seen[0].entry.error, "未登录");
   services.dispose();
   assert.equal(publishHistory, null);
+});
+
+test("旧版手动登录记录从可信缓存补齐邮箱，未验证观测不能补齐", () => {
+  const runtime = fakeRuntime();
+  const account = runtime.store.getAccount("acc_1");
+  assert.equal(publicAccount(account, runtime).email, "one@example.com");
+  for (const state of ["unknown", "out", "reauth", null]) {
+    runtime.getCachedStatus = () => ({ state, email: "unverified@example.com" });
+    assert.equal(publicAccount(account, runtime).email, null);
+  }
+});
+
+test("手动窗口采样推送完整账号，客户端无需重启或全量刷新", () => {
+  const runtime = fakeRuntime();
+  let publishStatus;
+  runtime.subscribeOpenPageStatus = (observer) => {
+    publishStatus = observer;
+    return () => { publishStatus = null; };
+  };
+  const services = new ApplicationServices({ runtime });
+  const seen = [];
+  services.events.subscribe((event) => {
+    if (event.event === "account.changed") seen.push(event.payload);
+  });
+  publishStatus({ accountId: "acc_1" });
+  assert.equal(seen[0].email, "one@example.com");
+  assert.equal(seen[0].state, "ok");
+  services.dispose();
+  assert.equal(publishStatus, null);
 });
 
 test("open page changes come from the browser observer, not a poll loop", async () => {

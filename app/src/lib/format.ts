@@ -9,7 +9,7 @@ const DAY_MS = 24 * HOUR_MS;
 
 /// 脱敏邮箱。默认全部账号隐藏，用户可在账号页一键全部展示。
 export function maskEmail(email: string | null | undefined): string {
-  if (!email || email.trim().length === 0) return "未登录";
+  if (!email || email.trim().length === 0) return "邮箱未识别";
 
   const at = email.indexOf("@");
   if (at <= 0) {
@@ -42,7 +42,7 @@ export function displayEmail(
   email: string | null | undefined,
   revealed: boolean
 ): string {
-  if (!email || email.trim().length === 0) return "未登录";
+  if (!email || email.trim().length === 0) return "邮箱未识别";
   return revealed ? email : maskEmail(email);
 }
 

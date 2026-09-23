@@ -10,8 +10,8 @@ import {
   releaseHeld,
 } from "./locks.js";
 import { setCachedStatus } from "./statusMonitor.js";
-import { checkSession } from "./health.js";
-import { displayName, getAccount, getSettings } from "./store.js";
+import { checkSession, SESSION_OK } from "./health.js";
+import { displayName, getAccount, getSettings, updateAccount } from "./store.js";
 import * as log from "./logger.js";
 
 /**
@@ -29,6 +29,44 @@ import * as log from "./logger.js";
 const openSessions = new Map();
 
 const SAMPLE_INTERVAL_MS = 10000;
+const statusObservers = new Set();
+
+export function subscribeOpenPageStatus(observer) {
+  if (typeof observer !== "function") throw new TypeError("status observer must be a function");
+  statusObservers.add(observer);
+  return () => statusObservers.delete(observer);
+}
+
+// 邮箱只能来自已通过后端鉴权的会话；普通开窗登录也必须回填账号资料并推送给界面。
+export async function sampleOpenPageSession(account, session, runtime = {}) {
+  const isChatGptPage = (page) => {
+    try {
+      const url = new URL(page.url());
+      return url.protocol === "https:" && url.hostname === "chatgpt.com";
+    } catch {
+      return false;
+    }
+  };
+  const pages = session.context.pages();
+  const page = pages.includes(session.page) && isChatGptPage(session.page)
+    ? session.page : pages.find(isChatGptPage);
+  if (!page || session.cancelled) return;
+  const health = await (runtime.checkSession ?? checkSession)(page);
+  if (session.cancelled || !session.context.pages().includes(page)) return;
+  const latest = (runtime.getAccount ?? getAccount)(account.id);
+  if (!latest) return;
+  if (health.state === SESSION_OK && health.email &&
+      (latest.email !== health.email || latest.gptName !== (health.name ?? null))) {
+    (runtime.updateAccount ?? updateAccount)(account.id, {
+      email: health.email,
+      gptName: health.name ?? null,
+    });
+  }
+  (runtime.setCachedStatus ?? setCachedStatus)(account.id, health.state, health.email, health.detail);
+  for (const observer of statusObservers) {
+    try { observer({ accountId: account.id }); } catch { /* 不影响窗口生命周期 */ }
+  }
+}
 
 // 打开/关闭观察者。窗口是用户手动关的，只有这里知道确切时刻；
 // 早先上层靠每秒轮询 getOpenPages() 推断关闭，既慢又浪费。
@@ -208,7 +246,7 @@ export async function openPageForAccount(account, url, runtime = {}) {
         session.notifiedOpen = true;
         notifyOpenPages({ accountId: account.id, open: true, url: target, openedAt: session.openedAt });
 
-        await watchOpenSession(account, session);
+        await watchOpenSession(account, session, runtime);
       });
     } catch (e) {
       const msg = String(e.message || e);
@@ -274,7 +312,7 @@ export async function retainLoginPage(account, { context, page, release }, onRea
   }
 }
 
-async function watchOpenSession(account, session) {
+async function watchOpenSession(account, session, runtime = {}) {
   const { context } = session;
   const name = displayName(account);
   const limitMin = Number(getSettings().openPageTimeoutMinutes) || 0;
@@ -282,20 +320,17 @@ async function watchOpenSession(account, session) {
   let closed = false;
   while (!session.cancelled && Date.now() < deadline) {
     if (context.pages().length === 0) { closed = true; break; }
-    closed = await waitForContextCloseOrTimeout(
-      context, Math.min(SAMPLE_INTERVAL_MS, deadline - Date.now())
-    );
-    if (closed || session.cancelled) break;
     try {
-      const live = context.pages()[0];
-      if (!live) { closed = true; break; }
-      if (live.url().includes("chatgpt.com")) {
-        const health = await checkSession(live);
-        setCachedStatus(account.id, health.state, health.email, health.detail);
-      }
+      await sampleOpenPageSession(account, session, runtime);
     } catch {
       // 窗口可能正在关闭，忽略本次采样。
     }
+    if (context.pages().length === 0) { closed = true; break; }
+    if (session.cancelled) break;
+    closed = await waitForContextCloseOrTimeout(
+      context, Math.max(0, Math.min(SAMPLE_INTERVAL_MS, deadline - Date.now()))
+    );
+    if (closed) break;
   }
   if (!closed && !session.cancelled && limitMin > 0) {
     log.warn(`「${name}」网页窗口已开启超过 ${limitMin} 分钟（设置的兜底超时），自动关闭`);

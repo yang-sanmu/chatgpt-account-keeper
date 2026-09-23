@@ -19,6 +19,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -76,6 +80,7 @@ export const AccountCard = React.memo(({ id, onDelete }: AccountCardProps) => {
   const groups = useKeeperStore((s) => s.groups);
   const [expanded, setExpanded] = React.useState(false);
   const [pendingAction, setPendingAction] = React.useState<string | null>(null);
+  const [forceLoginOpen, setForceLoginOpen] = React.useState(false);
 
   if (!record) return null;
 
@@ -129,7 +134,7 @@ export const AccountCard = React.memo(({ id, onDelete }: AccountCardProps) => {
 
     const textToCopy = acc.email || acc.note;
     if (!textToCopy) {
-      notify.info("该账号尚未登录，暂无可复制的账号邮箱");
+      notify.info("尚未识别账号邮箱，暂无可复制的内容");
       return;
     }
 
@@ -194,7 +199,7 @@ export const AccountCard = React.memo(({ id, onDelete }: AccountCardProps) => {
                   ? `${acc.email} (点击复制账号)`
                   : acc.note
                   ? `${acc.note} (点击复制备注)`
-                  : "未登录"
+                  : "邮箱未识别"
               }
               onClick={acc.email || acc.note ? handleCopyAccount : undefined}
             >
@@ -458,7 +463,7 @@ export const AccountCard = React.memo(({ id, onDelete }: AccountCardProps) => {
                 disabled={pendingAction !== null}
                 onClick={() => handleActionClick("login", () => actions.startLogin(id, false))}
                 aria-label="登录"
-                title="登录"
+                title="登录或同步已有会话（保留登录态）"
               >
                 {pendingAction === "login" ? (
                   <Loader2 className="size-4 animate-spin text-accent" />
@@ -472,9 +477,9 @@ export const AccountCard = React.memo(({ id, onDelete }: AccountCardProps) => {
                   variant="ghost"
                   size="icon-sm"
                   disabled={pendingAction !== null}
-                  onClick={() => handleActionClick("forceLogin", () => actions.startLogin(id, true))}
+                  onClick={() => setForceLoginOpen(true)}
                   aria-label="强制重登"
-                  title="强制重登"
+                  title="清除登录态后重新登录"
                 >
                   {pendingAction === "forceLogin" ? (
                     <Loader2 className="size-4 animate-spin text-warn" />
@@ -572,6 +577,25 @@ export const AccountCard = React.memo(({ id, onDelete }: AccountCardProps) => {
           </CardFooter>
         )}
       </div>
+      <AlertDialog open={forceLoginOpen} onOpenChange={setForceLoginOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>清除登录态并重新登录？</AlertDialogTitle>
+            <AlertDialogDescription>
+              这会清除该账号浏览器中已保存的登录态，需要重新输入账号、密码及验证码。
+              如果浏览器里已经登录，请取消并使用“登录”或“刷新状态”同步现有会话。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => void handleActionClick("forceLogin", () => actions.startLogin(id, true))}
+            >
+              清除并重新登录
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Card>
   );
 });

@@ -225,6 +225,19 @@ describe("规则 3：增量事件只动那一条记录", () => {
 });
 
 describe("规则 3 的另一半：增量事件后重新应用筛选", () => {
+  it("未登录与邮箱未识别独立筛选，包含停用及待复核的未登录账号", () => {
+    const seeded = seed([
+      account({ id: "manual", email: null, status: "ok" }),
+      account({ id: "out", email: "old@example.com", status: "out", enabled: false, stale: true }),
+      account({ id: "new", email: null, status: "out" }),
+      account({ id: "uncertain", email: null, status: "unknown" }),
+    ]);
+    const pick = (status: "out" | "email_missing") => selectVisibleAccounts(
+      seeded.records, seeded.ids, { ...DEFAULT_ACCOUNT_FILTER, status }
+    ).map((r) => r.effective.id);
+    expect(pick("out")).toEqual(["out", "new"]);
+    expect(pick("email_missing")).toEqual(["manual", "new", "uncertain"]);
+  });
   it("筛选「仅需登录」时，状态转 ok 的那张卡从可见列表消失", () => {
     const seeded = seed([
       account({ id: "acc-1", status: "reauth" }),

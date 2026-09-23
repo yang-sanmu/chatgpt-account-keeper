@@ -8,6 +8,8 @@ import {
   isPageOpen,
   OPEN_PAGE_PROXY_BYPASS,
   openPageForAccount,
+  sampleOpenPageSession,
+  subscribeOpenPageStatus,
 } from "../src/openPage.js";
 import { withAccountLock } from "../src/locks.js";
 
@@ -28,6 +30,76 @@ class FakeContext extends EventEmitter {
     this.emit("close");
   }
 }
+
+test("开窗完成登录会回填邮箱并推送，跳过空白首标签页", async (t) => {
+  const account = { id: "manual-login", email: null, gptName: null };
+  const blank = { url: () => "about:blank" };
+  const page = { url: () => "https://chatgpt.com/c/test" };
+  const session = { page: blank, context: { pages: () => [blank, page] } };
+  const cached = [];
+  const changes = [];
+  const updates = [];
+  t.after(subscribeOpenPageStatus((event) => changes.push(event)));
+  const runtime = {
+    getAccount: () => account,
+    checkSession: async (target) => {
+      assert.equal(target, page);
+      return { state: "ok", email: "manual@example.com", name: "Manual", detail: null };
+    },
+    updateAccount: (id, patch) => { updates.push({ id, patch }); Object.assign(account, patch); },
+    setCachedStatus: (...args) => cached.push(args),
+  };
+  await sampleOpenPageSession(account, session, runtime);
+  await sampleOpenPageSession(account, session, runtime);
+  assert.equal(updates.length, 1, "身份不变时不重复写账号资料");
+  assert.equal(account.email, "manual@example.com");
+  assert.equal(account.gptName, "Manual");
+  assert.deepEqual(cached[0], [account.id, "ok", "manual@example.com", null]);
+  assert.equal(changes.length, 2);
+});
+
+for (const state of ["out", "reauth", "unknown"]) {
+  test(`开窗采样 ${state} 不覆盖账号身份`, async () => {
+    const account = { id: "manual-existing", email: "saved@example.com" };
+    const page = { url: () => "https://chatgpt.com/" };
+    await sampleOpenPageSession(account, { page, context: { pages: () => [page] } }, {
+      getAccount: () => account,
+      checkSession: async () => ({ state, email: "unverified@example.com" }),
+      updateAccount: () => assert.fail("不可覆盖身份"),
+      setCachedStatus: (_id, actual) => assert.equal(actual, state),
+    });
+  });
+}
+
+test("开窗探测期间关闭窗口会丢弃迟到结果", async () => {
+  const page = { url: () => "https://chatgpt.com/" };
+  let pages = [page];
+  await sampleOpenPageSession({ id: "closed" }, { page, context: { pages: () => pages } }, {
+    checkSession: async () => { pages = []; return { state: "ok", email: "late@example.com" }; },
+    updateAccount: () => assert.fail("不可写入迟到身份"),
+    setCachedStatus: () => assert.fail("不可写入迟到状态"),
+  });
+});
+
+test("打开已有会话立即采样，不必等待首个十秒周期", async (t) => {
+  const account = { id: "open-page-immediate", email: null };
+  const page = { goto: async () => {}, url: () => "https://chatgpt.com/" };
+  const context = new FakeContext(page);
+  t.after(() => closePageForAccount(account.id));
+  const observations = [];
+  const result = await openPageForAccount(account, null, {
+    launchForAccount: async () => ({ context, page }),
+    getAccount: () => account,
+    checkSession: async () => ({ state: "ok", email: "existing@example.com", name: "Existing" }),
+    updateAccount: (_id, patch) => Object.assign(account, patch),
+    setCachedStatus: (...args) => observations.push(args),
+  });
+  assert.equal(result.ok, true);
+  await waitUntil(() => observations.length > 0);
+  assert.equal(observations[0][1], "ok");
+  assert.equal(account.email, "existing@example.com");
+  assert.equal(context.closed, false);
+});
 
 async function waitUntil(predicate, timeoutMs = 500) {
   const deadline = Date.now() + timeoutMs;

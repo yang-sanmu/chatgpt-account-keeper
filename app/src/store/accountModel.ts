@@ -349,6 +349,7 @@ export type AccountStatusFilter =
   | "reauth"
   | "out"
   | "unknown"
+  | "email_missing"
   | "stale"
   | "node_missing"
   | "disabled"
@@ -418,6 +419,8 @@ function matchesStatus(account: Account, status: AccountStatusFilter): boolean {
       return !account.enabled;
     case "page_open":
       return account.pageOpen;
+    case "email_missing":
+      return !account.email?.trim();
     default:
       return account.status === status;
   }

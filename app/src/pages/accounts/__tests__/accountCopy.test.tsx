@@ -103,7 +103,7 @@ describe("账号卡片点击复制功能", () => {
 
     renderCard("acc-3");
 
-    const titleElement = screen.getByTitle("未登录");
+    const titleElement = screen.getByTitle("邮箱未识别");
     fireEvent.click(titleElement);
 
     expect(writeTextMock).not.toHaveBeenCalled();

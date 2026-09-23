@@ -160,6 +160,7 @@ describe("loggedIn 布尔量的降级映射", () => {
 
     expect(normalizeAccount({ id: "a", loggedIn: false }).status).toBe("out");
     expect(normalizeAccount({ id: "a", loggedIn: true }).status).toBe("ok");
+    expect(normalizeAccount({ id: "a", state: null, loggedIn: false }).status).toBe("unknown");
   });
 
   it("显式 state 优先于 loggedIn", async () => {

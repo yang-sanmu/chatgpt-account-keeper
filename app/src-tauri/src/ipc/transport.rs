@@ -3,6 +3,7 @@
 //! 「端点尚未创建」是启动期的**正常**结果，不是故障：Agent 在迁移大 Profile 时可能
 //! 几十秒后才开始监听。这里把它归成 `NotReady`，让上层安静重试。
 
+#[cfg(unix)]
 use std::path::Path;
 
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -60,10 +61,11 @@ pub fn is_available(endpoint: &Endpoint) -> bool {
     match endpoint.transport {
         #[cfg(windows)]
         Transport::NamedPipe => {
-            // Rust 侧不需要 C# 那套 WaitNamedPipe(name, 0) 规避首发异常刷屏的处理：
-            // 这里「不存在」就是一个普通的 Err，不是 TimeoutException，也不会在
-            // 调试器里刷 first-chance 异常。直接看路径是否存在即可。
-            Path::new(&endpoint.address).exists()
+            // Path::exists 的元数据探测可能打开命名管道，消耗唯一可用实例并产生
+            // 一个没有 hello 的空连接。WaitNamedPipe 只检查可用性，不建立连接。
+            // 不使用 0（服务端默认等待时间），把同步探测明确限制为 1ms。
+            let name = windows::core::HSTRING::from(&endpoint.address);
+            unsafe { windows::Win32::System::Pipes::WaitNamedPipeW(&name, 1).as_bool() }
         }
         #[cfg(unix)]
         Transport::UnixSocket => Path::new(&endpoint.address).exists(),

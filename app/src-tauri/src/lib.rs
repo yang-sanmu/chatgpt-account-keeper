@@ -155,7 +155,10 @@ pub fn run() {
                 let handle = handle.clone();
                 let state = Arc::clone(&state);
                 tauri::async_runtime::spawn(async move {
-                    state.connect_and_bootstrap(&handle, true).await;
+                    let snapshot = state.connect_and_bootstrap(&handle, true).await;
+                    if !snapshot.connected {
+                        state::spawn_reconnect(handle, state);
+                    }
                 });
             }
 

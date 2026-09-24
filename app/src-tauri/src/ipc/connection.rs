@@ -71,6 +71,8 @@ pub struct Connection {
     ipc_credential: String,
     client_version: String,
     client: Mutex<Option<Arc<Client>>>,
+    /// 覆盖探测、启动和等待 IPC 的整个流程，防止两个启动入口互相回收 Agent。
+    connecting: Mutex<()>,
 }
 
 impl Connection {
@@ -86,6 +88,7 @@ impl Connection {
             ipc_credential,
             client_version,
             client: Mutex::new(None),
+            connecting: Mutex::new(()),
         }
     }
 
@@ -216,6 +219,7 @@ impl Connection {
     where
         F: FnMut() -> Result<(), String>,
     {
+        let _connecting = self.connecting.lock().await;
         match self.connect(notifications.clone()).await {
             Ok(snapshot) => return snapshot,
             Err(error) => {
@@ -485,5 +489,92 @@ mod tests {
         assert!(RECONNECT_BACKOFF_SECONDS
             .windows(2)
             .all(|pair| pair[0] < pair[1]));
+    }
+
+    #[tokio::test]
+    async fn concurrent_startup_requests_launch_once_and_both_connect() {
+        use crate::ipc::frame::{read_frame, write_frame};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let id = uuid::Uuid::new_v4();
+        let address = if cfg!(windows) {
+            format!(r"\\.\pipe\keeper-startup-test-{id}")
+        } else {
+            format!("/tmp/keeper-startup-test-{id}.sock")
+        };
+        let connection = Connection::new(
+            Endpoint {
+                transport: if cfg!(windows) {
+                    crate::ipc::endpoint::Transport::NamedPipe
+                } else {
+                    crate::ipc::endpoint::Transport::UnixSocket
+                },
+                address: address.clone(),
+            },
+            &std::env::temp_dir(),
+            "test-token".into(),
+            "test".into(),
+        );
+        let started = Arc::new(tokio::sync::Notify::new());
+        let server_started = Arc::clone(&started);
+        let server_address = address.clone();
+        let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+        let server = tokio::spawn(async move {
+            server_started.notified().await;
+            // 模拟进程已经启动但 IPC 尚未就绪，两个桌面入口都会经过这个窗口。
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            #[cfg(windows)]
+            let mut stream = {
+                let pipe = tokio::net::windows::named_pipe::ServerOptions::new()
+                    .first_pipe_instance(true)
+                    .create(&server_address)
+                    .unwrap();
+                pipe.connect().await.unwrap();
+                pipe
+            };
+            #[cfg(unix)]
+            let mut stream = {
+                let listener = tokio::net::UnixListener::bind(&server_address).unwrap();
+                listener.accept().await.unwrap().0
+            };
+            let request: serde_json::Value =
+                serde_json::from_slice(&read_frame(&mut stream).await.unwrap()).unwrap();
+            assert_eq!(request["method"], "system.hello");
+            let response = serde_json::json!({
+                "id": request["id"],
+                "result": {
+                    "agentVersion": "test",
+                    "protocol": { "major": PROTOCOL_MAJOR, "minMinor": 0, "maxMinor": PROTOCOL_MINOR },
+                    "instanceId": "startup-test",
+                    "dataRoot": request["params"]["dataRoot"]
+                }
+            });
+            write_frame(&mut stream, &serde_json::to_vec(&response).unwrap())
+                .await
+                .unwrap();
+            let _ = stopped.await;
+        });
+        let starts = AtomicUsize::new(0);
+        let launch = || {
+            starts.fetch_add(1, Ordering::SeqCst);
+            started.notify_one();
+            Ok(())
+        };
+        let (sender, _receiver) = mpsc::unbounded_channel();
+        let (first, second) = tokio::time::timeout(Duration::from_secs(10), async {
+            tokio::join!(
+                connection.ensure_connected(true, sender.clone(), launch),
+                connection.ensure_connected(true, sender.clone(), launch),
+            )
+        })
+        .await
+        .unwrap();
+        assert!(first.connected, "{}", first.detail);
+        assert!(second.connected, "{}", second.detail);
+        assert_eq!(starts.load(Ordering::SeqCst), 1);
+        let _ = stop.send(());
+        server.await.unwrap();
+        #[cfg(unix)]
+        std::fs::remove_file(address).unwrap();
     }
 }

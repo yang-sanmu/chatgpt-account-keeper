@@ -1185,6 +1185,16 @@ export const useKeeperStore = create<KeeperStore>()((set, get) => {
     // -------------------------------------------------------------- 同步
     syncBootstrap: async () => {
       try {
+        if (!get().connection.connected) {
+          const connection = await connectAgent(true);
+          set({ connection });
+          if (!connection.connected) {
+            notify.error("重新连接 Agent 失败", connection.detail);
+            return;
+          }
+          notify.success("Agent 已重新连接并请求全量同步");
+          return;
+        }
         await refreshBootstrap();
         notify.success("已请求全量同步");
       } catch (error) {

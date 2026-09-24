@@ -136,7 +136,11 @@ pub async fn connect_agent(
     start: bool,
 ) -> Result<ConnectionSnapshot, ApiError> {
     // 更新/退出流程负责恢复重连，手动连接不能提前解除其抑制状态。
-    Ok(state.connect_and_bootstrap(&app, start).await)
+    let snapshot = state.connect_and_bootstrap(&app, start).await;
+    if start && !snapshot.connected {
+        crate::state::spawn_reconnect(app, Arc::clone(&state));
+    }
+    Ok(snapshot)
 }
 
 /// 手动请求一次全量快照。

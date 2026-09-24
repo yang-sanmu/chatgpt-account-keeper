@@ -33,6 +33,42 @@ beforeEach(async () => {
   await flush();
 });
 
+describe("断线后的手动恢复", () => {
+  it("离线同步会重新连接并接收新快照，不向断开的连接请求刷新", async () => {
+    tauri.emitConnection({ connected: false, status: "未连接", detail: "启动超时" });
+    tauri.calls.length = 0;
+    tauri.onInvoke("connect_agent", () => {
+      tauri.emitBootstrap(makeBootstrap({ accounts: [makeAccount({ id: "recovered" })] }));
+      return { connected: true, status: "Agent 已连接", detail: "已恢复" };
+    });
+
+    await store().syncBootstrap();
+
+    expect(store().connection.connected).toBe(true);
+    expect(store().accountIds).toEqual(["recovered"]);
+    expect(tauri.calls.find((call) => call.command === "connect_agent")?.args).toEqual({ start: true });
+    expect(tauri.calls.some((call) => call.command === "refresh_bootstrap")).toBe(false);
+  });
+
+  it("重连失败保留真实原因，不把连接显示为已恢复", async () => {
+    tauri.emitConnection({ connected: false, status: "未连接", detail: "启动超时" });
+    tauri.onInvoke("connect_agent", () => ({
+      connected: false, status: "Agent 启动失败", detail: "找不到私有 Node",
+    }));
+
+    await store().syncBootstrap();
+
+    expect(store().connection.connected).toBe(false);
+    expect(store().connection.detail).toBe("找不到私有 Node");
+  });
+
+  it("在线同步只请求快照，不重新启动 Agent", async () => {
+    tauri.calls.length = 0;
+    await store().syncBootstrap();
+    expect(tauri.calls.map((call) => call.command)).toEqual(["refresh_bootstrap"]);
+  });
+});
+
 describe("全量快照与增量事件的闭环", () => {
   it("bootstrap 填充账号、分组、会话与调度状态", () => {
     tauri.emitBootstrap(

@@ -202,15 +202,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 ) : (
                   <WifiOff className="size-3 text-danger shrink-0" />
                 )}
-                <span className="truncate">{connection.status}</span>
+                <span className="truncate" title={connection.detail}>{connection.status}</span>
               </div>
               <Button
                 variant="ghost"
                 size="icon-sm"
                 className="h-6 w-6 text-muted hover:text-primary"
                 onClick={() => void syncBootstrap()}
-                aria-label="手动同步"
-                title="手动同步状态"
+                aria-label={connection.connected ? "手动同步" : "重新连接 Agent"}
+                title={connection.connected ? "手动同步状态" : "重新连接 Agent"}
               >
                 <RefreshCw className="size-3" />
               </Button>
@@ -263,12 +263,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   size="icon"
                   className="mx-auto mt-1"
                   onClick={() => void syncBootstrap()}
-                  aria-label="手动同步"
+                  aria-label={connection.connected ? "手动同步" : "重新连接 Agent"}
                 >
                   <RefreshCw className="size-4 text-muted" />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent side="right">手动同步状态</TooltipContent>
+              <TooltipContent side="right">{connection.connected ? "手动同步状态" : "重新连接 Agent"}</TooltipContent>
             </Tooltip>
           )}
         </div>

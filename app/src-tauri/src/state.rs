@@ -46,6 +46,7 @@ pub struct AppState {
     /// 退出流程已经开始。用户在等待期间反复点击不该叠出多条关闭流程。
     pub exiting: std::sync::atomic::AtomicBool,
     notifications: mpsc::UnboundedSender<Notification>,
+    reconnecting: Arc<tokio::sync::Mutex<()>>,
 }
 
 pub struct StagedUpdate {
@@ -72,6 +73,7 @@ impl AppState {
             suppress_reconnect: std::sync::atomic::AtomicBool::new(false),
             exiting: std::sync::atomic::AtomicBool::new(false),
             notifications,
+            reconnecting: Arc::new(tokio::sync::Mutex::new(())),
         }
     }
 
@@ -95,6 +97,10 @@ impl AppState {
                     .load(std::sync::atomic::Ordering::Acquire)
                 {
                     return Err("更新或退出流程正在进行，暂不启动 Agent".into());
+                }
+                // 慢启动超过首轮等待窗口时继续等待同一进程，不能回收正在初始化的 Agent。
+                if launcher.current_is_running() {
+                    return Ok(());
                 }
                 launcher
                     .start(&endpoint, None)
@@ -155,6 +161,10 @@ pub fn spawn_event_pump(
                     state.push_bootstrap(&app).await;
                 }
                 Notification::Disconnected(failure) => {
+                    // 旧连接迟到的断线通知不能把已经恢复的新连接显示成离线。
+                    if state.connection.is_connected().await {
+                        continue;
+                    }
                     let detail = failure.unwrap_or_else(|| "Agent 已关闭 IPC 连接".to_string());
                     let _ = app.emit(
                         events::CONNECTION,
@@ -174,7 +184,7 @@ pub fn spawn_event_pump(
 }
 
 /// 断线重连。只在数据目录已经初始化过时尝试——数据库不存在说明还没走首次启动流程。
-fn spawn_reconnect(app: AppHandle, state: Arc<AppState>) {
+pub fn spawn_reconnect(app: AppHandle, state: Arc<AppState>) {
     use std::sync::atomic::Ordering;
     if state.suppress_reconnect.load(Ordering::Acquire) {
         return;
@@ -182,8 +192,13 @@ fn spawn_reconnect(app: AppHandle, state: Arc<AppState>) {
     if !state.paths.data_directory_initialized() {
         return;
     }
+    let Ok(guard) = Arc::clone(&state.reconnecting).try_lock_owned() else {
+        return;
+    };
 
     tauri::async_runtime::spawn(async move {
+        let _guard = guard;
+        // 首次失败与断线共用有限重试；持续失败交给侧栏手动重连，避免永久重启失败进程。
         for delay in RECONNECT_BACKOFF_SECONDS {
             tokio::time::sleep(std::time::Duration::from_secs(*delay)).await;
             if state.suppress_reconnect.load(Ordering::Acquire) {

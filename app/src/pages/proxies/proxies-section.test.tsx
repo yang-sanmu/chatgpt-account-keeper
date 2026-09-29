@@ -4,6 +4,7 @@ import { __resetKeeperStoreForTests, useKeeperStore } from "@/store/keeperStore"
 import { ProxiesSection } from "./proxies-section";
 import type { ProxyNode } from "@/ipc/types";
 import * as bridge from "@/ipc/bridge";
+import { parseCustomProxyInput } from "../../../../src/customProxyInput.js";
 
 beforeEach(() => {
   vi.restoreAllMocks();
@@ -48,23 +49,88 @@ it("creates a node in the add dialog without an existing id", async () => {
   const runOperation = vi.fn().mockResolvedValue({});
   useKeeperStore.setState({ runOperation });
   render(<ProxiesSection />);
-  fireEvent.click(screen.getByRole("button", { name: "新增节点" }));
+  fireEvent.click(screen.getByRole("button", { name: "新增代理" }));
   fireEvent.change(screen.getByLabelText("节点名称"), { target: { value: "新节点" } });
   fireEvent.change(screen.getByLabelText("服务器"), { target: { value: "localhost" } });
   fireEvent.click(screen.getByRole("button", { name: "保存" }));
   await waitFor(() => expect(runOperation).toHaveBeenCalledWith("proxies.saveCustom", { name: "新节点", protocol: "http", server: "localhost", port: 3000, username: "", password: "" }));
 });
 
-it("imports host-first credentials using the selected SOCKS5 protocol and clears the input", async () => {
+it("recognizes colon credentials in the merged dialog and saves manually adjusted fields only on confirmation", async () => {
   const runOperation = vi.fn().mockResolvedValue({});
   useKeeperStore.setState({ runOperation });
   render(<ProxiesSection />);
-  fireEvent.change(screen.getByLabelText("代理协议"), { target: { value: "socks5" } });
-  const input = screen.getByLabelText("自定义 HTTP / SOCKS5 代理");
-  fireEvent.change(input, { target: { value: "localhost:1080\\@user:password" } });
-  fireEvent.click(screen.getByRole("button", { name: "导入自定义代理" }));
-  await waitFor(() => expect(runOperation).toHaveBeenCalledWith("proxies.importCustom", {
-    input: "localhost:1080\\@user:password", protocol: "socks5",
-  }));
-  await waitFor(() => expect(input).toHaveValue(""));
+  expect(screen.queryByLabelText("代理字符串")).toBeNull();
+  expect(screen.queryByRole("button", { name: "导入自定义代理" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "新增代理" }));
+  fireEvent.change(screen.getByLabelText("协议"), { target: { value: "socks5" } });
+  fireEvent.change(screen.getByLabelText("代理字符串"), { target: { value: "192.0.2.1:1080:user:p@ss:word" } });
+  fireEvent.click(screen.getByRole("button", { name: "自动识别" }));
+  expect(screen.getByLabelText("服务器")).toHaveValue("192.0.2.1");
+  expect(screen.getByLabelText("端口")).toHaveValue(1080);
+  expect(screen.getByLabelText("用户名")).toHaveValue("user");
+  expect(screen.getByLabelText("密码")).toHaveValue("p@ss:word");
+  expect(screen.getByLabelText("协议")).toHaveValue("socks5");
+  expect(runOperation).not.toHaveBeenCalled();
+  fireEvent.change(screen.getByLabelText("节点名称"), { target: { value: "我的代理" } });
+  fireEvent.change(screen.getByLabelText("端口"), { target: { value: "1081" } });
+  fireEvent.click(screen.getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(runOperation).toHaveBeenCalledWith("proxies.saveCustom", {
+    name: "我的代理", protocol: "socks5", server: "192.0.2.1", port: 1081, username: "user", password: "p@ss:word",
+  });
+});
+
+it("preserves manual fields when recognition fails and clears drafts when reopened", () => {
+  const runOperation = vi.fn();
+  useKeeperStore.setState({ runOperation });
+  render(<ProxiesSection />);
+  fireEvent.click(screen.getByRole("button", { name: "新增代理" }));
+  fireEvent.change(screen.getByLabelText("服务器"), { target: { value: "manual.example.com" } });
+  fireEvent.change(screen.getByLabelText("代理字符串"), { target: { value: "192.0.2.1:70000:user:secret" } });
+  fireEvent.click(screen.getByRole("button", { name: "自动识别" }));
+  expect(screen.getByRole("alert")).toHaveTextContent("代理格式无效");
+  expect(screen.getByRole("alert")).not.toHaveTextContent("secret");
+  expect(screen.getByLabelText("服务器")).toHaveValue("manual.example.com");
+  expect(runOperation).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "取消" }));
+  fireEvent.click(screen.getByRole("button", { name: "新增代理" }));
+  expect(screen.getByLabelText("代理字符串")).toHaveValue("");
+  expect(screen.getByLabelText("服务器")).toHaveValue("");
+});
+
+it("refreshes generated names on recognition while preserving a manually entered name", () => {
+  render(<ProxiesSection />);
+  fireEvent.click(screen.getByRole("button", { name: "新增代理" }));
+  const recognize = (server: string) => {
+    fireEvent.change(screen.getByLabelText("代理字符串"), { target: { value: `${server}:1080:user:password` } });
+    fireEvent.click(screen.getByRole("button", { name: "自动识别" }));
+  };
+  recognize("192.0.2.1");
+  expect(screen.getByLabelText("节点名称")).toHaveValue("HTTP 192.0.2.1:1080");
+  recognize("192.0.2.2");
+  expect(screen.getByLabelText("节点名称")).toHaveValue("HTTP 192.0.2.2:1080");
+  fireEvent.change(screen.getByLabelText("节点名称"), { target: { value: "我的出口" } });
+  recognize("192.0.2.3");
+  expect(screen.getByLabelText("节点名称")).toHaveValue("我的出口");
+});
+
+it("recognizes mixed batch formats and atomically imports the edited forms", async () => {
+  const runOperation = vi.fn().mockResolvedValue({});
+  useKeeperStore.setState({ runOperation });
+  render(<ProxiesSection />);
+  fireEvent.click(screen.getByRole("button", { name: "新增代理" }));
+  fireEvent.change(screen.getByLabelText("代理字符串"), { target: { value: 'localhost:1080\\@user:password\nhttps://u:p%40ss@proxy.example.com:443#Office\ncurl --socks5 [::1]:1080 -U "u:p:ss"' } });
+  fireEvent.click(screen.getByRole("button", { name: "自动识别" }));
+  expect(screen.getAllByLabelText("服务器")).toHaveLength(3);
+  expect(screen.getAllByLabelText("协议").map(el => (el as HTMLSelectElement).value)).toEqual(["http", "https", "socks5"]);
+  fireEvent.change(screen.getAllByLabelText("密码")[0]!, { target: { value: "edited:@/#" } });
+  fireEvent.click(screen.getByRole("button", { name: "保存 3 条代理" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(runOperation).toHaveBeenCalledTimes(1);
+  expect(runOperation.mock.calls[0]?.[0]).toBe("proxies.importCustom");
+  const parsed = parseCustomProxyInput(runOperation.mock.calls[0]?.[1].input);
+  expect(parsed[0]?.password).toBe("edited:@/#");
+  expect(parsed[1]).toMatchObject({ name: "Office", protocol: "https", password: "p@ss", port: 443 });
+  expect(parsed[2]).toMatchObject({ server: "::1", protocol: "socks5", password: "p:ss" });
 });

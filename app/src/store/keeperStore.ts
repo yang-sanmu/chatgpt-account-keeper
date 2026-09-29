@@ -1257,10 +1257,20 @@ export const useKeeperStore = create<KeeperStore>()((set, get) => {
     },
 
     updateAgentSettings: async (patch) => {
+      // settings.get / bootstrap 还包含 schedulerEnabled 等只读状态。
+      // TypeScript 的结构类型不会移除这些运行时字段，保存时显式挑出可写配置。
+      const writableKeys = [
+        "intervalMinutes", "jitterMinutes", "headless", "statusCheckMinutes",
+        "statusCheckOnStartup", "statusCheckEnabled", "promoCheckEnabled",
+        "scheduledPromoCheckEnabled", "openPageTimeoutMinutes", "profileAutoCleanEnabled",
+      ] as const satisfies readonly (keyof NonNullable<IpcParams<"settings.update">["patch"]>)[];
+      const writablePatch = Object.fromEntries(
+        writableKeys.filter((key) => patch[key] !== undefined).map((key) => [key, patch[key]])
+      );
       try {
-        await agentCall("settings.update", { patch }, await newCommandId());
+        await agentCall("settings.update", { patch: writablePatch }, await newCommandId());
         set((state) => ({
-          agentSettings: state.agentSettings ? { ...state.agentSettings, ...patch } : null,
+          agentSettings: state.agentSettings ? { ...state.agentSettings, ...writablePatch } : null,
         }));
         notify.success("Agent 设置已保存");
       } catch (error) {

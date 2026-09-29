@@ -5,6 +5,33 @@ import { mergeProxyNodes } from "../src/proxyUtils.js";
 import { configureProxyStoreBackend, importCustom, getNodes, getSubscriptionInfo, renameCustom, removeCustom, getCustom, saveCustom } from "../src/proxyManager.js";
 import { configureStoreBackend } from "../src/store.js";
 
+test("colon-delimited credentials match URL identities and preserve password punctuation", () => {
+  for (const protocol of ["http", "socks5"]) {
+    const [node] = parseCustomProxies("192.0.2.1:1080:user:p@ss:word/#?", protocol);
+    assert.equal(node.raw.type, protocol);
+    assert.equal(node.raw.server, "192.0.2.1");
+    assert.equal(node.raw.username, "user");
+    assert.equal(node.raw.password, "p@ss:word/#?");
+    assert.equal(node.id, parseCustomProxies(`${protocol}://user:p%40ss%3Aword%2F%23%3F@192.0.2.1:1080`)[0].id);
+  }
+  assert.equal(parseCustomProxies("[::1]:1080:user:pass")[0].raw.server, "::1");
+  assert.equal(parseCustomProxies("proxy.example.com:80:user:")[0].raw.password, "");
+  for (const input of ["localhost:80:user", "localhost:80::secret", "localhost:0:user:secret", "localhost:65536:user:secret"]) {
+    assert.throws(() => parseCustomProxies(input), error => error.badRequest && !error.message.includes("secret"));
+  }
+});
+
+test("generated names retain the 200-character limit and reject a batch before persisting", async () => {
+  const server = `${"a".repeat(63)}.${"b".repeat(63)}.${"c".repeat(63)}.com`;
+  let writes = 0;
+  const restore = configureProxyStoreBackend({ readProxyStore: () => ({ nodes: [], subscription: null }), writeProxyStore: () => { writes++; } });
+  try {
+    await assert.rejects(importCustom(`localhost:80\n${server}:8080:user:secret`), error => error.badRequest && !error.message.includes("secret"));
+    assert.equal(writes, 0);
+    assert.equal(parseCustomProxies(`http://${server}:8080#Office`)[0].name, "Office");
+  } finally { restore(); }
+});
+
 test("provider host-first format supports manual protocol and literal backslash separator", () => {
   for (const separator of ["@", "\\@"]) {
     for (const protocol of ["http", "socks5"]) {

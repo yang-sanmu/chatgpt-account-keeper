@@ -206,7 +206,7 @@ test("hello negotiates major version and bootstrap contains a consistent managem
   });
   // minor 3 新增 queue.getSnapshot / browserRuns.* 与 queue.changed /
   // browserRun.changed；minMinor 仍为 0，旧客户端不受影响。
-  assert.deepEqual(hello.protocol, { major: 1, minMinor: 0, maxMinor: 3 });
+  assert.deepEqual(hello.protocol, { major: 1, minMinor: 0, maxMinor: 4 });
   assert.equal(hello.agentVersion, "test");
   assert.ok(hello.capabilities.includes("operations"));
 

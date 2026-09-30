@@ -38,6 +38,8 @@ export function createSqliteRuntimeAdapters(repository) {
   const store = {
     getAccounts: () => repository.listAccounts(),
     getAccount: (id) => repository.getAccount(id),
+    getAccountEnvironment: (id) => repository.getAccountEnvironment(id),
+    updateAccountEnvironment: (id, input, version) => repository.updateAccountEnvironment(id, input, version),
     saveAccounts(accounts) {
       const incoming = new Map(accounts.map((account) => [account.id, account]));
       repository.transaction(() => {

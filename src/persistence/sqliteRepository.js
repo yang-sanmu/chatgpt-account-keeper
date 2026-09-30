@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { MIGRATION_LEDGER_SQL, MIGRATIONS, SCHEMA_VERSION } from "./schema.js";
+import { inheritedEnvironment, validateFixedEnvironment } from "../environmentConfig.js";
 
 const require = createRequire(import.meta.url);
 const DEFAULT_RECEIPT_TTL_MS = 24 * 60 * 60 * 1000;
@@ -241,6 +242,29 @@ export class KeeperRepository {
 
   transaction(work) {
     return this.db.transaction(work)();
+  }
+
+  getAccountEnvironment(accountId) {
+    if (!this.getAccount(accountId)) return null;
+    const row = this.db.prepare("SELECT * FROM account_environments WHERE account_id = ?").get(accountId);
+    return row ? Object.freeze({ accountId, mode: row.mode, locale: row.locale, timezone: row.timezone,
+      version: row.version, updatedAt: row.updated_at }) : inheritedEnvironment(accountId);
+  }
+
+  updateAccountEnvironment(accountId, input, expectedVersion) {
+    if (!["inherit", "fixed"].includes(input?.mode)) throw Object.assign(new Error("环境模式无效"), { statusCode: 400 });
+    const next = input.mode === "inherit" ? { mode: "inherit", locale: null, timezone: null } : validateFixedEnvironment(input);
+    return this.transaction(() => {
+      const current = this.getAccountEnvironment(accountId);
+      if (!current) throw Object.assign(new Error("账号不存在"), { statusCode: 404 });
+      if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 0) throw Object.assign(new Error("环境版本无效"), { statusCode: 400 });
+      if (expectedVersion !== current.version) throw Object.assign(new Error("环境配置已变化，请刷新后重试"), { statusCode: 409 });
+      this.db.prepare(`INSERT INTO account_environments(account_id, mode, locale, timezone, version, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(account_id) DO UPDATE SET mode=excluded.mode,
+        locale=excluded.locale, timezone=excluded.timezone, version=excluded.version, updated_at=excluded.updated_at`)
+        .run(accountId, next.mode, next.locale, next.timezone, current.version + 1, iso(this.clock()));
+      return this.getAccountEnvironment(accountId);
+    });
   }
 
   purgeExpiredCommandReceipts(at = this.clock()) {
@@ -1441,13 +1465,18 @@ export async function openKeeperRepository({
         `数据库版本 ${version} 高于当前 Agent 支持的 ${SCHEMA_VERSION}`
       );
     }
-    if (existedWithData && version < SCHEMA_VERSION && backupDirectory) {
+    if (existedWithData && version < SCHEMA_VERSION) {
+      // Agent owns its single-writer lock before opening this repository; no runtime
+      // writers have started yet. A busy checkpoint aborts the migration.
+      const checkpoint = repository.checkpoint();
+      if (checkpoint?.some((entry) => entry.busy)) throw repositoryError("DATABASE_BUSY", "迁移前无法完成 checkpoint");
+      const directory = path.resolve(backupDirectory ?? path.join(path.dirname(resolved), "backups"));
       const backupPath = path.join(
-        path.resolve(backupDirectory),
+        directory,
         backupFileName(version, clock())
       );
       await repository.backupTo(backupPath);
-      removeOldBackups(path.resolve(backupDirectory), backupRetention, fsImpl);
+      removeOldBackups(directory, backupRetention, fsImpl);
     }
     repository.applyMigrations();
     const check = repository.integrityCheck();

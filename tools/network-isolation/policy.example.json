@@ -1,0 +1,23 @@
+{
+  "id": "8ec5ab70-51ea-4c51-9c73-d40ac7dfb29e",
+  "labRoot": "C:\\NetworkLab",
+  "chromePath": "C:\\NetworkLab\\chrome\\chrome.exe",
+  "groups": [
+    {
+      "id": "a",
+      "proxyPath": "C:\\NetworkLab\\a\\mihomo.exe",
+      "listenerPort": 23001,
+      "address": "192.0.2.10",
+      "port": 443,
+      "protocol": "tcp"
+    },
+    {
+      "id": "b",
+      "proxyPath": "C:\\NetworkLab\\b\\mihomo.exe",
+      "listenerPort": 23002,
+      "address": "192.0.2.20",
+      "port": 443,
+      "protocol": "udp"
+    }
+  ]
+}

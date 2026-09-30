@@ -11,6 +11,7 @@ import {
 } from "./browser.js";
 import * as defaultLog from "./logger.js";
 import { throwIfCancelled } from "./cancellation.js";
+import { STRICT_RESOLVER_ARGUMENT } from "./network/strictConfig.js";
 
 function throwIfCancelledBeforeLaunch(signal) {
   try {
@@ -123,12 +124,14 @@ export class ChromeProcessLauncher {
       throwIfCancelled(signal);
 
       // 3) 先装身份屏障并处理完既有 Target，之后才允许 Playwright attach。
-      if (headless) {
-        if (!headlessIdentity) throw new Error("缺少 Headless 浏览器身份信息");
+      if (headless && !headlessIdentity) throw new Error("缺少 Headless 浏览器身份信息");
+      if (headless || launchArgs.timezoneId || launchArgs.locale) {
         barrier = await this._installBarrier({
           endpoint,
           identity: headlessIdentity,
           accountId,
+          timezoneId: launchArgs.timezoneId,
+          locale: launchArgs.locale,
         });
       }
       throwIfCancelled(signal);
@@ -211,6 +214,7 @@ export function buildLaunchArgs({ userDataDir, launchArgs, headless, debugPort =
     if (
       arg.startsWith("--disk-cache-size=")
       || arg.startsWith("--media-cache-size=")
+      || arg === STRICT_RESOLVER_ARGUMENT
     ) {
       if (!args.includes(arg)) args.push(arg);
     }

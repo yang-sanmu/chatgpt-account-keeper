@@ -3,6 +3,63 @@
   "$id": "https://github.com/yang-sanmu/chatgpt-account-keeper/contracts/ipc-v1.methods.schema.json",
   "title": "GptAccount Keeper IPC v1 method DTOs",
   "$defs": {
+    "environmentUpdateParams": {
+      "type": "object", "additionalProperties": false,
+      "required": ["accountId", "expectedVersion", "locale", "timezone"],
+      "properties": {
+        "accountId": { "type": "string", "minLength": 1 },
+        "expectedVersion": { "type": "integer", "minimum": 0 },
+        "locale": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "timezone": { "type": "string", "minLength": 1, "maxLength": 80 }
+      }
+    },
+    "environmentResetParams": {
+      "type": "object", "additionalProperties": false,
+      "required": ["accountId", "expectedVersion"],
+      "properties": {
+        "accountId": { "type": "string", "minLength": 1 },
+        "expectedVersion": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "environmentConfiguration": {
+      "type": "object", "additionalProperties": false,
+      "required": ["accountId", "mode", "locale", "timezone", "version", "updatedAt"],
+      "properties": {
+        "accountId": { "type": "string" }, "mode": { "enum": ["inherit", "fixed"] },
+        "locale": { "type": ["string", "null"] }, "timezone": { "type": ["string", "null"] },
+        "version": { "type": "integer", "minimum": 0 },
+        "updatedAt": { "type": ["string", "null"], "format": "date-time" }
+      }
+    },
+    "environmentSnapshot": {
+      "type": "object", "additionalProperties": false,
+      "required": ["mode", "version", "groupId", "locale", "timezoneId", "localeSource", "timezoneSource"],
+      "properties": {
+        "mode": { "enum": ["inherit", "fixed"] }, "version": { "type": "integer", "minimum": 0 },
+        "groupId": { "type": ["string", "null"] }, "locale": { "type": "string" }, "timezoneId": { "type": "string" },
+        "localeSource": { "enum": ["account", "group_manual", "group_auto", "system"] },
+        "timezoneSource": { "enum": ["account", "group_manual", "group_auto", "system"] }
+      }
+    },
+    "environmentStateResult": {
+      "type": "object", "additionalProperties": false,
+      "required": ["configuration", "next", "running", "pending"],
+      "properties": {
+        "configuration": { "$ref": "#/$defs/environmentConfiguration" },
+        "next": { "$ref": "#/$defs/environmentSnapshot" },
+        "running": { "type": "array", "items": { "$ref": "#/$defs/environmentSnapshot" } },
+        "pending": { "type": "boolean" }
+      }
+    },
+    "networkCapabilitiesResult": {
+      "type": "object", "additionalProperties": false,
+      "required": ["platform", "available", "status", "reason", "message"],
+      "properties": {
+        "platform": { "type": "string" }, "available": { "const": false },
+        "status": { "const": "unavailable" }, "reason": { "const": "M1_NOT_ACCEPTED" },
+        "message": { "type": "string" }
+      }
+    },
     "emptyParams": {
       "type": "object",
       "additionalProperties": false

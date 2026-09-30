@@ -55,6 +55,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import type { SwitchRule } from "@/ipc/types";
 import type { AccountDraft } from "@/store/accountModel";
 import { describeAccountStatus, statusNeedsAttention } from "./account-status";
+import { AccountEnvironmentPanel } from "./account-environment-panel";
 
 /// 卡片内容区的固定高度（未展开「详细配置」时）。
 ///
@@ -382,6 +383,7 @@ export const AccountCard = React.memo(({ id, onDelete }: AccountCardProps) => {
             </Button>
           </CollapsibleTrigger>
           <CollapsibleContent className="space-y-2.5 pt-2">
+            {expanded && <AccountEnvironmentPanel accountId={id} />}
             <div className="space-y-1.5">
               <Label htmlFor={`note-${id}`} className="text-xs text-muted">
                 备注

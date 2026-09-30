@@ -5,6 +5,10 @@
  * 复制第二张表。返回 operationResult 的方法会由生成器自动归入 OPERATION_METHODS。
  */
 export const METHOD_CONTRACTS = Object.freeze({
+  "environments.get": ["accountIdParams", "environmentStateResult"],
+  "environments.update": ["environmentUpdateParams", "environmentStateResult"],
+  "environments.reset": ["environmentResetParams", "environmentStateResult"],
+  "network.getCapabilities": ["emptyParams", "networkCapabilitiesResult"],
   "system.hello": ["helloParams", "helloResult"],
   "system.bootstrap": ["emptyParams", "bootstrapResult"],
   "system.getActivity": ["emptyParams", "activityResult"],

@@ -29,9 +29,11 @@ pub enum ConnectError {
     Transport(#[from] TransportError),
     #[error("{0}")]
     Call(#[from] CallError),
+    #[error("{0}。请配套升级 Desktop 和 Agent")]
+    ProtocolNegotiation(String),
     #[error("协议不兼容：客户端 v{client}，Agent v{agent}")]
     ProtocolMajor { client: u32, agent: u32 },
-    #[error("协议次版本不兼容：客户端 v{major}.{requested}，Agent 支持 {major}.{min}-{max}")]
+    #[error("协议次版本不兼容：客户端 v{major}.{requested}，Agent 支持 {major}.{min}-{max}。请配套升级 Desktop 和 Agent")]
     ProtocolMinor {
         major: u32,
         requested: u32,
@@ -197,7 +199,7 @@ impl Connection {
                 None,
                 CONNECT_TIMEOUT + Duration::from_secs(5),
             )
-            .await?;
+            .await.map_err(negotiation_error)?;
         let hello: HelloResult =
             serde_json::from_value(result).map_err(|error| CallError::Decode(error.to_string()))?;
 
@@ -252,6 +254,15 @@ impl Connection {
 
 /// 重连退避序列（秒）。与 C# 版一致。
 pub const RECONNECT_BACKOFF_SECONDS: &[u64] = &[1, 2, 5, 10, 20, 30];
+
+fn negotiation_error(error: CallError) -> ConnectError {
+    if let CallError::Agent(ref agent) = error {
+        if agent.code == "PROTOCOL_MISMATCH" && agent.details.get("supported").is_some() {
+            return ConnectError::ProtocolNegotiation(agent.message.clone());
+        }
+    }
+    ConnectError::Call(error)
+}
 
 fn verify_protocol(hello: &HelloResult, major: u32, requested: u32) -> Result<(), ConnectError> {
     if hello.protocol.major != major {
@@ -312,6 +323,8 @@ mod tests {
 
     #[test]
     fn a_matching_protocol_is_accepted() {
+        verify_protocol(&hello(1, 0, 4, None), 1, 3).unwrap();
+        verify_protocol(&hello(1, 0, 4, None), 1, 4).unwrap();
         verify_protocol(&hello(1, 0, 3, None), 1, 3).unwrap();
         // Agent 支持到更高的次版本也没问题：我们请求 3，它支持 0-5。
         verify_protocol(&hello(1, 0, 5, None), 1, 3).unwrap();
@@ -328,6 +341,9 @@ mod tests {
 
     #[test]
     fn requesting_a_minor_above_the_agent_range_is_rejected() {
+        let previous_agent = verify_protocol(&hello(1, 0, 3, None), 1, 4).unwrap_err();
+        assert!(matches!(previous_agent, ConnectError::ProtocolMinor { .. }));
+        assert!(previous_agent.to_string().contains("配套升级"));
         // 我们要 3，Agent 只到 1：它没有 queue.getSnapshot / browserRuns.*，
         // 连上去之后界面会在运行期拿到 INTERNAL 而不是启动期失败。
         let error = verify_protocol(&hello(1, 0, 1, None), 1, 3).unwrap_err();
@@ -335,6 +351,16 @@ mod tests {
             matches!(error, ConnectError::ProtocolMinor { .. }),
             "{error:?}"
         );
+    }
+
+    #[test]
+    fn an_old_agent_rejecting_hello_also_requests_a_paired_upgrade() {
+        let error = negotiation_error(CallError::Agent(super::super::protocol::AgentError {
+            code: "PROTOCOL_MISMATCH".into(), message: "Agent only supports minor 3".into(),
+            retryable: false, details: serde_json::json!({"supported":{"major":1,"minor":3}}),
+        }));
+        assert!(matches!(error, ConnectError::ProtocolNegotiation(_)));
+        assert!(error.to_string().contains("配套升级"));
     }
 
     #[test]

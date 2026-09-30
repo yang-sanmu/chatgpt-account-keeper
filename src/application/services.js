@@ -58,12 +58,17 @@ import {
 } from "./errors.js";
 import { OperationRegistry } from "./operations.js";
 import { InMemoryReceiptStore, ReceiptCoordinator } from "./receipts.js";
+import { environmentSnapshot, environmentPending, validateFixedEnvironment } from "../environmentConfig.js";
+import { getBrowserEnvironmentSnapshots } from "../browser.js";
+import { getStrictNetworkCapabilities } from "../network/strictConfig.js";
 
-// minor 3 新增 queue.getSnapshot / browserRuns.list / browserRuns.close 与
-// queue.changed / browserRun.changed 事件。Desktop 侧 AgentProtocol.Minor 必须同步。
-export const PROTOCOL_VERSION = Object.freeze({ major: 1, minor: 3 });
+// minor 4 adds environment queries/edits and an explicit unavailable network capability.
+// Desktop and Agent ship together; existing DTOs and event streams are unchanged.
+export const PROTOCOL_VERSION = Object.freeze({ major: 1, minor: 4 });
 
 export const MUTATING_METHODS = new Set([
+  "environments.update",
+  "environments.reset",
   "system.prepareUpdate",
   "system.shutdown",
   "accounts.create",
@@ -135,6 +140,7 @@ export const APPLICATION_VERSION = packageVersion();
 export function createDefaultRuntime(overrides = {}) {
   return {
     store: storeModule,
+    getBrowserEnvironmentSnapshots,
     scheduler: defaultScheduler,
     proxies: proxyModule,
     profileManager: defaultProfileManager,
@@ -532,6 +538,10 @@ export class ApplicationServices {
     const add = (name, fn) => methods.set(name, fn.bind(this));
 
     add("system.hello", this._hello);
+    add("environments.get", this._environmentsGet);
+    add("environments.update", this._environmentsUpdate);
+    add("environments.reset", this._environmentsReset);
+    add("network.getCapabilities", getStrictNetworkCapabilities);
     add("system.bootstrap", this._bootstrap);
     add("system.getActivity", this._getActivity);
     add("system.prepareUpdate", this._prepareUpdate);
@@ -813,6 +823,35 @@ export class ApplicationServices {
     const context = accountViewContext(this.runtime);
     return this.runtime.store.getAccounts()
       .map((account) => publicAccount(account, this.runtime, context));
+  }
+
+  _environmentsGet(params) {
+    const accountId = requireId(params, "accountId");
+    const account = this.runtime.store.getAccount(accountId);
+    if (!account) fail(ERROR_CODES.NOT_FOUND, "账号不存在");
+    const configuration = this.runtime.store.getAccountEnvironment(accountId);
+    const group = account.groupId ? this.runtime.store.getGroup(account.groupId) : null;
+    // Queries do not run public probes or mutate automatically detected settings.
+    const region = group?.proxyId && group.timezone ? {
+      timezoneId: group.timezone,
+      locale: (!group.tzManual && localeForTimezone(group.timezone)) || group.locale || localeForTimezone(group.timezone),
+    } : {};
+    const next = environmentSnapshot({ account, environment: configuration, group, region });
+    const running = this.runtime.getBrowserEnvironmentSnapshots(accountId);
+    return { configuration, next, running, pending: running.some(current => environmentPending(current, next)) };
+  }
+
+  _environmentsUpdate(params) {
+    const accountId = requireId(params, "accountId");
+    const next = validateFixedEnvironment(params);
+    this.runtime.store.updateAccountEnvironment(accountId, next, params.expectedVersion);
+    return this._environmentsGet({ accountId });
+  }
+
+  _environmentsReset(params) {
+    const accountId = requireId(params, "accountId");
+    this.runtime.store.updateAccountEnvironment(accountId, { mode: "inherit" }, params.expectedVersion);
+    return this._environmentsGet({ accountId });
   }
 
   async _validatedGroup(groupId) {

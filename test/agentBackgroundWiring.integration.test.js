@@ -163,7 +163,7 @@ function spawnAgent(dataRoot, tempRoot, endpoint) {
 }
 
 test(
-  "真实 Agent：协议 minor 3、队列与 BrowserRun 方法可用、broker 恒为 1，shutdown 干净退出",
+  "真实 Agent：minor 3 客户端兼容 minor 4 Agent、队列与 BrowserRun 可用、broker 恒为 1，shutdown 干净退出",
   { timeout: 90_000 },
   async (t) => {
     if (process.platform === "win32" && !resolveBrokerExecutable()) {
@@ -193,7 +193,7 @@ test(
       clientVersion: "wiring-test",
       capabilities: ["events"],
     });
-    assert.equal(hello.protocol.maxMinor, 3, output());
+    assert.equal(hello.protocol.maxMinor, 4, output());
 
     // 新方法必须真的接在服务上，而不只是写进契约。
     const snapshot = await client.call("queue.getSnapshot");

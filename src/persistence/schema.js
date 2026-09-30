@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 
 const SCHEMA_V1 = String.raw`
 CREATE TABLE IF NOT EXISTS command_receipts (
@@ -376,6 +376,21 @@ ALTER TABLE app_settings ADD COLUMN scheduled_promo_check_enabled INTEGER NOT NU
   CHECK (scheduled_promo_check_enabled IN (0, 1));
 `;
 
+// Independent environment management can ship before the M1 network gate.
+// Strict network policy/journal tables will be appended with the verified runtime.
+const SCHEMA_V7 = String.raw`
+CREATE TABLE account_environments (
+  account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON UPDATE CASCADE ON DELETE CASCADE,
+  mode TEXT NOT NULL CHECK (mode IN ('inherit', 'fixed')),
+  locale TEXT,
+  timezone TEXT,
+  version INTEGER NOT NULL CHECK (version > 0),
+  updated_at TEXT NOT NULL,
+  CHECK ((mode = 'inherit' AND locale IS NULL AND timezone IS NULL)
+    OR (mode = 'fixed' AND length(locale) > 0 AND length(timezone) > 0))
+);
+`;
+
 export const MIGRATIONS = Object.freeze([
   Object.freeze({
     version: 1,
@@ -403,6 +418,7 @@ export const MIGRATIONS = Object.freeze([
   }),
   Object.freeze({ version: 5, name: "opt-in-automation", sql: SCHEMA_V5, checksum: createHash("sha256").update(SCHEMA_V5).digest("hex") }),
   Object.freeze({ version: 6, name: "scheduled-promo-check", sql: SCHEMA_V6, checksum: createHash("sha256").update(SCHEMA_V6).digest("hex") }),
+  Object.freeze({ version: 7, name: "account-environments", sql: SCHEMA_V7, checksum: createHash("sha256").update(SCHEMA_V7).digest("hex") }),
 ]);
 
 export const MIGRATION_LEDGER_SQL = String.raw`

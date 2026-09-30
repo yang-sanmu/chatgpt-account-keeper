@@ -7,11 +7,13 @@ import path from "node:path";
 import WebSocket from "ws";
 import { fromRoot, ensureDir } from "./paths.js";
 import { proxyForAccount, ensureRunning } from "./proxyManager.js";
-import { getAccount, effectiveProxyId } from "./store.js";
+import { getAccount, effectiveProxyId, getAccountEnvironment, getGroup } from "./store.js";
 import { resolveRegionForAccount } from "./geo.js";
+import { environmentSnapshot } from "./environmentConfig.js";
 import { scheduleProfileCacheMaintenance } from "./profileMaintenance.js";
 import { replaceFileSync } from "./atomicFile.js";
 import { throwIfCancelled } from "./cancellation.js";
+import { STRICT_RESOLVER_ARGUMENT } from "./network/strictConfig.js";
 import * as log from "./logger.js";
 
 /**
@@ -57,6 +59,10 @@ const HEADLESS_UA_HIGH_ENTROPY_HINTS = [
 // Headless 任务。记录归属后，明确的用户交互可以只关闭同账号的后台 Context，
 // 不影响其它账号，也不会误关登录/手动打开的有头窗口。
 const activeBrowserContexts = new Map();
+export function getBrowserEnvironmentSnapshots(accountId) {
+  return [...activeBrowserContexts.values()].filter(item => item.accountId === accountId && item.environment)
+    .map(item => item.environment);
+}
 let browserShutdownRequested = false;
 
 /**
@@ -374,7 +380,7 @@ export async function waitForDevToolsEndpoint(
   throw error;
 }
 
-class RawCdpConnection {
+export class RawCdpConnection {
   constructor(socket) {
     this.socket = socket;
     this.nextId = 0;
@@ -690,7 +696,14 @@ async function installHeadlessTargetIdentity(
  *
  * 返回 barrier：attachContext(context) 用于接上 fail-closed 关闭路径，close() 释放连接。
  */
-export async function installIdentityBarrierOnEndpoint({ endpoint, identity, accountId }) {
+export async function installIdentityBarrierOnEndpoint({ endpoint, identity, accountId, timezoneId, locale }) {
+  if (endpoint.startsWith("http:")) {
+    const address = new URL(endpoint);
+    if (address.hostname !== "127.0.0.1") throw new Error("CDP 必须使用本机端点");
+    const response = await fetch(new URL("/json/version", address), { signal: AbortSignal.timeout(5000) });
+    if (!response.ok) throw new Error("无法读取 CDP 端点");
+    endpoint = (await response.json()).webSocketDebuggerUrl;
+  }
   const connection = await RawCdpConnection.connect(endpoint);
   const activeJobs = new Set();
   let installing = true;
@@ -717,29 +730,44 @@ export async function installIdentityBarrierOnEndpoint({ endpoint, identity, acc
   };
 
   const autoAttach = { autoAttach: true, waitForDebuggerOnStart: true, flatten: true };
-  const override = {
+  const override = identity ? {
     userAgent: identity.userAgent,
     platform: identity.platform,
     ...(identity.metadata ? { userAgentMetadata: identity.metadata } : {}),
-  };
+  } : null;
 
   const prepareTarget = async ({ sessionId, targetInfo }) => {
     const nestedAutoAttachCommand =
       targetInfo.type === "page" || targetInfo.type === "iframe"
         ? connection.send("Target.setAutoAttach", autoAttach, sessionId)
         : Promise.resolve();
-    const identityCommand = IDENTITY_TARGET_TYPES.has(targetInfo.type)
+    const identityCommand = override && IDENTITY_TARGET_TYPES.has(targetInfo.type)
       ? connection.send("Emulation.setUserAgentOverride", override, sessionId)
       : Promise.resolve();
+    const isFrame = targetInfo.type === "page" || targetInfo.type === "iframe";
+    const timezoneCommand = isFrame && timezoneId
+      ? connection.send("Emulation.setTimezoneOverride", { timezoneId }, sessionId) : Promise.resolve();
+    // Multiple pages can share a renderer's ICU locale. Every target of this
+    // browser uses this one immutable locale; accept only Chromium's exact
+    // duplicate-override response (the same case handled by Playwright).
+    const localeCommand = isFrame && locale
+      ? connection.send("Emulation.setLocaleOverride", { locale }, sessionId).catch(error => {
+        if (error.code === -32000 && error.cdpMessage === "Another locale override is already in effect") return;
+        throw error;
+      }) : Promise.resolve();
     const resumeCommand = connection.send("Runtime.runIfWaitingForDebugger", {}, sessionId);
-    const [nested, identityResult, resumeResult] = await Promise.allSettled([
+    const [nested, identityResult, timezoneResult, localeResult, resumeResult] = await Promise.allSettled([
       nestedAutoAttachCommand,
       identityCommand,
+      timezoneCommand,
+      localeCommand,
       resumeCommand,
     ]);
     for (const [result, label] of [
       [nested, "子层身份屏障安装"],
       [identityResult, "UA-CH 初始化"],
+      [timezoneResult, "时区初始化"],
+      [localeResult, "语言初始化"],
       [resumeResult, "恢复运行"],
     ]) {
       if (result.status === "rejected" && !isMissingCdpSessionError(result.reason)) {
@@ -773,6 +801,7 @@ export async function installIdentityBarrierOnEndpoint({ endpoint, identity, acc
     if (message.method === "Target.attachedToTarget") startJob(message.params);
   });
   connection.onUnexpectedClose((error) => {
+    installError ??= error;
     scheduleIdentityShutdown(
       `账号 ${accountId} 浏览器身份保护连接中断，关闭本次浏览器：${error.message}`
     );
@@ -802,6 +831,10 @@ export async function installIdentityBarrierOnEndpoint({ endpoint, identity, acc
   return {
     attachContext(target) {
       context = target;
+      if (installError || closed) {
+        target.close().catch(() => {});
+        throw installError ?? new Error("浏览器初始化保护连接已关闭");
+      }
       target.once("close", () => {
         closed = true;
         if (shutdownTimer) clearTimeout(shutdownTimer);
@@ -1027,7 +1060,8 @@ export function buildInteractiveChromeArgs({
   for (const arg of launchArgs.args ?? []) {
     if (
       arg.startsWith("--disk-cache-size=") ||
-      arg.startsWith("--media-cache-size=")
+      arg.startsWith("--media-cache-size=") ||
+      arg === STRICT_RESOLVER_ARGUMENT
     ) {
       if (!args.includes(arg)) args.push(arg);
     }
@@ -1392,6 +1426,7 @@ export async function launchForAccount(account, opts = {}) {
   const userDataDir = ensureDir(fromRoot(liveAccount.profileDir));
 
   const launchArgs = baseLaunchArgs(headless);
+  const environment = getAccountEnvironment(liveAccount.id);
   let headlessIdentity = null;
 
   // 定向代理：账号所属分组绑了节点就走该节点的本地端口，否则走系统默认网络。
@@ -1409,13 +1444,15 @@ export async function launchForAccount(account, opts = {}) {
         `账号所属分组绑定的代理节点不可用（可能已停用或不在订阅中），请到分组管理里重新选择节点`
       );
     }
-
-    // 时区/语言跟着出口走：境外 IP 配本机东八区时区是明显的不一致信号。
-    // 探测失败就沿用默认，不阻断登录。
-    const region = await resolveRegionForAccount(liveAccount);
-    if (region.timezoneId) launchArgs.timezoneId = region.timezoneId;
-    if (region.locale) launchArgs.locale = region.locale;
   }
+
+  // A fixed account environment survives group/output changes. Inheritance keeps
+  // the existing manual/automatic group resolver; failed probes remain retryable.
+  const region = environment.mode === "fixed" ? {} : await resolveRegionForAccount(liveAccount);
+  const snapshot = environmentSnapshot({ account: liveAccount, environment,
+    group: liveAccount.groupId ? getGroup(liveAccount.groupId) : null, region });
+  launchArgs.timezoneId = snapshot.timezoneId;
+  launchArgs.locale = snapshot.locale;
 
   // 即使没有绑定私有节点，Chrome 也可能跟随系统 HTTP 代理；WebRTC UDP 不会
   // 自动跟随该代理，因此账号 Profile 必须统一使用原生防漏偏好。
@@ -1455,14 +1492,12 @@ export async function launchForAccount(account, opts = {}) {
     activeBrowserContexts.set(launched.context, {
       accountId: liveAccount.id,
       headless: !!headless,
+      environment: snapshot,
     });
     launched.context.once("close", () => {
       activeBrowserContexts.delete(launched.context);
       if (!browserShutdownRequested) scheduleProfileCacheMaintenance(liveAccount.id);
     });
-    if (!headless && launchArgs.timezoneId) {
-      await applyInteractiveTimezone(launched.context, launched.page, launchArgs.timezoneId);
-    }
     return launched;
   }
 
@@ -1483,6 +1518,7 @@ export async function launchForAccount(account, opts = {}) {
   activeBrowserContexts.set(context, {
     accountId: liveAccount.id,
     headless: !!headless,
+    environment: snapshot,
   });
   context.once("close", () => {
     activeBrowserContexts.delete(context);

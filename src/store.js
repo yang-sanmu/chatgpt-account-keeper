@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { fromRoot, ensureDir } from "./paths.js";
 import { normalizeSettings } from "./statusSettings.js";
 import * as log from "./logger.js";
+import { inheritedEnvironment } from "./environmentConfig.js";
 
 // 可读写的配置存储。account/conversation 增删改都经过这里并落盘。
 const ACCOUNTS_FILE = fromRoot("config/accounts.json");
@@ -24,6 +25,7 @@ const detectedRegionListeners = new Set();
 // 任何请求可达之前完成配置，所以这里把"写之后再切换"直接判为编程错误。
 let backendWriteObserved = false;
 const WRITE_METHODS = new Set([
+  "updateAccountEnvironment",
   "saveAccounts",
   "addAccount",
   "updateAccount",
@@ -58,6 +60,17 @@ export function configureStoreBackend(backend) {
 
 export function getConfiguredStoreBackend() {
   return configuredBackend;
+}
+
+export function getAccountEnvironment(accountId) {
+  const result = backendCall("getAccountEnvironment", [accountId]);
+  return result.handled ? result.value : inheritedEnvironment(accountId);
+}
+
+export function updateAccountEnvironment(accountId, input, expectedVersion) {
+  const result = backendCall("updateAccountEnvironment", [accountId, input, expectedVersion]);
+  if (!result.handled) throw new Error("账号环境编辑需要使用 SQLite Agent");
+  return result.value;
 }
 
 export function subscribeDetectedRegion(listener) {

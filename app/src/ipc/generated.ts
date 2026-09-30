@@ -58,6 +58,10 @@ export type OperationArray = Operation[];
  * via the `definition` "method".
  */
 export type Method =
+  | "environments.get"
+  | "environments.update"
+  | "environments.reset"
+  | "network.getCapabilities"
   | "system.hello"
   | "system.bootstrap"
   | "system.getActivity"
@@ -244,6 +248,12 @@ export type Event =
     });
 
 export interface KeeperIPCV1GeneratedSchema {
+  environmentUpdateParams?: EnvironmentUpdateParams;
+  environmentResetParams?: EnvironmentResetParams;
+  environmentConfiguration?: EnvironmentConfiguration;
+  environmentSnapshot?: EnvironmentSnapshot;
+  environmentStateResult?: EnvironmentStateResult;
+  networkCapabilitiesResult?: NetworkCapabilitiesResult;
   emptyParams?: EmptyParams;
   openPageMap?: OpenPageMap;
   loginTaskResult?: LoginTaskResult;
@@ -319,6 +329,70 @@ export interface KeeperIPCV1GeneratedSchema {
   schedulerAccountChangedPayload?: SchedulerAccountChangedPayload;
   event?: Event;
   operation?: Operation;
+}
+/**
+ * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
+ * via the `definition` "environmentUpdateParams".
+ */
+export interface EnvironmentUpdateParams {
+  accountId: string;
+  expectedVersion: number;
+  locale: string;
+  timezone: string;
+}
+/**
+ * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
+ * via the `definition` "environmentResetParams".
+ */
+export interface EnvironmentResetParams {
+  accountId: string;
+  expectedVersion: number;
+}
+/**
+ * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
+ * via the `definition` "environmentConfiguration".
+ */
+export interface EnvironmentConfiguration {
+  accountId: string;
+  mode: "inherit" | "fixed";
+  locale: string | null;
+  timezone: string | null;
+  version: number;
+  updatedAt: string | null;
+}
+/**
+ * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
+ * via the `definition` "environmentSnapshot".
+ */
+export interface EnvironmentSnapshot {
+  mode: "inherit" | "fixed";
+  version: number;
+  groupId: string | null;
+  locale: string;
+  timezoneId: string;
+  localeSource: "account" | "group_manual" | "group_auto" | "system";
+  timezoneSource: "account" | "group_manual" | "group_auto" | "system";
+}
+/**
+ * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
+ * via the `definition` "environmentStateResult".
+ */
+export interface EnvironmentStateResult {
+  configuration: EnvironmentConfiguration;
+  next: EnvironmentSnapshot;
+  running: EnvironmentSnapshot[];
+  pending: boolean;
+}
+/**
+ * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
+ * via the `definition` "networkCapabilitiesResult".
+ */
+export interface NetworkCapabilitiesResult {
+  platform: string;
+  available: false;
+  status: "unavailable";
+  reason: "M1_NOT_ACCEPTED";
+  message: string;
 }
 /**
  * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
@@ -1161,6 +1235,10 @@ export interface SchedulerAccountChangedPayload {
 }
 
 export interface IpcMethodContracts {
+  "environments.get": { params: AccountIdParams; result: EnvironmentStateResult };
+  "environments.update": { params: EnvironmentUpdateParams; result: EnvironmentStateResult };
+  "environments.reset": { params: EnvironmentResetParams; result: EnvironmentStateResult };
+  "network.getCapabilities": { params: Record<string, never>; result: NetworkCapabilitiesResult };
   "system.hello": { params: HelloParams; result: HelloResult };
   "system.bootstrap": { params: Record<string, never>; result: BootstrapResult };
   "system.getActivity": { params: Record<string, never>; result: ActivityResult };

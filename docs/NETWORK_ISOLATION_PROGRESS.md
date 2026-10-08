@@ -19,7 +19,7 @@
 | 项目 | 当前实现 | 验收边界 |
 | --- | --- | --- |
 | 严格配置编译器 | 选定节点、数值上游地址、保留 SNI/WS Host、随机入口凭据、非空 users、MATCH,REJECT、DoH 经 upstream、拒绝未知端点配置 | 未接入生产代理管理；未验证真实外部协议/DNS |
-| CDP 统一初始化 | 一个原始 CDP 连接统一认证、身份、环境及目标附加；固定入口/凭据快照，错误和无响应触发关闭 | 本地 HTTP/WS、页面及 Worker 初始环境已测；未接入产品，完整矩阵未通过 |
+| CDP 统一初始化 | 一个原始 CDP 连接统一认证、身份、环境及目标附加；固定入口/凭据快照，错误和无响应触发关闭，主动退出有独立状态 | 本地 HTTP/WS、HTTPS/WSS、页面、OOPIF、Worker 初始环境及双组并发已测；未接入产品，完整矩阵未通过 |
 | Chrome 启动参数 | 两条参数生成路径允许精确的 resolver 规则；严格参数构造器移除隐式回环绕过 | 普通模式不加严格参数；无 WFP 时不宣称禁止直连 |
 | WFP NativeAOT 工具 | 独立 provider/sublayer、持久化默认拒绝、动态会话双端放行/撤销、绑定归属规则、事务与显式清理；覆盖清单内所有 Chrome exe，增加哈希和端口预检查 | 构建及无 WFP 写入的自检/真实副本预检查通过；入站与控制通道未完成，未安装或实测规则 |
 | Chrome 路径实验 | 完整复制安装目录；同一全新测试 Profile 先原路径重启，再副本路径重启 | 合成登录 Cookie/LocalStorage/IndexedDB 保留；v10 Cookie 不覆盖应用绑定加密迁移 |
@@ -79,6 +79,22 @@ NativeAOT 发布、`selftest`、示例结构校验、主机端口只读查询及
 
 随后全量 Node 回归 657 项：650 通过、7 跳过、0 失败、0 取消，约 71 秒。报告为 `artifacts/network-lab/m1-prototype-refinement-node.tap`；其中网络实验默认跳过，以上 3 项显式开启的实测单独记录。前端、Rust 与 IPC 代码本轮未改动，未将此前结果标成新的复测。
 
+## HTTPS 与双组认证矩阵（2026-10-08）
+
+新增 `networkAuthMatrix.integration.test.js`，分别以有头和后台模式运行两组真实 Chrome、两个 mihomo 及两条可辨识的本地转发链路。两组访问同一 HTTPS 源站，验证首次 CONNECT 认证、WSS、Cookie/Local Storage 独立、不同语言时区；跨站 iframe 使用两个数值回环站点，开启 `--site-per-process` 后还要确认确实出现 `iframe` 类型的 CDP Target，不能仅以 DOM 中有 iframe 作为覆盖证据。
+
+HTTPS 夹具在全新测试 Profile 的证书库中信任本次临时 CA，不导入 Windows 证书库，不使用忽略证书错误的参数。不可信 CA 和主机名错误分别必须产生对应的 Chrome 证书错误，同时不能被误判成代理认证失败。测试 CA 私钥仅在生成进程内存在，站点私钥在结束时删除。Profile 证书库按 Chromium schema 1 构造，属于版本相关的测试夹具，不是生产证书安装方案。本轮只证明 HTTPS 网页经 HTTP 上游代理的链路，未证明 HTTPS 类型上游节点的 TLS/SNI 兼容。
+
+换组用例暴露并修复了原型中的关闭竞争：直接发送 `Browser.close` 后，正常 CDP 断开触发 `onFailure`，立即终止 Job，可能抢在 Cookie 落盘前结束 Chrome。失败报告 `matrix-2WiCzB/report.json` 保留了 Cookie 丢失复现。新增 `requestBrowserClose()` 保持认证处理并进入 `closing`，正常断开不再触发该强杀；Job 清零仍由调用方独立确认，不能以 CDP 消失代替。未请求关闭的断连仍故障关闭，请求关闭后连接尚在但没有命令回执仍报错。只修正实验原型，未替换普通模式的关闭实现。
+
+错误凭据用例还发现：mihomo 1.19.29 对提交的错误凭据返回 403，而不是再次给出 407。[对应实现](https://github.com/MetaCubeX/mihomo/blob/v1.19.29/listener/http/proxy.go#L141) Chrome 将 CONNECT 的这类失败报告为 `ERR_TUNNEL_CONNECTION_FAILED`，原屏障只等下一次认证挑战，因此没有主动关闭。现在将该错误与本屏障刚提交凭据且尚未完成的请求关联，按认证链路未确认处理并关闭；不把所有隧道或站点证书错误都当成密码错误。`matrix-Qw6ODP`、`matrix-toKbv3`、`matrix-HL1GOZ` 保存了失败对照，报告只记录白名单错误码和计数。
+
+扩展矩阵包括：入口与快照不符时不提供密码；入口匹配但使用另一组凭据时不进入上游；上述失败不影响另一组浏览器；旧 Job 清零后复用测试 Profile 换组，Cookie 保留并重新认证。测试中的手工关闭/换组顺序不等于生产变更协调器已经完成。普通 HTTP 的 403 仍需区分代理认证拒绝与业务站点拒绝，这一项不能从 CONNECT 用例推定通过。
+
+最终显式运行新旧认证实验 4/4 通过，约 95 秒；报告为 `artifacts/network-lab/auth-matrix-complete.tap`。扩展矩阵的有头/后台原始报告分别是 `matrix-xOzB0c/report.json`、`matrix-YA3Pcv/report.json`，原 HTTP/WS/Worker 回归分别是 `auth-CTkvct/report.json`、`auth-W1RDCi/report.json`。每个扩展矩阵有 11 项检查，所有测试浏览器 Job 均确认清零；源站观察到的请求均由本测试代理转发，未收到代理密码。这只是明确测试目标的正反对照，不是主机全流量无泄漏证明。10 项屏障单元测试通过，其中新增主动关闭正常断开、关闭命令卡住和关联 CONNECT 错误的回归。
+
+随后全量 Node 回归 662 项：653 通过、9 跳过、0 失败、0 取消，约 73 秒，结果位于 `artifacts/network-lab/auth-matrix-node-regression.tap`。额外的两个跳过项为默认需要显式开启的新矩阵。本轮没有更改 WFP 工具、前端或 Rust，未重跑对应构建与测试；没有写入系统网络规则或系统证书库，严格模式能力仍不可用。
+
 ## 未通过的门槛与后续顺序
 
 **M1 仍未通过，暂停严格模式产品集成。** 尚缺：
@@ -86,8 +102,8 @@ NativeAOT 发布、`selftest`、示例结构校验、主机端口只读查询及
 - 独立 Windows 环境中的 WFP 双端约束、绑定条件与优先级、既有流重新授权、缓冲上传冻结、动态会话崩溃清理、VPN/IPv6/休眠/端口抢占与资源循环实测；NIC 抓包不能独自证明回环或其它虚拟路径。
 - Profile 守卫的生产准入锁及所支持 Profile 的真实路径切换/版本升级兼容证明。首版可拒绝应用绑定加密 Profile，不要求必须实现 v20 迁移；已有格式检查和合成登录实验不能证明所有账号迁移安全。Chrome 辅助程序的运行兼容及更新路径覆盖仍待验收。
 - AUTH_LISTEN/AUTH_RECV_ACCEPT 入站限制、精确控制通道、端口预留与绑定竞争处理、持久化绑定规则回收。清单和只读端口检查已补齐原型，但不能推定实际过滤规则有效。
-- 统一初始化原型与 Playwright 的完整附加矩阵、请求拦截性能、真实 CDP 无响应和 Agent 卡死的状态语义。目前只在实验内运行统一屏障，命令无响应使用模拟连接验证；尚未做 ChatGPT 加载性能基线，也未接入产品。
-- HTTPS CONNECT/WSS、跨站 OOPIF、认证缓存清除后 Worker 首次挑战、两个真实 Chrome 分组并发等完整认证矩阵。
+- 统一初始化原型与 Playwright 的完整附加矩阵、请求拦截性能、真实 CDP 无响应和 Agent 卡死的状态语义。目前只在实验内运行统一屏障，命令无响应使用模拟连接验证；尚未做 ChatGPT 加载性能基线、用户手动关闭窗口的落盘验证，也未接入产品。
+- 认证缓存清除后 Worker/WSS 的首次挑战、HTTP 403 认证结果确认、真实网络端点及更广的附加顺序。已有本地 HTTPS CONNECT/WSS、真实 OOPIF 与双组并发通过项不能覆盖这些条件。
 - 上游协议的真实连接集合与 TLS/SNI/Host 验证。目前只有本地 HTTP 上游跑通；AnyTLS、Hysteria2、TUIC、VMess/WS、HTTPS、SOCKS5 的编译器测试不算兼容验收。VLESS/XHTTP 当前明确拒绝，待适配和实测；不影响普通模式。
 
 M1 通过后才实施：受限身份 Windows 服务与安装器、受保护运行目录和产物校验、跨用户/会话管道认证、每组运行代次及回收、DNS 固定地址管理、统一变更协调器、强事务日志和崩溃恢复、其余 network IPC、严格模式界面、完整自部署诊断服务及 M4 发行验收。这些功能本次未实现，不应通过能力开关对用户开放。

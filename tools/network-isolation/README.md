@@ -57,12 +57,24 @@ pktmon etl2pcap C:\NetworkLab\capture.etl --out C:\NetworkLab\capture.pcapng
 ```powershell
 $env:GPT_ACCOUNT_NETWORK_LAB = '1'
 node --test --test-concurrency=1 test/networkAuth.integration.test.js test/networkRuntime.integration.test.js test/browserEnvironment.integration.test.js
+# HTTPS/WSS、真实跨进程 iframe、双组并发与关闭后换组；另需 PowerShell 7。
+node --test --test-concurrency=1 test/networkAuthMatrix.integration.test.js
 Remove-Item Env:GPT_ACCOUNT_NETWORK_LAB
 ```
 
 需要先构建 `tools/chrome-launcher`，安装 Google Chrome，并准备 `artifacts/release-input/mihomo/mihomo-windows-amd64-compatible.exe`。可通过 `GPT_ACCOUNT_NETWORK_LAB_MIHOMO` 指定测试 mihomo。测试上游只允许该测试自己的回环源站，不转发其他目的地。
 
-认证脚本使用 `installBrowserStartupBarrier` 将身份、环境和代理认证放入一个原始 CDP 连接，由它统一自动附加目标；Playwright 仍有自己的控制连接。该原型尚未接入产品，不能同时给同一次运行再安装旧身份屏障。脚本覆盖无/错/跨组凭据、第一页面、网站 401、popup、同源 iframe、WS、三类 Worker、CDP 断开触发 Job 清零。它尚不覆盖真实 HTTPS/WSS、跨站 OOPIF、认证缓存清除后 Worker 的首次挑战、真实两组 Chrome 同时运行及 WFP 端口抢占，也没有给出 ChatGPT 页面加载性能基线。
+认证脚本使用 `installBrowserStartupBarrier` 将身份、环境和代理认证放入一个原始 CDP 连接，由它统一自动附加目标；Playwright 仍有自己的控制连接。该原型尚未接入产品，不能同时给同一次运行再安装旧身份屏障。原脚本覆盖无/错/跨组凭据、第一页面、网站 401、popup、同源 iframe、WS、三类 Worker、CDP 断开触发 Job 清零。
+
+`networkAuthMatrix.integration.test.js` 扩展 HTTPS CONNECT、WSS、跨站 OOPIF 和两组 Chrome 同时运行。各组使用不同代理、凭据和环境，在同一测试 HTTPS 站点验证 Cookie/Local Storage 隔离；源站按实际转发连接标识组别，不能仅凭浏览器配置推断出口。两个数值回环站点用于跨站 iframe，测试启用 `--site-per-process`，并断言确有 `iframe` 类型的 CDP Target。入口与快照不符、匹配入口但凭据来自另一组，均要求在到达上游前拒绝并关闭。旧 Job 清零后再复用测试 Profile 换组，校验 Cookie 保留与重新认证，以及另一组继续可用。
+
+TLS 测试每次在内存生成有效期一天的临时 CA 和有效期 12 小时的站点证书，只向新建测试 Profile 的 `Default/ServerCertificate` 写入该 CA。该测试夹具依据 Chromium 的 [数据库实现](https://chromium.googlesource.com/chromium/src/+/main/components/server_certificate_database/server_certificate_database.cc) 和 [信任元数据定义](https://chromium.googlesource.com/chromium/src/+/main/components/server_certificate_database/server_certificate_database.proto)，依赖当前 schema 1，并非生产证书管理接口。不写 Windows/用户系统证书库，不使用忽略证书错误参数；不受信任的证书和主机名错误必须仍被 Chrome 拒绝。测试退出时删除生成的站点私钥，CA 私钥只在生成进程内存在。它验证的是 HTTPS 网页经 HTTP 上游代理的认证链路，不能替代 HTTPS 类型上游节点的 TLS/SNI 验收。
+
+计划内主动关闭须调用统一屏障的 `requestBrowserClose()`，它保持认证处理并将状态改为 `closing`，避免正常 CDP 断开触发过早的 Job 强杀。随后仍须有界等待 Job 清零、失败时兜底回收，得到证明后才 `barrier.close()` 和复用 Profile。该方法不证明网络冻结或进程关闭；未请求关闭的 CDP 断开，以及请求关闭后通道仍连接但无响应，继续走故障处理。用户手动关闭窗口的生命周期接入仍待验证。
+
+错误凭据不一定触发第二次认证挑战：[mihomo 1.19.29](https://github.com/MetaCubeX/mihomo/blob/v1.19.29/listener/http/proxy.go#L141) 返回 403 后，Chrome 的 CONNECT 请求可能直接产生 `ERR_TUNNEL_CONNECTION_FAILED`。原型关联本次凭据提交与尚未完成的请求，发生这种隧道失败就停止该次运行；这不代表所有隧道错误都能判定为密码错误。普通 HTTP 的 403 还需区分入口拒绝与业务站点拒绝，当前 CONNECT 测试不能覆盖它。
+
+尚未覆盖认证缓存清除后 Worker/WSS 的首次挑战、真实网络端点、WFP 端口抢占，也没有给出 ChatGPT 页面加载性能基线；不得把本地测试通过扩大成完整认证或网络保护门槛通过。
 
 页面请求等待初始化回执；Service Worker 安装阶段的 fetch 有不同约束：Fetch 认证拦截和递归附加必须先确认，随后将身份与观察命令按序排入同一通道，再允许请求继续，以免安装 fetch 和初始化回执互相等待。后续命令错误或无响应仍触发关闭处理；不能将“命令已经发出”记录成“网络已经冻结”。
 

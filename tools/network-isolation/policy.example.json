@@ -2,10 +2,15 @@
   "id": "8ec5ab70-51ea-4c51-9c73-d40ac7dfb29e",
   "labRoot": "C:\\NetworkLab",
   "chromePath": "C:\\NetworkLab\\chrome\\chrome.exe",
+  "chromePrograms": [
+    { "path": "C:\\NetworkLab\\chrome\\chrome.exe", "sha256": "0000000000000000000000000000000000000000000000000000000000000000" },
+    { "path": "C:\\NetworkLab\\chrome\\helper.exe", "sha256": "1111111111111111111111111111111111111111111111111111111111111111" }
+  ],
   "groups": [
     {
       "id": "a",
       "proxyPath": "C:\\NetworkLab\\a\\mihomo.exe",
+      "proxySha256": "2222222222222222222222222222222222222222222222222222222222222222",
       "listenerPort": 23001,
       "address": "192.0.2.10",
       "port": 443,
@@ -14,6 +19,7 @@
     {
       "id": "b",
       "proxyPath": "C:\\NetworkLab\\b\\mihomo.exe",
+      "proxySha256": "2222222222222222222222222222222222222222222222222222222222222222",
       "listenerPort": 23002,
       "address": "192.0.2.20",
       "port": 443,

@@ -11,22 +11,27 @@ dotnet publish tools/network-isolation/NetworkIsolation.csproj -c Release -r win
 $lab = (Resolve-Path tools/network-isolation/bin/Release/net10.0-windows/win-x64/publish/network-isolation-lab.exe).Path
 & $lab selftest
 & $lab validate tools/network-isolation/policy.example.json
+& $lab ports
 ```
 
-`selftest` 验证 Windows SDK 10.0.26100.0 的 x64 ABI、稳定资源键与路径拒绝；不打开 WFP。`validate` 只解析配置，不证明网络保护有效。示例中的 TEST-NET 地址不可作为实际代理使用。
+`selftest` 验证 Windows SDK 10.0.26100.0 的 x64 ABI、稳定资源键、程序清单与哈希、端口解析和路径拒绝；不打开 WFP。`validate` 只验证配置结构。`ports` 只读取 IPv4/IPv6 TCP 动态范围、排除范围及已占用端口，不修改主机配置。这些检查均不证明网络保护有效。
+
+示例中的 TEST-NET 地址与占位 SHA-256 不可直接运行。准备副本后，`manifest <Chrome副本目录>` 输出该目录内全部 `.exe` 的路径及哈希，填入 policy 的 `chromePrograms`；每组代理还必须填写自身 `proxySha256`。`preflight <policy.json>` 校验实际文件、完整清单、标记文件和入口端口，同样不打开 WFP。
 
 ## 隔离测试机上的操作
 
 仅在专用 Windows 11 x64 测试机上执行以下步骤，使用新 Profile 和测试节点。保留原始 policy 文件；同一个 id 的配置不得改写，配置变更使用新 id。程序路径必须是 LabRoot 内的完整副本，不能是日常 Chrome、符号链接或 junction。程序主动拒绝根目录、UNC、目录外路径及重复代理路径。
 
-1. 为实验生成新 UUID，准备 Chrome 完整副本、每组独立 mihomo 副本，以及 `NETWORK_ISOLATION_LAB_ONLY` 空标记文件。保存准确的路径、入口端口、已验证上游 IP/端口/协议。不复制账号凭据或真实 Profile。
-2. 先确认所有测试进程已经停止，端口空闲；端口被占用就换新配置，不终止占用软件。
+1. 为实验生成新 UUID，准备 Chrome 完整副本、每组独立 mihomo 副本，以及 `NETWORK_ISOLATION_LAB_ONLY` 空标记文件。保存准确的路径、全部 Chrome `.exe` 清单及哈希、代理哈希、入口端口、已验证上游 IP/端口/协议。不复制账号凭据或真实 Profile。
+2. 先确认所有测试进程已经停止，执行 `preflight <policy.json>`。端口必须大于等于 1024，并避开本机实际 TCP 动态范围、排除范围及已占用端口；不能只假定 49152 以下就安全。遇到占用就换新配置，不终止占用软件。预检查不等于预留端口，检查至绑定之间的竞争仍需测试和后续协调器处理。
 3. 在提权终端运行 `network-isolation-lab.exe run <policy.json> --isolated-lab`。收到 `installed-blocked` 只说明 WFP 事务提交，尚未证明实际数据路径阻断。
 4. 该进程标准输入支持 `activate a`、`freeze a`、`freeze-all`、`quit`。激活和冻结同时更新 Chrome→指定回环入口、该组 mihomo→批准上游两段。EOF、退出或进程被终止只关闭动态会话，持久化拒绝规则继续存在。
 5. 另一个终端可使用 `inspect <policy.json>` 读取预期持久化规则是否存在。计数不能证明规则内容、优先级和已有连接撤销正确，必须同时保存 WFP 状态与抓包证据。
 6. 退出测试程序、关闭测试 Chrome 和 mihomo，并通过 broker Job 清零证明关闭后，执行 `cleanup <policy.json> --isolated-lab --processes-stopped`。标志是操作者对证明的确认，不是自动获得的关闭证明。先清理规则再删除实验文件。异常退出后用同一 policy 清理；不要删除整个系统防火墙策略。
 
-这版尚无受限服务身份、Service SID ACL、身份校验管道、管理员保护安装目录、签名校验、配置变更协调器或运行恢复服务。它接受实验策略文件，**不能作为生产权限边界**。已有策略优先级、ALE_APP_ID 的绑定条件、回环、IPv6、动态会话退出清理及存量连接重新授权均待实测。
+Chrome 清单内每个程序都有默认出站阻断，只有主 `chrome.exe` 获得入口放行，辅助程序不自动获得联网许可。运行前发现新增/删除的 `.exe` 或哈希变化会拒绝，要求新的策略代次；不能在运行期间更新副本。清理使用原 policy 中稳定的清单与键，不依赖当前磁盘文件仍存在或哈希仍一致。务必保留原文件，否则可能无法完整回收持久化规则。
+
+这版尚无受限服务身份、Service SID ACL、身份校验管道、管理员保护安装目录、签名校验、配置变更协调器或运行恢复服务。哈希只能验证文件与本次策略一致，不能替代可信发行来源或防止校验后被改写。它接受实验策略文件，**不能作为生产权限边界**。AUTH_LISTEN/AUTH_RECV_ACCEPT 入站限制和精确控制通道尚未实现；已有策略优先级、ALE_APP_ID 的绑定条件、回环、IPv6、动态会话退出清理及存量连接重新授权均待实测。
 
 ## 证据与阳性对照
 
@@ -57,6 +62,10 @@ Remove-Item Env:GPT_ACCOUNT_NETWORK_LAB
 
 需要先构建 `tools/chrome-launcher`，安装 Google Chrome，并准备 `artifacts/release-input/mihomo/mihomo-windows-amd64-compatible.exe`。可通过 `GPT_ACCOUNT_NETWORK_LAB_MIHOMO` 指定测试 mihomo。测试上游只允许该测试自己的回环源站，不转发其他目的地。
 
-认证脚本覆盖无/错/跨组凭据、第一页面、网站 401、popup、同源 iframe、WS、三类 Worker、CDP 断开触发 Job 清零。它尚不覆盖真实 HTTPS/WSS、跨站 OOPIF、认证缓存清除后 Worker 的首次挑战、真实两组 Chrome 同时运行及 WFP 端口抢占。不得把这些通过项扩大成完整认证门槛通过。
+认证脚本使用 `installBrowserStartupBarrier` 将身份、环境和代理认证放入一个原始 CDP 连接，由它统一自动附加目标；Playwright 仍有自己的控制连接。该原型尚未接入产品，不能同时给同一次运行再安装旧身份屏障。脚本覆盖无/错/跨组凭据、第一页面、网站 401、popup、同源 iframe、WS、三类 Worker、CDP 断开触发 Job 清零。它尚不覆盖真实 HTTPS/WSS、跨站 OOPIF、认证缓存清除后 Worker 的首次挑战、真实两组 Chrome 同时运行及 WFP 端口抢占，也没有给出 ChatGPT 页面加载性能基线。
+
+页面请求等待初始化回执；Service Worker 安装阶段的 fetch 有不同约束：Fetch 认证拦截和递归附加必须先确认，随后将身份与观察命令按序排入同一通道，再允许请求继续，以免安装 fetch 和初始化回执互相等待。后续命令错误或无响应仍触发关闭处理；不能将“命令已经发出”记录成“网络已经冻结”。
+
+路径实验先使用 `inspectProfileForRuntimeCopy` 做只读格式检查：要求 Job 清零证明，检查 Local State、各 Profile 的当前与旧 Cookie 位置以及 WAL，遇到应用绑定加密、未知密文、损坏、链接目录或待恢复数据库就拒绝。SQLite 只打开临时副本，不打开原数据库进行恢复。守卫结果始终为 `migrationVerified: false`；格式符合预期不代表解密或登录态验证成功。正式接入还必须在检查和切换全过程持有 Profile 准入锁，该锁尚未实现；不能直接将此原型用于真实账号迁移。
 
 参考：[WFP 对象生命周期](https://learn.microsoft.com/en-us/windows/win32/fwp/object-management)、[ALE 重新授权](https://learn.microsoft.com/en-us/windows/win32/fwp/ale-re-authorization)、[Playwright 的 Worker Fetch 归属处理](https://github.com/microsoft/playwright/blob/main/packages/playwright-core/src/server/chromium/crNetworkManager.ts)、[同 renderer 的 locale 处理](https://github.com/microsoft/playwright/blob/main/packages/playwright-core/src/server/chromium/crPage.ts)。

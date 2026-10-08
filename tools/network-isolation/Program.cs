@@ -7,30 +7,51 @@ try
     if (args.Length == 1 && args[0] == "selftest")
     {
         var sample = new LabPolicy { Id = Guid.NewGuid(), LabRoot = @"C:\NetworkLab", ChromePath = @"C:\NetworkLab\chrome\chrome.exe",
+            ChromePrograms = [new LabProgram { Path = @"C:\NetworkLab\chrome\chrome.exe", Sha256 = new string('0', 64) },
+                new LabProgram { Path = @"C:\NetworkLab\chrome\helper.exe", Sha256 = new string('1', 64) }],
             Groups = [new LabGroup { Id = "a", ProxyPath = @"C:\NetworkLab\a\mihomo.exe", ListenerPort = 23001,
+                ProxySha256 = new string('2', 64),
                 Address = "192.0.2.1", Port = 443, Protocol = "tcp" }] };
         sample.Validate(false);
         if (sample.Key("a") != sample.Key("a") || sample.Key("a") == sample.Key("b")) throw new Exception("Unstable keys");
         foreach (var invalid in new[] { sample with { ChromePath = @"C:\Program Files\Google\Chrome\Application\chrome.exe" },
             sample with { Groups = [sample.Groups[0], sample.Groups[0]] },
+            sample with { ChromePrograms = [] },
+            sample with { ChromePrograms = [sample.ChromePrograms[1]] },
+            sample with { ChromePrograms = [sample.ChromePrograms[0], sample.ChromePrograms[0]] },
+            sample with { ChromePrograms = [sample.ChromePrograms[0] with { Sha256 = "invalid" }] },
             sample with { Groups = [sample.Groups[0] with { Address = "node.example" }] } })
         {
             var rejected = false;
             try { invalid.Validate(false); } catch (ArgumentException) { rejected = true; }
             if (!rejected) throw new Exception("Unsafe policy accepted");
         }
+        if (sample.ProtectedPrograms().Count() != 3 || sample.ProtectedPrograms().Select(program => program.Label).Distinct().Count() != 3)
+            throw new Exception("Helper executable protection missing");
+        PreflightTests.Run();
         Console.WriteLine("{\"event\":\"selftest-passed\",\"wfpModified\":false,\"productionReady\":false}");
         return 0;
     }
-    if (args.Length < 2 || args[0] is not ("validate" or "inspect" or "run" or "cleanup"))
+    if (args is ["manifest", var directory])
     {
-        Console.Error.WriteLine("LAB ONLY: selftest | validate <policy.json> | inspect <policy.json> | run <policy.json> --isolated-lab | cleanup <policy.json> --isolated-lab --processes-stopped");
+        Console.WriteLine(JsonSerializer.Serialize(LabProgram.CreateManifest(directory), LabJson.Default.LabProgramArray)); return 0;
+    }
+    if (args is ["ports"])
+    {
+        var inventory = PortPreflight.Read();
+        Console.WriteLine($"{{\"event\":\"port-inventory-read\",\"dynamicRanges\":{inventory.Dynamic.Length},\"excludedRanges\":{inventory.Excluded.Length},\"occupiedPorts\":{inventory.Occupied.Count},\"wfpModified\":false}}"); return 0;
+    }
+    if (args.Length < 2 || args[0] is not ("validate" or "preflight" or "inspect" or "run" or "cleanup"))
+    {
+        Console.Error.WriteLine("LAB ONLY: selftest | ports | manifest <chrome-directory> | validate/preflight/inspect <policy.json> | run <policy.json> --isolated-lab | cleanup <policy.json> --isolated-lab --processes-stopped");
         return 2;
     }
     var command = args[0];
     var policy = JsonSerializer.Deserialize(File.ReadAllText(args[1]), LabJson.Default.LabPolicy)
         ?? throw new ArgumentException("Empty policy");
-    policy.Validate(files: command != "validate");
+    // Cleanup must work using the immutable manifest even if runtime files were
+    // removed or changed after a crash; it never recomputes keys from disk.
+    policy.Validate(files: command is "run" or "preflight");
     if (command == "validate")
     {
         Console.WriteLine("{\"event\":\"policy-valid\",\"wfpModified\":false,\"productionReady\":false}"); return 0;
@@ -42,6 +63,11 @@ try
         throw new ArgumentException("Mutating commands require Windows 11 x64");
     if (command == "cleanup" && !args.Contains("--processes-stopped", StringComparer.Ordinal))
         throw new ArgumentException("Cleanup requires --processes-stopped after proving lab process termination");
+    if (command is "run" or "preflight") PortPreflight.Read().Check(policy.Groups.Select(group => group.ListenerPort));
+    if (command == "preflight")
+    {
+        Console.WriteLine("{\"event\":\"preflight-passed\",\"wfpModified\":false,\"productionReady\":false}"); return 0;
+    }
     using var lab = new WfpLab(policy);
     if (command == "inspect")
     {

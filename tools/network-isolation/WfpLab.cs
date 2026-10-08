@@ -74,8 +74,7 @@ internal sealed class WfpLab : IDisposable
 
     internal IEnumerable<(string Label, string Path)> ProtectedPrograms()
     {
-        yield return ("chrome", policy.ChromePath);
-        foreach (var group in policy.Groups) yield return ($"proxy/{group.Id}", group.ProxyPath);
+        return policy.ProtectedPrograms();
     }
     private IEnumerable<string> DurableLabels()
     {

@@ -10,6 +10,7 @@ import { ChromeLauncherBroker } from "../src/chromeLauncherBroker.js";
 import { buildLaunchArgs } from "../src/chromeProcessLauncher.js";
 import { findChromeExecutable, reserveLocalDebugPort, waitForDevToolsEndpoint } from "../src/browser.js";
 import { STRICT_RESOLVER_ARGUMENT } from "../src/network/strictConfig.js";
+import { inspectProfileForRuntimeCopy } from "../src/network/profileMigrationGuard.js";
 
 test("M1 runtime copy preserves a fresh synthetic Profile", {
   skip: process.platform !== "win32" || process.env.GPT_ACCOUNT_NETWORK_LAB !== "1", timeout: 180_000,
@@ -39,6 +40,7 @@ test("M1 runtime copy preserves a fresh synthetic Profile", {
   });
   await broker.start();
   const unusedPort = await reserveLocalDebugPort();
+  let lastClosedToken;
   async function run(exe, seed) {
     const token = broker.newRunToken(); const now = Date.now();
     // A prior fully closed run can leave this discovery file behind.
@@ -71,10 +73,17 @@ test("M1 runtime copy preserves a fresh synthetic Profile", {
     } finally {
       const session = await browser.newBrowserCDPSession(); await session.send("Browser.close").catch(() => {});
       assert.equal((await broker.waitForEmpty(token, 10_000)).count, 0);
-      await broker.dispose_(token); await broker.forget(token); await browser.close().catch(() => {});
+      await broker.dispose_(token);
+      if (lastClosedToken) await broker.forget(lastClosedToken);
+      lastClosedToken = token;
+      await browser.close().catch(() => {});
     }
   }
   await run(source, true); await run(source, false);
+  report.migrationPreflight = await inspectProfileForRuntimeCopy({ profileDirectory: profile,
+    assertStopped: () => broker.enumerate(lastClosedToken) });
+  assert.equal(report.migrationPreflight.eligible, true, report.migrationPreflight.reason);
+  assert.equal(report.migrationPreflight.migrationVerified, false);
   // Complete copy: no hardlinks, binary patches, encryption flags or live file replacement.
   await fs.cp(path.dirname(source), copy, { recursive: true, errorOnExist: true, force: false });
   const hash = async (file) => createHash("sha256").update(await fs.readFile(file)).digest("hex");

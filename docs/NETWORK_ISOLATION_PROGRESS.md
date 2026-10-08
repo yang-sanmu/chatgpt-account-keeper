@@ -19,10 +19,11 @@
 | 项目 | 当前实现 | 验收边界 |
 | --- | --- | --- |
 | 严格配置编译器 | 选定节点、数值上游地址、保留 SNI/WS Host、随机入口凭据、非空 users、MATCH,REJECT、DoH 经 upstream、拒绝未知端点配置 | 未接入生产代理管理；未验证真实外部协议/DNS |
-| CDP 认证处理 | 固定入口/凭据快照，只应答匹配的 Proxy 挑战，错误挑战和断连触发关闭 | 本地 HTTP/WS 及 Worker 已测；完整矩阵未通过 |
+| CDP 统一初始化 | 一个原始 CDP 连接统一认证、身份、环境及目标附加；固定入口/凭据快照，错误和无响应触发关闭 | 本地 HTTP/WS、页面及 Worker 初始环境已测；未接入产品，完整矩阵未通过 |
 | Chrome 启动参数 | 两条参数生成路径允许精确的 resolver 规则；严格参数构造器移除隐式回环绕过 | 普通模式不加严格参数；无 WFP 时不宣称禁止直连 |
-| WFP NativeAOT 工具 | 独立 provider/sublayer、持久化默认拒绝、动态会话双端放行/撤销、绑定归属规则、事务与显式清理 | 仅构建和无写入自检通过，未在任何主机安装或实测规则 |
+| WFP NativeAOT 工具 | 独立 provider/sublayer、持久化默认拒绝、动态会话双端放行/撤销、绑定归属规则、事务与显式清理；覆盖清单内所有 Chrome exe，增加哈希和端口预检查 | 构建及无 WFP 写入的自检/真实副本预检查通过；入站与控制通道未完成，未安装或实测规则 |
 | Chrome 路径实验 | 完整复制安装目录；同一全新测试 Profile 先原路径重启，再副本路径重启 | 合成登录 Cookie/LocalStorage/IndexedDB 保留；v10 Cookie 不覆盖应用绑定加密迁移 |
+| Profile 格式守卫 | Job 清零前提下，只读检查 Local State、各 Profile 的 Cookie 库及 WAL，拒绝 ABE/未知格式/损坏/待恢复数据 | 仅格式检查，始终不宣称迁移通过；未实现生产准入锁及版本升级验证 |
 
 原型使用现有 broker 的 Job 管理实验 Chrome/mihomo；它不是正式的每组代理生命周期管理器。实验发现 mihomo 标准输出会进入现有 Chrome broker 的协议输出流，生产接入前必须提供独立的受控输出通道；不能把实验的日志静音当成修复。
 
@@ -60,14 +61,32 @@
 
 本轮额外显式开启真实 Chrome 的环境用例：后台和有头各 1 项通过，覆盖页面最早脚本、popup 和 Worker，并在关闭后确认 broker Job 清零。环境面板 3 项前端测试、TypeScript 类型检查、IPC 生成一致性及 diff 空白检查通过。本轮未重跑 Rust 全套；上述 141 项 Rust 结果属于首版记录。
 
+## M1 原型补强（2026-10-08）
+
+`installBrowserStartupBarrier` 将原认证实验与身份/环境初始化合并为一个原始 CDP 连接。Playwright 保留自身控制连接；这不是宣称浏览器只有一个 CDP 客户端。普通模式仍使用原生产启动路径，没有将新屏障接入其中。新增命令时限与 `control_error` 状态：通道仍连接但不再回复命令时通知关闭处理，不把控制失败显示成网络已冻结。
+
+合并中复现了新的 Service Worker 死锁：安装事件等待 fetch 完成，而初始化回执又依赖 Worker 继续运行。只给 Worker 入口脚本放行仍会死锁。最终原型先确认 Fetch 认证拦截和递归附加，再按序排入身份与观察命令，允许 Service Worker 的安装请求完成；文档页面请求继续等待完整回执。该差异有独立回归，不将命令排队等同于已完成。晚到的错误仍使该次运行失败。
+
+Profile 守卫不只检查 `app_bound_encrypted_key`：它遍历所有顶层 Profile 的 `Cookies` 与 `Network/Cookies`，连同 WAL 复制到临时目录后只读查询，遇到 `v20`、未知/异常密文、损坏数据库、非空回滚日志、孤立 WAL、链接目录或检查期间变更就拒绝。原数据库不参与 SQLite 恢复，不读取 Cookie 域名或解密数据进入报告。`eligible` 只表示格式守卫允许进入后续实验，`migrationVerified` 始终为 false；正式切换所需的准入锁尚未实现。
+
+WFP 实验工具通过策略中的完整 Chrome exe 清单生成默认出站阻断，辅助程序不自动得到主程序的放行。实际文件哈希、新增或遗漏 exe 会在运行前校验；本机测试 Chrome 副本共发现 10 个 exe。清理键仅取自保存的策略，因此二进制损坏或丢失后仍可计算原规则键。清单与哈希还不能替代管理员保护目录、来源签名或更新协调器。
+
+端口预检查同时读取 IPv4/IPv6 的实际 TCP 动态范围、排除范围及占用情况，拒绝低端口、交叠和无法识别的查询结果；不会更改系统范围。它是检查快照，尚未解决检查至绑定之间的竞争，也没有实现持久化端口规则的自动回收。
+
+本轮定向测试 25/25 通过，包含 Service Worker 回执依赖、CDP 无响应、WAL 中的 v20、原数据库/WAL/SHM 字节不变及异常格式拒绝。显式开启真实 Chrome 的实验 3/3 通过：有头与后台均验证页面、popup、同源 iframe、dedicated/shared/service Worker 的初始环境和认证，副本路径保留合成登录。脱敏报告为 `auth-3GhHyU/report.json`、`auth-lvKeQS/report.json`、`runtime-BvMXqm/report.json`（均在 `artifacts/network-lab/`）。这仍不覆盖真实账号或 Chrome 版本升级。
+
+NativeAOT 发布、`selftest`、示例结构校验、主机端口只读查询及真实 Chrome/mihomo 副本的 `preflight` 均通过，未执行 WFP 写入。预检查策略保存在 `artifacts/network-lab/runtime-BvMXqm/preflight-policy.json`，上游为不可用的测试保留地址，未启动代理连接。早期死锁失败报告保留供对照。
+
+随后全量 Node 回归 657 项：650 通过、7 跳过、0 失败、0 取消，约 71 秒。报告为 `artifacts/network-lab/m1-prototype-refinement-node.tap`；其中网络实验默认跳过，以上 3 项显式开启的实测单独记录。前端、Rust 与 IPC 代码本轮未改动，未将此前结果标成新的复测。
+
 ## 未通过的门槛与后续顺序
 
 **M1 仍未通过，暂停严格模式产品集成。** 尚缺：
 
 - 独立 Windows 环境中的 WFP 双端约束、绑定条件与优先级、既有流重新授权、缓冲上传冻结、动态会话崩溃清理、VPN/IPv6/休眠/端口抢占与资源循环实测；NIC 抓包不能独自证明回环或其它虚拟路径。
-- 迁移前的加密格式守卫及所支持 Profile 的路径切换/升级兼容证明。首版可拒绝应用绑定加密 Profile，不再要求必须实现 v20 迁移；但不能仅检查 Local State 的单个字段就宣布安全。守卫当前尚未实现。Chrome 辅助程序和更新路径的完整覆盖同样待完成。
-- 原型入站限制、精确控制通道、辅助程序清单、按实际动态/保留范围分配端口及持久化绑定规则回收。这些不能从当前默认拒绝原型中推定已经满足。
-- 身份/环境/认证统一初始化协调及与 Playwright 的附加交互、请求拦截性能、CDP 无响应和 Agent 卡死的状态语义。当前认证与身份仍为独立屏障，没有接入产品。
+- Profile 守卫的生产准入锁及所支持 Profile 的真实路径切换/版本升级兼容证明。首版可拒绝应用绑定加密 Profile，不要求必须实现 v20 迁移；已有格式检查和合成登录实验不能证明所有账号迁移安全。Chrome 辅助程序的运行兼容及更新路径覆盖仍待验收。
+- AUTH_LISTEN/AUTH_RECV_ACCEPT 入站限制、精确控制通道、端口预留与绑定竞争处理、持久化绑定规则回收。清单和只读端口检查已补齐原型，但不能推定实际过滤规则有效。
+- 统一初始化原型与 Playwright 的完整附加矩阵、请求拦截性能、真实 CDP 无响应和 Agent 卡死的状态语义。目前只在实验内运行统一屏障，命令无响应使用模拟连接验证；尚未做 ChatGPT 加载性能基线，也未接入产品。
 - HTTPS CONNECT/WSS、跨站 OOPIF、认证缓存清除后 Worker 首次挑战、两个真实 Chrome 分组并发等完整认证矩阵。
 - 上游协议的真实连接集合与 TLS/SNI/Host 验证。目前只有本地 HTTP 上游跑通；AnyTLS、Hysteria2、TUIC、VMess/WS、HTTPS、SOCKS5 的编译器测试不算兼容验收。VLESS/XHTTP 当前明确拒绝，待适配和实测；不影响普通模式。
 

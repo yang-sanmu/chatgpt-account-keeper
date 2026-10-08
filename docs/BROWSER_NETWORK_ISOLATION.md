@@ -14,7 +14,7 @@
 
 同一应用数据目录内，各严格分组共用一份项目专用 Chrome，账号继续使用各自的 Profile。普通模式与日常 Chrome 使用原安装路径。专用 Chrome 从本机安装目录完整复制，不修改二进制，也不使用源目录硬链接。活动路径保持固定，候选更新存放在独立暂存目录；替换前先预览影响范围，并关闭所有使用该副本的实例。
 
-路径迁移必须验证 Cookie、Local Storage、IndexedDB、重启和合成登录态。首版可以仅支持经过检查的非应用绑定加密 Profile：迁移前检查 Local State 和 Cookie 密文格式，遇到应用绑定加密、损坏或无法判断的数据就拒绝迁移。不能仅凭缺少 `app_bound_encrypted_key` 就认定安全，也不能关闭加密、清空 Profile 或长期停止 Chrome 更新来通过验证。此守卫及版本升级兼容仍需实现和验收；不要求首版支持 v20 迁移。Chromium 当前对非默认用户数据目录限制应用绑定加密，但发行版本仍需单独验证。[Chromium 实现](https://chromium.googlesource.com/chromium/src/+/main/chrome/browser/os_crypt/app_bound_encryption_win.cc)
+路径迁移必须验证 Cookie、Local Storage、IndexedDB、重启和合成登录态。首版可以仅支持经过检查的非应用绑定加密 Profile：迁移前检查 Local State 和 Cookie 密文格式，遇到应用绑定加密、损坏或无法判断的数据就拒绝迁移。不能仅凭缺少 `app_bound_encrypted_key` 就认定安全，也不能关闭加密、清空 Profile 或长期停止 Chrome 更新来通过验证。只读格式守卫已有实验实现，生产准入锁、真实迁移及版本升级兼容仍需实现和验收；不要求首版支持 v20 迁移。Chromium 当前对非默认用户数据目录限制应用绑定加密，但发行版本仍需单独验证。[Chromium 实现](https://chromium.googlesource.com/chromium/src/+/main/chrome/browser/os_crypt/app_bound_encryption_win.cc)
 
 每个严格分组使用独立的 mihomo 进程、可执行路径、配置目录、入口端口和随机凭据；候选配置使用新的代次路径与端口。Chrome 和 mihomo 以当前用户身份运行，生命周期由 broker 的 Job 管理。保留四浏览器并发上限；分组最后一个浏览器退出后，代理空闲 60 秒回收。每组最多额外保留一个候选实例。
 

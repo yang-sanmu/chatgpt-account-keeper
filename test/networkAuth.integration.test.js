@@ -13,6 +13,7 @@ import { buildLaunchArgs } from "../src/chromeProcessLauncher.js";
 import { RawCdpConnection, findChromeExecutable, probeHeadlessIdentity, reserveLocalDebugPort, waitForDevToolsEndpoint, waitForInteractiveCdp } from "../src/browser.js";
 import { buildStrictProxyConfig, newProxyCredentials, STRICT_RESOLVER_ARGUMENT } from "../src/network/strictConfig.js";
 import { installBrowserStartupBarrier } from "../src/network/browserStartupBarrier.js";
+import { probeMihomoAuthentication } from "../src/network/proxyAuthenticationProbe.js";
 
 // Explicit opt-in: uses only newly created test Profiles; never installs WFP rules.
 const enabled = process.env.GPT_ACCOUNT_NETWORK_LAB === "1" && process.platform === "win32";
@@ -86,6 +87,7 @@ for (const headless of [true, false]) {
         if (req.headers.authorization) observations.websiteReceivedAuthorization = true;
         res.writeHead(401, { "WWW-Authenticate": 'Basic realm="website"' }); res.end("website authentication"); return;
       }
+      if (req.url === "/403") { res.writeHead(403).end(); return; }
       if (req.url === "/worker.js") { res.setHeader("Content-Type", "text/javascript"); res.end(firstWorkerEnvironment + 'fetch("/worker-fetch").then(r=>r.text()).then(value=>postMessage({value,first}))'); return; }
       if (req.url === "/shared.js") { res.setHeader("Content-Type", "text/javascript"); res.end(firstWorkerEnvironment + 'onconnect=e=>fetch("/shared-fetch").then(r=>r.text()).then(value=>e.ports[0].postMessage({value,first}))'); return; }
       if (req.url === "/sw.js") { res.setHeader("Content-Type", "text/javascript"); res.end(firstWorkerEnvironment + 'addEventListener("install",e=>e.waitUntil(fetch("/service-fetch"))); addEventListener("activate",e=>e.waitUntil(clients.claim())); addEventListener("message",e=>e.ports[0].postMessage(first))'); return; }
@@ -135,6 +137,12 @@ for (const headless of [true, false]) {
       assert.ok([403, 407].includes(await proxyRequest(ports[0], `${originUrl}/denied`, supplied)));
       assert.equal(observations.upstreamRequests, before);
     }
+    const beforeProbe = observations.upstreamRequests;
+    for (const [index, expected] of [[0, "accepted"], [1, "rejected"]]) {
+      const result = await probeMihomoAuthentication({ proxyOrigin: `http://127.0.0.1:${ports[0]}`, credentials: credentials[index] });
+      assert.equal(result.status, expected); assert.equal(observations.upstreamRequests, beforeProbe);
+    }
+    mark("local-credential-probe-positive-negative-without-upstream");
     assert.equal(await proxyRequest(ports[0], `${originUrl}/allowed`, credentials[0]), 200);
     mark("missing-wrong-cross-group-credentials-denied-before-upstream");
     const profile = path.join(root, "profile"); await fs.mkdir(profile);
@@ -162,6 +170,10 @@ for (const headless of [true, false]) {
     await checkEnvironment(page); assert.equal(rawConnections, 1); mark("combined-environment-auth-first-script");
     assert.equal((await page.goto(`${originUrl}/401`)).status(), 401);
     assert.equal(observations.websiteReceivedAuthorization, false); assert.equal(observations.originReceivedProxyPassword, false); mark("website-401-does-not-receive-proxy-password");
+    assert.equal(await page.evaluate(() => fetch("/403").then(response => response.status)), 403);
+    assert.equal(barrier.state.ready, true); assert.equal(failure, undefined);
+    assert.equal((await probeMihomoAuthentication({ proxyOrigin: `http://127.0.0.1:${ports[0]}`, credentials: credentials[0] })).status, "accepted");
+    mark("website-403-preserved-with-separate-credential-diagnostic");
     await page.goto(originUrl);
     const popupPromise = context.waitForEvent("page"); await page.evaluate((url) => window.open(url), `${originUrl}/popup`);
     const popup = await popupPromise; await popup.waitForLoadState(); await checkEnvironment(popup); await popup.close(); mark("popup");

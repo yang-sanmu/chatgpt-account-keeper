@@ -39,13 +39,13 @@ function assertEnvironment(first, expected) {
   assert.equal(first.language, expected.locale); assert.doesNotMatch(first.ua, /HeadlessChrome/u);
 }
 
-for (const headless of [true, false]) {
-  test(`M1 HTTPS/WSS, OOPIF and concurrent groups: ${headless ? "headless" : "headed"}`, { skip: !enabled, timeout: 150_000 }, async t => {
+for (const [headless, coldAuthOnly] of [[true, false], [true, true], [false, false], [false, true]]) {
+  test(`${coldAuthOnly ? "M1 cold authentication acceptance gate" : "M1 HTTPS/WSS, OOPIF and concurrent groups"}: ${headless ? "headless" : "headed"}`, { skip: !enabled, timeout: 150_000 }, async t => {
     assert.ok(resolveBrokerExecutable(), "Build the broker first"); const chrome = findChromeExecutable(); assert.ok(chrome);
     await fs.access(mihomoPath);
     const base = path.resolve("artifacts/network-lab"); await fs.mkdir(base, { recursive: true });
     const root = await fs.mkdtemp(path.join(base, "matrix-")); const certificateDirectory = path.join(root, "certificates");
-    const report = { kind: "https-auth-matrix", headless, passed: false, wfpVerified: false, productionReady: false, checks: [] };
+    const report = { kind: coldAuthOnly ? "cold-auth-gate" : "https-auth-matrix", headless, passed: false, wfpVerified: false, productionReady: false, checks: [] };
     const broker = new ChromeLauncherBroker({ log: { warn() {}, info() {}, error() {} } });
     const runs = []; const groups = []; const servers = []; const sockets = new Set(); const sources = new Map();
     const observations = { connect: { a: 0, b: 0 }, unexpectedDestinations: 0, originRequests: 0, directRequests: 0, leakedAuthorization: false };
@@ -77,6 +77,8 @@ for (const headless of [true, false]) {
       observations.originRequests++; if (via === "direct") observations.directRequests++;
       if (req.headers["proxy-authorization"] || req.headers.authorization) observations.leakedAuthorization = true;
       res.setHeader("Cache-Control", "no-store");
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      if (req.url === "/cold-fetch") { res.setHeader("Content-Type", "application/json"); res.end(JSON.stringify({ via })); return; }
       if (req.url === "/401") { res.writeHead(401, { "WWW-Authenticate": 'Basic realm="website"' }); res.end("website authentication"); return; }
       if (req.url === "/state") { res.setHeader("Content-Type", "application/json"); res.end(JSON.stringify({ via, cookie: req.headers.cookie ?? "" })); return; }
       if (req.url === "/seed") res.setHeader("Set-Cookie", `fixture-group=${via}; HttpOnly; SameSite=Lax; Max-Age=3600; Path=/`);
@@ -149,11 +151,16 @@ for (const headless of [true, false]) {
             if (message.method === "Network.loadingFailed" && /^net::ERR_[A-Z_]+$/u.test(message.params.errorText)) {
               run.networkErrors.push(message.params.errorText);
             }
+            if (message.method === "Network.webSocketFrameError") {
+              run.networkErrors.push(message.params.errorMessage === "Proxy authentication failed" ? "WEBSOCKET_PROXY_AUTH_FAILED"
+                : message.params.errorMessage.match(/(?:net::)?ERR_[A-Z_]+/u)?.[0] ?? "WEBSOCKET_ERROR_UNCLASSIFIED");
+            }
           });
           return run.cdp;
         },
         onFailure(error) { run.failure = error; void broker.terminate(token).catch(() => {}); } });
       run.browser = await chromium.connectOverCDP(endpoint); run.context = run.browser.contexts()[0];
+      report.browserVersion ??= run.browser.version();
       run.page = run.context.pages()[0]; run.page.setDefaultTimeout(12_000); run.page.setDefaultNavigationTimeout(12_000);
       return run;
     }
@@ -163,6 +170,46 @@ for (const headless of [true, false]) {
       assert.equal((await broker.waitForEmpty(run.token, 10_000)).count, 0); run.jobEmpty = true;
       run.barrier.close(); await run.browser.close().catch(() => {});
       await broker.dispose_(run.token); await broker.forget(run.token);
+    }
+    if (coldAuthOnly) {
+      const coldProfile = await createTrustedLabProfile(root, "profile-cold-wss", certificates.rootDer);
+      const cold = await launch(groups[0], "cold-wss", { profile: coldProfile });
+      const providedBeforeWss = cold.barrier.state.provided;
+      const attemptWss = run => run.page.evaluate(port => new Promise(resolve => {
+        const timer = setTimeout(() => { ws.close(); resolve({ status: "timeout" }); }, 8000);
+        const ws = new WebSocket(`wss://127.0.0.1:${port}/ws`);
+        ws.onmessage = e => { clearTimeout(timer); ws.close(); resolve({ status: "connected", ...JSON.parse(e.data) }); };
+        ws.onerror = () => { clearTimeout(timer); resolve({ status: "error" }); };
+      }), originPort);
+      const coldWss = await attemptWss(cold).catch(() => ({ status: cold.failure ? "closed-on-auth-failure" : "evaluation-failed" }));
+      report.coldWss = { ...coldWss, newChallenges: cold.barrier.state.provided - providedBeforeWss };
+      await close(cold);
+      const warmProfile = await createTrustedLabProfile(root, "profile-warm-wss", certificates.rootDer);
+      const warm = await launch(groups[0], "warm-wss-control", { profile: warmProfile });
+      assert.equal((await warm.page.goto(`${originUrl}/warmup-control`)).status(), 200);
+      await warm.page.goto("about:blank");
+      report.warmWss = await attemptWss(warm);
+      assert.equal(report.warmWss.via, "a", "The identical WSS endpoint must work with an authenticated proxy cache");
+      await close(warm); report.checks.push("warm-wss-positive-control", "cold-failure-job-empty");
+      const workerProfile = await createTrustedLabProfile(root, "profile-cold-worker", certificates.rootDer);
+      const workerRun = await launch(groups[0], "cold-dedicated-worker", { profile: workerProfile });
+      const workerBefore = workerRun.barrier.state.provided;
+      const workerResult = await workerRun.page.evaluate(url => new Promise((resolve, reject) => {
+        const blob = new Blob([`fetch(${JSON.stringify(url)}).then(r=>r.json()).then(v=>postMessage(v)).catch(()=>postMessage({error:true}))`], { type: "text/javascript" });
+        const objectUrl = URL.createObjectURL(blob); const worker = new Worker(objectUrl);
+        const cleanup = () => { clearTimeout(timer); worker.terminate(); URL.revokeObjectURL(objectUrl); };
+        const timer = setTimeout(() => { cleanup(); reject(new Error("Cold Worker timed out")); }, 8000);
+        worker.onmessage = e => { cleanup(); resolve(e.data); }; worker.onerror = () => { cleanup(); reject(new Error("Cold Worker failed")); };
+      }), `${originUrl}/cold-fetch`);
+      report.coldWorker = { ...workerResult, newChallenges: workerRun.barrier.state.provided - workerBefore };
+      assert.equal(workerResult.via, "a"); assert.ok(report.coldWorker.newChallenges > 0);
+      await close(workerRun); report.checks.push("cold-dedicated-worker-first-fetch");
+      assert.equal(observations.directRequests, 0); assert.equal(observations.leakedAuthorization, false);
+      assert.equal(coldWss.status, "connected", "M1 gate: WSS must authenticate without a previous page request");
+      assert.equal(coldWss.via, "a"); assert.ok(report.coldWss.newChallenges > 0, "Cold WSS must cause a new proxy challenge");
+      report.checks.push("cold-wss-authentication-without-page-warmup");
+      report.passed = true;
+      return;
     }
     const a = await launch(groups[0], "a"); const b = await launch(groups[1], "b");
     report.browserVersion = a.browser.version();

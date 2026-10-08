@@ -195,3 +195,15 @@ test("CONNECT rejection after credentials fails without a repeated challenge; un
     assert.equal(barrier.state.ready, !shouldFail); barrier.close();
   }
 });
+
+test("cold WebSocket proxy-auth failure closes the run even without Fetch.authRequired", async () => {
+  const cdp = fakeConnection(); let failures = 0;
+  const barrier = await installBrowserStartupBarrier({ endpoint: "ws://127.0.0.1:9001/browser/test", proxyOrigin: snapshot.origin,
+    credentials: snapshot, connect: async () => cdp, onFailure() { failures++; } });
+  cdp.emit({ method: "Network.webSocketFrameError", sessionId: "s1", params: { errorMessage: "Connection closed before receiving a handshake response" } });
+  assert.equal(barrier.state.ready, true);
+  cdp.emit({ method: "Network.webSocketFrameError", sessionId: "s1", params: { errorMessage: "Proxy authentication failed" } });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(failures, 1); assert.equal(barrier.state.provided, 0);
+  assert.equal(barrier.state.controlState, "control_error"); barrier.close();
+});

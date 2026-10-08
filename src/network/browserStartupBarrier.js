@@ -79,7 +79,7 @@ export async function installBrowserStartupBarrier({ endpoint, proxyOrigin, cred
     failure.details = Object.freeze({ protocolCode: Number.isInteger(error?.code) ? error.code : null,
       targetType: NETWORK_TARGETS.has(error?.targetType) ? error.targetType : null,
       method: ["Fetch.enable", "Target.setAutoAttach", "Runtime.runIfWaitingForDebugger", "Emulation.setUserAgentOverride",
-        "Emulation.setTimezoneOverride", "Emulation.setLocaleOverride", "Fetch.continueRequest", "Fetch.continueWithAuth", "Network.enable", "Network.loadingFailed", "Browser.close"].includes(error?.method) ? error.method : null });
+        "Emulation.setTimezoneOverride", "Emulation.setLocaleOverride", "Fetch.continueRequest", "Fetch.continueWithAuth", "Network.enable", "Network.loadingFailed", "Network.webSocketFrameError", "Browser.close"].includes(error?.method) ? error.method : null });
     Promise.resolve().then(() => onFailure(failure)).catch(() => {});
   };
   const track = (task) => {
@@ -182,6 +182,12 @@ export async function installBrowserStartupBarrier({ endpoint, proxyOrigin, cred
         fail(Object.assign(authError("提交代理凭据后隧道失败"), { method: "Network.loadingFailed" }));
       }
       for (const key of keys) forgetRequest(key);
+    } else if (message.method === "Network.webSocketFrameError" && message.params.errorMessage === "Proxy authentication failed") {
+      // Observed Chrome 155 behavior: a cold WSS connection can reject proxy
+      // auth without delivering Fetch.authRequired. Do not claim the run remains
+      // ready or retry a potentially consequential socket operation. Supporting
+      // cold WSS still requires a separate M1 solution; closing is not a fix for it.
+      fail(Object.assign(authError("WebSocket 代理认证失败"), { method: "Network.webSocketFrameError" }));
     } else if (message.method === "Fetch.authRequired") track(authenticate(message));
     else if (message.method === "Fetch.requestPaused") {
       const { requestId, networkId } = message.params;

@@ -80,6 +80,8 @@ TLS 测试每次在内存生成有效期一天的临时 CA 和有效期 12 小�
 
 **冷 WSS 是已复现的 M1 阻塞项。** 全新 Profile 从 `about:blank` 发起 WSS 时，Chrome 155 没有发送 `Fetch.authRequired`，只返回 `Network.webSocketFrameError: Proxy authentication failed`。另一个全新 Profile 先通过 HTTPS 完成代理认证，再回到 `about:blank` 连接同一 WSS 端点即可成功。有头/后台均复现。原型现在将该确切错误标为 `control_error` 并关闭 Job；这只是失败处理，未修复冷 WSS 支持，不自动重发请求。验收用例保留失败断言，输出 `passed: false`。
 
+已按 `155.0.8059.40` 源码确认普通 WebSocket 认证路径未连接到 Fetch 处理器，不能用增加 CDP 客户端或延长超时作为已验证的修复。版本化源码证据和替代路线的门槛见 [冷 WSS 方案评估](../../docs/COLD_WSS_AUTHENTICATION_REVIEW.md)。目前没有启用扩展替代方案或每组 Chrome 路径方案。
+
 同一冷认证用例还单独验证了全新 Profile 中 dedicated Worker 的第一次 HTTPS fetch，确有新的代理挑战并成功抵达上游。它不覆盖 shared/service Worker，也不等于运行中清空认证缓存后的所有行为。[CDP 实现](https://chromium.googlesource.com/chromium/src/+/main/content/browser/devtools/protocol/network_handler.cc) 的清 Cookie 与清网页缓存不能当作清代理认证缓存。本轮使用全新 Profile 实证冷状态，尚未声称运行中缓存清除已经验收。
 
 尚未覆盖运行中认证缓存失效后的恢复、shared/service Worker 冷状态、真实网络端点、WFP 端口抢占，也没有给出 ChatGPT 页面加载性能基线；不得把已有本地测试通过扩大成完整认证或网络保护门槛通过。运行整个认证矩阵会包含冷 WSS 两项失败，这是当前验收结果，不能改成预期成功、跳过或仅靠预热后通过。

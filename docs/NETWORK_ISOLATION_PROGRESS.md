@@ -4,6 +4,8 @@
 
 **本次交付是独立环境管理和 M1 实验原型，不是完整 v3，也不是已经可用的严格网络保护。** 用户确认没有专用 Windows 测试机/虚拟机；没有在日常主机写入 WFP 策略，没有创建 TUN、改系统代理/路由/DNS，也没有迁移真实账号 Profile。`network.getCapabilities` 固定返回 `available: false / M1_NOT_ACCEPTED`。
 
+**最新阻塞证据（2026-10-08）：冷 WSS 未通过。** 无先前代理认证缓存时，WSS 不触发当前 CDP Fetch 认证处理，有头/后台均失败。此前 WSS 通过项发生在页面已完成认证之后，不能据此认定冷状态可用。失败复现、关闭处理和其他回归结果见下文“冷认证门槛与 HTTP 403”。
+
 ## 已接入产品的环境管理
 
 - schema 7 追加 `account_environments`；已有和新建账号默认继承，旧 DTO 不新增字段。固定配置保留账号语言、时区、版本；换组/删除组不清除固定值；恢复继承不删除 Profile。
@@ -95,6 +97,28 @@ HTTPS 夹具在全新测试 Profile 的证书库中信任本次临时 CA，不�
 
 随后全量 Node 回归 662 项：653 通过、9 跳过、0 失败、0 取消，约 73 秒，结果位于 `artifacts/network-lab/auth-matrix-node-regression.tap`。额外的两个跳过项为默认需要显式开启的新矩阵。本轮没有更改 WFP 工具、前端或 Rust，未重跑对应构建与测试；没有写入系统网络规则或系统证书库，严格模式能力仍不可用。
 
+## 冷认证门槛与 HTTP 403（2026-10-08）
+
+继续扩展矩阵后确认现有方案的实质缺口：全新测试 Profile 从 `about:blank` 第一次连接本地 WSS 时，没有收到 `Fetch.authRequired`，Chrome 只报告 `Network.webSocketFrameError` 的确切文本 `Proxy authentication failed`。另一全新 Profile 先通过 HTTPS 完成认证，再回到 `about:blank` 连接同一 WSS 端点则成功；证书、来源页面和目标保持相同，区别是认证缓存是否已建立。有头和后台均重复复现，不能用页面预热后成功代替冷状态通过。
+
+原型现在将这一确切错误报告为 `control_error` 并通知关闭实例，未请求任何自动重试。测试确认失败实例 Job 清零。这修复了“失败后仍显示 ready”的处理缺口，**没有**解决冷 WSS 认证。验收断言仍要求冷 WSS 成功，因此两项 `M1 cold authentication acceptance gate` 明确失败，不标 todo、不当预期成功；严格模式产品集成继续停止。
+
+同一实验还启动独立全新 Profile，让 blob dedicated Worker 的第一次 HTTPS fetch 成为首个代理业务请求，观察到新的认证挑战且到达正确上游；有头/后台均通过。这不是 shared/service Worker 的冷状态验证，也不代表已经清除了一个运行中 Chrome 的认证缓存。[Chromium 的 CDP 实现](https://chromium.googlesource.com/chromium/src/+/main/content/browser/devtools/protocol/network_handler.cc)中，清网页缓存和清 Cookie 各走不同的数据清理路径，不能把任一调用成功当作代理认证缓存清除证明。本轮使用全新 Profile 证明冷状态。
+
+HTTP 403 则采用独立诊断，不猜测状态码来源。新增 `probeMihomoAuthentication` 对已登记的数值回环入口使用三个新连接，发送没有转发目标的 origin-form `GET /`。对固定 mihomo 版本分别验证无密码的 Basic 407、随机错误密码的 403，以及指定密码后的本地 400；异常响应、免认证、忽略错误密码及超时均为“未确认”，不能通过。真实 mihomo 实验证明正确/错误凭据分支按预期返回，且上游计数不变；正常业务站点的 403 仍交给网页处理。
+
+该诊断不是端口身份鉴定，不识别每个业务响应的来源，也不填充 Chrome 的认证缓存；检查后进程、端口或配置变化仍需协调器和 WFP 约束。当前未接入生产启动。后续可作为已证明进程归属后的启动前检查候选，但不能用它把未知 403 判为网站拒绝、关闭所有返回 403 的页面，或假定冷 WSS 已解决。
+
+冷认证实测报告为 `artifacts/network-lab/cold-auth-gate.tap`：0 通过、2 失败，均因冷 WSS 门槛未满足；两份脱敏报告为 `matrix-GQwfD1/report.json` 和 `matrix-ANepr6/report.json`，其中 dedicated Worker、缓存已建立的 WSS 对照及 Job 清零均通过。早期 `cold-wss-gate.tap`、`cold-auth-and-http403.tap` 保留失败复现。15 项定向单元测试通过（11 项屏障与 4 项入口诊断）；源站空 body 的 403 使用 fetch 读取状态，避免将 Chrome 的空错误页导航行为误判为代理错误。
+
+已有场景复测 `cold-auth-supported-regression.tap` 为 3 通过、1 失败：HTTP/WS/Worker 两种模式和后台 HTTPS 矩阵通过；有头矩阵运行期间出现一次 `Runtime.runIfWaitingForDebugger` 无响应，导致 B 组关闭。失败报告为 `matrix-Y4MVmo/report.json`。该次本机 Chrome 报告版本 `155.0.8059.40`，与上一轮 `.12` 不同；版本变化由本机更新发生，并非本轮主动安装。不能仅据此将故障归因于 Chrome 更新，也不提高超时或放宽断言。
+
+相同版本下单独复测有头矩阵 1/1 通过，记录为 `cold-auth-headed-recheck.tap`、`matrix-jra9Uz/report.json`；它没有复现上述无响应，不能视为已修复。
+
+本轮全量 Node 回归 `cold-auth-node-regression.tap` 共 669 项：657 通过、11 跳过、1 失败、0 取消，约 115 秒。失败的是 broker 崩溃回收用例：6 秒后按 PID 查询仍观察到一个根进程。定向重跑 `cold-auth-broker-recheck.tap` 为 1/1 通过，约 17 秒。原测试只保存 PID、未保存该次检查的进程身份，现有证据不能区分回收延迟、PID 复用或其他原因；不得直接宣称 Job 机制失效、问题来自 main，或全量回归通过。本轮未修改该测试的断言、时限或 broker 实现。
+
+随后使用先前保存的 main `9e6465e` 独立归档、相同 Node/Chrome/broker 及 `--test-concurrency=4` 顺序对照，619 项中 617 通过、2 跳过，约 94 秒；broker 崩溃用例也通过。报告为 `cold-auth-main-node-comparison.tap`。两边套件数量不同，不能视为完全相同的负载；该对照未复现失败，也不足以定位原因。本轮没有更改前端、Rust 或 WFP 工具，未重复对应测试及构建。
+
 ## 未通过的门槛与后续顺序
 
 **M1 仍未通过，暂停严格模式产品集成。** 尚缺：
@@ -103,9 +127,12 @@ HTTPS 夹具在全新测试 Profile 的证书库中信任本次临时 CA，不�
 - Profile 守卫的生产准入锁及所支持 Profile 的真实路径切换/版本升级兼容证明。首版可拒绝应用绑定加密 Profile，不要求必须实现 v20 迁移；已有格式检查和合成登录实验不能证明所有账号迁移安全。Chrome 辅助程序的运行兼容及更新路径覆盖仍待验收。
 - AUTH_LISTEN/AUTH_RECV_ACCEPT 入站限制、精确控制通道、端口预留与绑定竞争处理、持久化绑定规则回收。清单和只读端口检查已补齐原型，但不能推定实际过滤规则有效。
 - 统一初始化原型与 Playwright 的完整附加矩阵、请求拦截性能、真实 CDP 无响应和 Agent 卡死的状态语义。目前只在实验内运行统一屏障，命令无响应使用模拟连接验证；尚未做 ChatGPT 加载性能基线、用户手动关闭窗口的落盘验证，也未接入产品。
-- 认证缓存清除后 Worker/WSS 的首次挑战、HTTP 403 认证结果确认、真实网络端点及更广的附加顺序。已有本地 HTTPS CONNECT/WSS、真实 OOPIF 与双组并发通过项不能覆盖这些条件。
+- 已复现的冷 WSS 认证失败是优先阻塞项；运行中认证缓存失效后的恢复、shared/service Worker 冷状态、HTTP 入口诊断的生命周期集成、真实网络端点及更广的附加顺序尚待证明。有头矩阵的目标恢复无响应也需保留并继续定位，不能以其他用例通过抵消。
+- 并发 Node 回归中的 broker 崩溃回收单次失败尚未定位；单独重跑通过不能替代并发稳定性证据。后续复现应记录进程创建时间及退出状态，避免只凭 PID 判断进程身份。
 - 上游协议的真实连接集合与 TLS/SNI/Host 验证。目前只有本地 HTTP 上游跑通；AnyTLS、Hysteria2、TUIC、VMess/WS、HTTPS、SOCKS5 的编译器测试不算兼容验收。VLESS/XHTTP 当前明确拒绝，待适配和实测；不影响普通模式。
 
 M1 通过后才实施：受限身份 Windows 服务与安装器、受保护运行目录和产物校验、跨用户/会话管道认证、每组运行代次及回收、DNS 固定地址管理、统一变更协调器、强事务日志和崩溃恢复、其余 network IPC、严格模式界面、完整自部署诊断服务及 M4 发行验收。这些功能本次未实现，不应通过能力开关对用户开放。
 
 在测试环境可用之前，可继续完善不写系统策略的协议适配和实验用例；不得以环境管理已通过为由取消网络门槛，也不得改走全局 TUN 或自动转入驱动开发。实验准备及操作见 [WFP 实验说明](../tools/network-isolation/README.md)，完整目标见 [v3 计划](BROWSER_NETWORK_ISOLATION.md)。
+
+当前后续优先级是定位 Chrome WebSocket 认证与 Fetch 的覆盖边界、验证不依赖预先页面认证的可行路径，以及运行中缓存失效场景。任何替代路径都需重新完成分组认证、凭据不泄露和故障关闭的验收；不能在这些证据缺失时推进严格模式界面或服务集成。

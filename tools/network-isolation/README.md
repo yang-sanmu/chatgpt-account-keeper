@@ -57,8 +57,10 @@ pktmon etl2pcap C:\NetworkLab\capture.etl --out C:\NetworkLab\capture.pcapng
 ```powershell
 $env:GPT_ACCOUNT_NETWORK_LAB = '1'
 node --test --test-concurrency=1 test/networkAuth.integration.test.js test/networkRuntime.integration.test.js test/browserEnvironment.integration.test.js
-# HTTPS/WSS、真实跨进程 iframe、双组并发与关闭后换组；另需 PowerShell 7。
-node --test --test-concurrency=1 test/networkAuthMatrix.integration.test.js
+# 已覆盖的 HTTPS/WSS、真实跨进程 iframe、双组并发与关闭后换组；另需 PowerShell 7。
+node --test --test-concurrency=1 --test-name-pattern='M1 HTTPS' test/networkAuthMatrix.integration.test.js
+# M1 冷认证门槛：当前明确失败，不能跳过后宣称 M1 通过。
+node --test --test-concurrency=1 --test-name-pattern='cold authentication' test/networkAuthMatrix.integration.test.js
 Remove-Item Env:GPT_ACCOUNT_NETWORK_LAB
 ```
 
@@ -72,9 +74,15 @@ TLS 测试每次在内存生成有效期一天的临时 CA 和有效期 12 小�
 
 计划内主动关闭须调用统一屏障的 `requestBrowserClose()`，它保持认证处理并将状态改为 `closing`，避免正常 CDP 断开触发过早的 Job 强杀。随后仍须有界等待 Job 清零、失败时兜底回收，得到证明后才 `barrier.close()` 和复用 Profile。该方法不证明网络冻结或进程关闭；未请求关闭的 CDP 断开，以及请求关闭后通道仍连接但无响应，继续走故障处理。用户手动关闭窗口的生命周期接入仍待验证。
 
-错误凭据不一定触发第二次认证挑战：[mihomo 1.19.29](https://github.com/MetaCubeX/mihomo/blob/v1.19.29/listener/http/proxy.go#L141) 返回 403 后，Chrome 的 CONNECT 请求可能直接产生 `ERR_TUNNEL_CONNECTION_FAILED`。原型关联本次凭据提交与尚未完成的请求，发生这种隧道失败就停止该次运行；这不代表所有隧道错误都能判定为密码错误。普通 HTTP 的 403 还需区分入口拒绝与业务站点拒绝，当前 CONNECT 测试不能覆盖它。
+错误凭据不一定触发第二次认证挑战：[mihomo 1.19.29](https://github.com/MetaCubeX/mihomo/blob/v1.19.29/listener/http/proxy.go#L141) 返回 403 后，Chrome 的 CONNECT 请求可能直接产生 `ERR_TUNNEL_CONNECTION_FAILED`。原型关联本次凭据提交与尚未完成的请求，发生这种隧道失败就停止该次运行；这不代表所有隧道错误都能判定为密码错误。普通 HTTP 的 403 无法只凭状态码可靠区分入口拒绝与业务站点拒绝。
 
-尚未覆盖认证缓存清除后 Worker/WSS 的首次挑战、真实网络端点、WFP 端口抢占，也没有给出 ChatGPT 页面加载性能基线；不得把本地测试通过扩大成完整认证或网络保护门槛通过。
+`probeMihomoAuthentication` 是独立的入口凭据诊断，不是网页响应来源分类器。它在三个新连接上向已登记的数值回环入口发送不含转发目标的 origin-form `GET /`：无密码必须返回 Basic 407、随机错误密码必须返回 403、指定密码按此版本 mihomo 的本地处理路径应返回 400。正确/错误凭据与未确认状态分别报告；未知响应、超时、免认证或忽略错误密码都不能判定通过。真实 mihomo 实验确认这些请求未到达上游；网页 403 仍交由网页处理。该检查不填充 Chrome 认证缓存，不证明端口归属或每个业务请求被认证，未接入生产启动流程，也不能替代 WFP 和进程代次检查。
+
+**冷 WSS 是已复现的 M1 阻塞项。** 全新 Profile 从 `about:blank` 发起 WSS 时，Chrome 155 没有发送 `Fetch.authRequired`，只返回 `Network.webSocketFrameError: Proxy authentication failed`。另一个全新 Profile 先通过 HTTPS 完成代理认证，再回到 `about:blank` 连接同一 WSS 端点即可成功。有头/后台均复现。原型现在将该确切错误标为 `control_error` 并关闭 Job；这只是失败处理，未修复冷 WSS 支持，不自动重发请求。验收用例保留失败断言，输出 `passed: false`。
+
+同一冷认证用例还单独验证了全新 Profile 中 dedicated Worker 的第一次 HTTPS fetch，确有新的代理挑战并成功抵达上游。它不覆盖 shared/service Worker，也不等于运行中清空认证缓存后的所有行为。[CDP 实现](https://chromium.googlesource.com/chromium/src/+/main/content/browser/devtools/protocol/network_handler.cc) 的清 Cookie 与清网页缓存不能当作清代理认证缓存。本轮使用全新 Profile 实证冷状态，尚未声称运行中缓存清除已经验收。
+
+尚未覆盖运行中认证缓存失效后的恢复、shared/service Worker 冷状态、真实网络端点、WFP 端口抢占，也没有给出 ChatGPT 页面加载性能基线；不得把已有本地测试通过扩大成完整认证或网络保护门槛通过。运行整个认证矩阵会包含冷 WSS 两项失败，这是当前验收结果，不能改成预期成功、跳过或仅靠预热后通过。
 
 页面请求等待初始化回执；Service Worker 安装阶段的 fetch 有不同约束：Fetch 认证拦截和递归附加必须先确认，随后将身份与观察命令按序排入同一通道，再允许请求继续，以免安装 fetch 和初始化回执互相等待。后续命令错误或无响应仍触发关闭处理；不能将“命令已经发出”记录成“网络已经冻结”。
 

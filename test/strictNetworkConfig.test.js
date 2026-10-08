@@ -3,6 +3,18 @@ import assert from "node:assert/strict";
 import { buildStrictProxyConfig, normalizeStrictUpstream, newProxyCredentials,
   strictBrowserArguments, getStrictNetworkCapabilities } from "../src/network/strictConfig.js";
 
+test("strict compiler preserves certificate verification and rejects malformed bypass values", () => {
+  for (const type of ["http", "socks5", "anytls", "hysteria2", "tuic", "vmess", "vless"]) {
+    const raw = { type, server: "node.example", port: 443, tls: true };
+    for (const value of [true, "true", "false", 1, 0, null, [], {}]) {
+      assert.throws(() => normalizeStrictUpstream({ ...raw, "skip-cert-verify": value }, "192.0.2.1"),
+        { code: "STRICT_CONFIG_UNSUPPORTED" }, `${type}: ${JSON.stringify(value)}`);
+    }
+    assert.equal(normalizeStrictUpstream({ ...raw, "skip-cert-verify": false }, "192.0.2.1").upstream["skip-cert-verify"], false);
+    assert.equal(normalizeStrictUpstream(raw, "192.0.2.1").upstream["skip-cert-verify"], undefined);
+  }
+});
+
 test("strict compiler pins the endpoint and preserves the original TLS and WS identity", () => {
   const raw = { name: "source", type: "vmess", server: "node.example", port: 443, uuid: "test",
     tls: true, network: "ws", "ws-opts": { path: "/tunnel" } };

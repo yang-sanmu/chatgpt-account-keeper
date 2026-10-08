@@ -38,6 +38,9 @@ export function normalizeStrictUpstream(raw, approvedAddress) {
   object(raw, "节点");
   if (!Object.hasOwn(FIELDS, raw.type)) throw invalid("此节点协议尚未适配严格模式");
   onlyKeys(raw, [...COMMON, ...FIELDS[raw.type]], "节点");
+  if (raw["skip-cert-verify"] !== undefined && raw["skip-cert-verify"] !== false) {
+    throw invalid("严格模式不允许跳过上游证书校验；skip-cert-verify 只能为 false 或省略");
+  }
   if (!isIP(approvedAddress) || approvedAddress.includes("%")) throw invalid("必须提供已批准的数值上游地址");
   if (typeof raw.server !== "string" || !raw.server || /[\s\0/@?#\\]/u.test(raw.server)) throw invalid("节点服务器无效");
   port(raw.port, "节点端口");

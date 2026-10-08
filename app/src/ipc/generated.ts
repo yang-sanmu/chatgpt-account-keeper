@@ -369,9 +369,9 @@ export interface EnvironmentSnapshot {
   version: number;
   groupId: string | null;
   locale: string;
-  timezoneId: string;
-  localeSource: "account" | "group_manual" | "group_auto" | "system";
-  timezoneSource: "account" | "group_manual" | "group_auto" | "system";
+  timezoneId: string | null;
+  localeSource: "account" | "group_manual" | "group_auto" | "application_default";
+  timezoneSource: "account" | "group_manual" | "group_auto" | "browser_default";
 }
 /**
  * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
@@ -382,6 +382,7 @@ export interface EnvironmentStateResult {
   next: EnvironmentSnapshot;
   running: EnvironmentSnapshot[];
   pending: boolean;
+  probePending: boolean;
 }
 /**
  * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema

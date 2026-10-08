@@ -48,7 +48,11 @@ test("environment snapshots are immutable; fixed and inherited group movement ha
   const moved = environmentSnapshot({ account: { ...account, groupId: "b" }, environment: { ...config, locale: "de-DE" }, system });
   assert.equal(environmentPending(fixed, moved), false);
   const inherit = environmentSnapshot({ account, environment: { mode: "inherit", version: 0 }, system });
-  assert.equal(inherit.locale, "zh-CN"); assert.equal(inherit.localeSource, "system");
+  assert.equal(inherit.locale, "zh-CN"); assert.equal(inherit.localeSource, "application_default");
+  assert.equal(inherit.timezoneId, null); assert.equal(inherit.timezoneSource, "browser_default");
+  const foreignSystem = environmentSnapshot({ account, environment: { mode: "inherit", version: 0 },
+    system: { locale: "en-US", timeZone: "America/New_York" } });
+  assert.deepEqual(foreignSystem, inherit, "Node's ICU defaults must not replace the legacy Chrome launch defaults");
   const detected = environmentSnapshot({ account, environment: { mode: "inherit", version: 0 }, system,
     group: { tzManual: false }, region: { timezoneId: "Europe/Berlin", locale: "de-DE" } });
   assert.equal(environmentPending(inherit, detected), true);
@@ -66,9 +70,17 @@ test("IPC environment edits preserve old account DTOs, reject stale writes and r
   const call = (method, params) => services.execute({ method, params, commandId: randomUUID() });
   const before = await call("environments.get", { accountId: "a" });
   assertMethodResultContract("environments.get", before); assert.equal(before.pending, false);
+  assert.equal(before.probePending, false);
+  repository.replaceProxyNodes([{ id: "node", name: "Test node", raw: { type: "http", server: "127.0.0.1", port: 23001 } }]);
+  repository.saveGroup({ id: "unprobed", name: "Unprobed", proxyId: "node" });
+  repository.updateAccount("a", { groupId: "unprobed" });
+  const preview = await call("environments.get", { accountId: "a" });
+  assert.equal(preview.probePending, true);
+  assert.equal(preview.next.timezoneId, null);
   const params = { accountId: "a", locale: "en-US", timezone: "America/New_York", expectedVersion: 0 };
   const request = { method: "environments.update", params, commandId: randomUUID() };
   const updated = await services.execute(request); assert.equal(updated.pending, true);
+  assert.equal(updated.probePending, false);
   assertMethodResultContract("environments.update", updated);
   assert.deepEqual(await services.execute(request), updated); assert.equal(store.getAccountEnvironment("a").version, 1);
   await assert.rejects(call("environments.update", params), { code: "RESOURCE_BUSY" });

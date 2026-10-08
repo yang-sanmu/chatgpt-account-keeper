@@ -1,3 +1,7 @@
+// Preserve the application's pre-environment-management language default.
+// The absence of a timezone override means Chrome decides it, not Node's ICU.
+export const DEFAULT_BROWSER_LOCALE = "zh-CN";
+
 export function inheritedEnvironment(accountId) {
   return Object.freeze({ accountId, mode: "inherit", locale: null, timezone: null, version: 0, updatedAt: null });
 }
@@ -14,15 +18,15 @@ export function validateFixedEnvironment(input) {
   } catch { throw invalid(); }
 }
 
-export function environmentSnapshot({ account, environment, group, region = {}, system = Intl.DateTimeFormat().resolvedOptions() }) {
+export function environmentSnapshot({ account, environment, group, region = {} }) {
   const fixed = environment.mode === "fixed";
   const source = fixed ? "account" : group?.tzManual ? "group_manual" : "group_auto";
   return Object.freeze({ mode: environment.mode, version: environment.version,
     groupId: fixed ? null : account.groupId ?? null,
-    locale: (fixed ? environment.locale : region.locale) || system.locale,
-    timezoneId: (fixed ? environment.timezone : region.timezoneId) || system.timeZone,
-    localeSource: fixed || region.locale ? source : "system",
-    timezoneSource: fixed || region.timezoneId ? source : "system" });
+    locale: (fixed ? environment.locale : region.locale) || DEFAULT_BROWSER_LOCALE,
+    timezoneId: (fixed ? environment.timezone : region.timezoneId) || null,
+    localeSource: fixed || region.locale ? source : "application_default",
+    timezoneSource: fixed || region.timezoneId ? source : "browser_default" });
 }
 
 export function environmentPending(current, next) {

@@ -24,6 +24,7 @@ import * as proxyModule from "../proxyManager.js";
 import {
   clearRegionCache as defaultClearRegionCache,
   localeForTimezone,
+  previewGroupRegion,
   resolveRegionForAccount as defaultResolveRegionForAccount,
 } from "../geo.js";
 import {
@@ -832,13 +833,11 @@ export class ApplicationServices {
     const configuration = this.runtime.store.getAccountEnvironment(accountId);
     const group = account.groupId ? this.runtime.store.getGroup(account.groupId) : null;
     // Queries do not run public probes or mutate automatically detected settings.
-    const region = group?.proxyId && group.timezone ? {
-      timezoneId: group.timezone,
-      locale: (!group.tzManual && localeForTimezone(group.timezone)) || group.locale || localeForTimezone(group.timezone),
-    } : {};
+    const { region, needsProbe } = previewGroupRegion(group);
     const next = environmentSnapshot({ account, environment: configuration, group, region });
     const running = this.runtime.getBrowserEnvironmentSnapshots(accountId);
-    return { configuration, next, running, pending: running.some(current => environmentPending(current, next)) };
+    return { configuration, next, running, probePending: configuration.mode === "inherit" && needsProbe,
+      pending: running.some(current => environmentPending(current, next)) };
   }
 
   _environmentsUpdate(params) {

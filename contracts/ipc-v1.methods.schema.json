@@ -36,19 +36,20 @@
       "required": ["mode", "version", "groupId", "locale", "timezoneId", "localeSource", "timezoneSource"],
       "properties": {
         "mode": { "enum": ["inherit", "fixed"] }, "version": { "type": "integer", "minimum": 0 },
-        "groupId": { "type": ["string", "null"] }, "locale": { "type": "string" }, "timezoneId": { "type": "string" },
-        "localeSource": { "enum": ["account", "group_manual", "group_auto", "system"] },
-        "timezoneSource": { "enum": ["account", "group_manual", "group_auto", "system"] }
+        "groupId": { "type": ["string", "null"] }, "locale": { "type": "string" }, "timezoneId": { "type": ["string", "null"] },
+        "localeSource": { "enum": ["account", "group_manual", "group_auto", "application_default"] },
+        "timezoneSource": { "enum": ["account", "group_manual", "group_auto", "browser_default"] }
       }
     },
     "environmentStateResult": {
       "type": "object", "additionalProperties": false,
-      "required": ["configuration", "next", "running", "pending"],
+      "required": ["configuration", "next", "running", "pending", "probePending"],
       "properties": {
         "configuration": { "$ref": "#/$defs/environmentConfiguration" },
         "next": { "$ref": "#/$defs/environmentSnapshot" },
         "running": { "type": "array", "items": { "$ref": "#/$defs/environmentSnapshot" } },
-        "pending": { "type": "boolean" }
+        "pending": { "type": "boolean" },
+        "probePending": { "type": "boolean" }
       }
     },
     "networkCapabilitiesResult": {

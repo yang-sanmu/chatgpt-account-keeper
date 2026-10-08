@@ -6,8 +6,19 @@ import {
   localeForTimezone,
   resolveRegionForAccount,
   toLaunchRegion,
+  previewGroupRegion,
 } from "../src/geo.js";
 import { configureStoreBackend } from "../src/store.js";
+
+test("region preview shares manual/automatic selection and distinguishes an unresolved probe", () => {
+  assert.deepEqual(previewGroupRegion(null), { region: {}, needsProbe: false });
+  assert.deepEqual(previewGroupRegion({ timezone: "Asia/Seoul" }), { region: {}, needsProbe: false });
+  assert.deepEqual(previewGroupRegion({ proxyId: "node" }), { region: {}, needsProbe: true });
+  const group = Object.freeze({ proxyId: "node", timezone: "Asia/Kolkata", locale: "en-US", tzManual: false });
+  assert.deepEqual(previewGroupRegion(group), { region: { timezoneId: "Asia/Kolkata", locale: "en-IN" }, needsProbe: false });
+  assert.deepEqual(previewGroupRegion({ ...group, tzManual: true }), { region: { timezoneId: "Asia/Kolkata", locale: "en-US" }, needsProbe: false });
+  assert.deepEqual(previewGroupRegion({ proxyId: "node", timezone: "Etc/GMT+1" }), { region: { timezoneId: "Etc/GMT+1" }, needsProbe: true });
+});
 
 test("toLaunchRegion omits region entirely when no timezone is known", () => {
   // 探测失败时必须返回空对象：宁可沿用浏览器默认，也不要设一个错的时区。

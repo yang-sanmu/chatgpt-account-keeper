@@ -241,10 +241,20 @@ export function localeForTimezone(timezone) {
   );
 }
 
+// Read-only preview shared by the UI and startup. Missing values may still be
+// discovered at startup; a query must not present a fallback as a final result.
+export function previewGroupRegion(group) {
+  if (!group?.proxyId) return { region: {}, needsProbe: false };
+  if (!group.timezone) return { region: {}, needsProbe: true };
+  const timezoneLocale = localeForTimezone(group.timezone);
+  const locale = !group.tzManual && timezoneLocale ? timezoneLocale : group.locale || timezoneLocale;
+  return { region: toLaunchRegion({ ...group, locale }), needsProbe: !locale };
+}
+
 /**
  * 解析某账号应该用的 { timezoneId, locale }。
  * 优先用分组上已配置/已探测的值；没有就现探测一次并落盘。
- * 未绑定节点的账号返回空对象（跟随本机，本来就一致）。
+ * 未绑定节点的账号返回空对象（保留原启动默认值）。
  */
 export async function resolveRegionForAccount(account, dependencies = {}) {
   const groupId = account?.groupId;
@@ -256,14 +266,12 @@ export async function resolveRegionForAccount(account, dependencies = {}) {
   // timezone、没有 locale 时，先从无歧义的 IANA 时区回填。自动分组上已有但与
   // 时区明显冲突的旧 locale 也要修正，例如 Asia/Kolkata 不应继续保留 en-US。
   if (group.timezone) {
-    const timezoneLocale = localeForTimezone(group.timezone);
-    const locale = !group.tzManual && timezoneLocale
-      ? timezoneLocale
-      : group.locale || timezoneLocale;
+    const { region } = previewGroupRegion(group);
+    const locale = region.locale;
     if (locale && locale !== group.locale) {
       saveDetectedRegion(groupId, { locale });
     }
-    if (locale) return toLaunchRegion({ ...group, locale });
+    if (locale) return region;
     // 不在本地时区表里的冷门出口继续向下探测一次国家码；探测失败仍保留
     // 已知时区，不会因为缺语言阻断浏览器。
   }

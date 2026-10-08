@@ -7,10 +7,21 @@ import { AccountEnvironmentPanel } from "../account-environment-panel";
 function result(mode: "inherit" | "fixed" = "inherit", version = 0): EnvironmentStateResult {
   return { configuration: { accountId: "a", mode, locale: mode === "fixed" ? "de-DE" : null,
     timezone: mode === "fixed" ? "Europe/Berlin" : null, version, updatedAt: null },
-  next: { mode, version, groupId: null, locale: "de-DE", timezoneId: "Europe/Berlin", localeSource: "system", timezoneSource: "system" },
-  running: [], pending: version > 0 };
+  next: { mode, version, groupId: null, locale: "de-DE", timezoneId: "Europe/Berlin", localeSource: "group_manual", timezoneSource: "group_manual" },
+  running: [], pending: version > 0, probePending: false };
 }
 beforeEach(() => { tauri.reset(); tauri.onInvoke("plugin:window|is_visible", () => true); });
+
+it("shows unresolved group detection and does not invent a Chrome timezone", async () => {
+  const preview = result(); preview.probePending = true;
+  preview.next = { ...preview.next, locale: "zh-CN", timezoneId: null, localeSource: "application_default", timezoneSource: "browser_default" };
+  tauri.onMethod("environments.get", () => preview);
+  render(<AccountEnvironmentPanel accountId="a" />);
+  expect(await screen.findByText(/分组地区尚未完整探测/)).toBeVisible();
+  expect(screen.getByText(/Chrome 默认（不覆盖）/)).toBeVisible();
+  expect(screen.getByLabelText("时区")).toHaveValue("");
+  expect(screen.getByLabelText("语言")).toHaveValue("zh-CN");
+});
 
 it("saves a versioned fixed environment and explicitly restores inheritance", async () => {
   tauri.onMethod("environments.get", () => result());

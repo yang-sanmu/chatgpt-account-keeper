@@ -25,7 +25,7 @@ for (const headless of [true, false]) {
     const identity = headless ? await probeHeadlessIdentity("chrome") : null;
     const launched = await launcher.launch({ userDataDir: profile, launchArgs: { timezoneId: "Europe/Berlin", locale: "de-DE",
       proxy: { server: `http://127.0.0.1:${await reserveLocalDebugPort()}`, bypass: "127.0.0.1" } },
-    headless, headlessIdentity: identity, accountId: "environment-fixture", runToken: token });
+    headless, headlessIdentity: identity, environmentMode: "fixed", accountId: "environment-fixture", runToken: token });
     context = launched.context; const page = launched.page; const url = `http://127.0.0.1:${server.address().port}`;
     await page.goto(url);
     const check = value => { assert.equal(value.timezone, "Europe/Berlin"); assert.equal(value.locale, "de-DE"); assert.equal(value.language, "de-DE"); };

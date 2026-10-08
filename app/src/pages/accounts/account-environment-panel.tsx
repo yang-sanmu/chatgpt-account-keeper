@@ -20,7 +20,7 @@ function queryEnvironment(accountId: string, active: () => boolean) {
   return pending;
 }
 
-const sources = { account: "账号固定", group_manual: "分组手动配置", group_auto: "分组自动探测", system: "本机值（探测成功后可更新）" };
+const sources = { account: "账号固定", group_manual: "分组手动配置", group_auto: "分组自动探测", application_default: "应用默认（zh-CN）", browser_default: "Chrome 默认（不覆盖）" };
 
 export function AccountEnvironmentPanel({ accountId }: { accountId: string }) {
   const [state, setState] = React.useState<EnvironmentStateResult | null>(null);
@@ -39,7 +39,7 @@ export function AccountEnvironmentPanel({ accountId }: { accountId: string }) {
     setState(next);
     if (!dirty.current) {
       setLocale(next.configuration.locale ?? next.next.locale);
-      setTimezone(next.configuration.timezone ?? next.next.timezoneId);
+      setTimezone(next.configuration.timezone ?? next.next.timezoneId ?? "");
       version.current = next.configuration.version;
     }
   }, []);
@@ -77,6 +77,7 @@ export function AccountEnvironmentPanel({ accountId }: { accountId: string }) {
     <p className="font-medium">浏览器环境 · {state ? state.configuration.mode === "fixed" ? "账号固定" : "继承分组" : "读取中"}</p>
     <p className="text-muted">修改在下次打开时生效，登录数据保留。固定后换组也保留语言和时区。</p>
     {state && <p className="text-muted">版本 {state.configuration.version} · 语言：{sources[state.next.localeSource]} · 时区：{sources[state.next.timezoneSource]}</p>}
+    {state?.probePending && <p className="text-muted">分组地区尚未完整探测，下次启动会先尝试探测；当前显示的是未探测时的默认值。</p>}
     {state?.pending && <p role="status">待生效：版本 {state.configuration.version}；当前窗口保持启动时的环境。</p>}
     <div className="space-y-1">
       <Label htmlFor={`environment-locale-${accountId}`} className="text-xs">语言</Label>
@@ -85,7 +86,7 @@ export function AccountEnvironmentPanel({ accountId }: { accountId: string }) {
     </div>
     <div className="space-y-1">
       <Label htmlFor={`environment-timezone-${accountId}`} className="text-xs">时区</Label>
-      <Input id={`environment-timezone-${accountId}`} className="h-8 text-xs" placeholder="Asia/Shanghai" value={timezone} disabled={!state || saving}
+      <Input id={`environment-timezone-${accountId}`} className="h-8 text-xs" placeholder="固定时填写，例如 Asia/Shanghai" value={timezone} disabled={!state || saving}
         onChange={e => { dirty.current = true; setTimezone(e.target.value); }} />
     </div>
     <div className="flex flex-wrap gap-1">

@@ -3,8 +3,36 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { waitForDevToolsEndpoint } from "../src/browser.js";
+import { waitForDevToolsEndpoint, configureChromeLauncher, getChromeLauncher, launchForAccount } from "../src/browser.js";
 import { ChromeProcessLauncher } from "../src/chromeProcessLauncher.js";
+import { configureStoreBackend } from "../src/store.js";
+import { fromRoot } from "../src/paths.js";
+
+test("account launch preserves inherited defaults and only forwards an explicit fixed environment", async t => {
+  const fixtureRoot = path.join(fromRoot(), "tmp");
+  fs.mkdirSync(fixtureRoot, { recursive: true });
+  const profile = fs.mkdtempSync(path.join(fixtureRoot, "keeper-launch-environment-"));
+  const account = { id: "launch-environment-test", profileDir: path.relative(fromRoot(), profile), groupId: null };
+  let environment = { mode: "inherit", version: 0 };
+  const restoreStore = configureStoreBackend({ getAccount: () => account,
+    getAccountEnvironment: () => environment, effectiveProxyId: () => null });
+  const previous = getChromeLauncher(); const captured = [];
+  const stop = new Error("stop before creating a real browser");
+  configureChromeLauncher({ launch: async options => { captured.push(options); throw stop; } });
+  t.after(() => {
+    configureChromeLauncher(previous); restoreStore();
+    assert.equal(path.dirname(profile), fixtureRoot); fs.rmSync(profile, { recursive: true, force: true });
+  });
+  await assert.rejects(launchForAccount(account, { headless: false, runToken: "inherit" }), error => error === stop);
+  assert.equal(captured[0].launchArgs.locale, "zh-CN");
+  assert.equal(Object.hasOwn(captured[0].launchArgs, "timezoneId"), false);
+  assert.equal(captured[0].environmentMode, "inherit");
+  environment = { mode: "fixed", version: 1, locale: "de-DE", timezone: "Europe/Berlin" };
+  await assert.rejects(launchForAccount(account, { headless: false, runToken: "fixed" }), error => error === stop);
+  assert.equal(captured[1].launchArgs.locale, "de-DE");
+  assert.equal(captured[1].launchArgs.timezoneId, "Europe/Berlin");
+  assert.equal(captured[1].environmentMode, "fixed");
+});
 
 // Exercise the real polling loop and filesystem. Only elapsed time is accelerated;
 // a late Chrome endpoint should not require a 12-second test on every run.
@@ -202,6 +230,30 @@ test("launcher preserves the identity barrier before Playwright attach", async (
   assert.deepEqual(events, ["launch", "barrier", "connect"]);
   assert.equal(result.rootPid, 123);
   assert.equal(result.endpoint, "http://127.0.0.1:32123");
+});
+
+test("inherited headed windows keep language arguments without a fatal environment barrier", async () => {
+  for (const launchArgs of [{ locale: "zh-CN" }, { locale: "de-DE", timezoneId: "Europe/Berlin" }]) {
+    const { events, launch } = launcherFixture({
+      reserveLocalDebugPort: async () => 32123,
+      waitForInteractiveCdp: async () => {},
+      installIdentityBarrier: async () => { throw new Error("inherited headed window must not install this barrier"); },
+    });
+    await launch({ headless: false, headlessIdentity: null, launchArgs });
+    assert.deepEqual(events, ["launch", "connect"]);
+  }
+});
+
+test("fixed headed environments install before attach and reject initialization failure", async () => {
+  const options = { headless: false, headlessIdentity: null, environmentMode: "fixed",
+    launchArgs: { locale: "de-DE", timezoneId: "Europe/Berlin" } };
+  const fixture = launcherFixture({ reserveLocalDebugPort: async () => 32123, waitForInteractiveCdp: async () => {} });
+  await fixture.launch(options);
+  assert.deepEqual(fixture.events, ["launch", "barrier", "connect"]);
+  const failed = launcherFixture({ reserveLocalDebugPort: async () => 32123, waitForInteractiveCdp: async () => {},
+    installIdentityBarrier: async () => { throw new Error("locale initialization failed"); } });
+  await assert.rejects(failed.launch(options), /locale initialization failed/);
+  assert.deepEqual(failed.events, ["launch"], "no business attachment after an explicit fixed environment fails");
 });
 
 test("headless readiness normalizes the queue's string cancellation reason", async (t) => {

@@ -80,6 +80,7 @@ export class ChromeProcessLauncher {
     headless,
     accountId,
     headlessIdentity = null,
+    environmentMode = "inherit",
     runToken,
     signal = null,
   }) {
@@ -125,7 +126,7 @@ export class ChromeProcessLauncher {
 
       // 3) 先装身份屏障并处理完既有 Target，之后才允许 Playwright attach。
       if (headless && !headlessIdentity) throw new Error("缺少 Headless 浏览器身份信息");
-      if (headless || launchArgs.timezoneId || launchArgs.locale) {
+      if (headless || environmentMode === "fixed") {
         barrier = await this._installBarrier({
           endpoint,
           identity: headlessIdentity,

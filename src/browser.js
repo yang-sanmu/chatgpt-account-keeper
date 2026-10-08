@@ -9,7 +9,7 @@ import { fromRoot, ensureDir } from "./paths.js";
 import { proxyForAccount, ensureRunning } from "./proxyManager.js";
 import { getAccount, effectiveProxyId, getAccountEnvironment, getGroup } from "./store.js";
 import { resolveRegionForAccount } from "./geo.js";
-import { environmentSnapshot } from "./environmentConfig.js";
+import { DEFAULT_BROWSER_LOCALE, environmentSnapshot } from "./environmentConfig.js";
 import { scheduleProfileCacheMaintenance } from "./profileMaintenance.js";
 import { replaceFileSync } from "./atomicFile.js";
 import { throwIfCancelled } from "./cancellation.js";
@@ -879,7 +879,7 @@ export function baseLaunchArgs(headless) {
     // 有头窗口使用 Chrome 原生窗口尺寸并强制从最大化状态启动，避免 Profile 中
     // 由 Headless/远程桌面留下的窗口位置让窗口落到屏幕外或保持最小化。
     viewport: headless ? { width: 1280, height: 900 } : null,
-    locale: "zh-CN",
+    locale: DEFAULT_BROWSER_LOCALE,
     args: [
       // 有头窗口由 Chrome 原生进程启动；不要给验证脚本留下这个反自动化开关。
       // Headless 后台任务仍需要它配合浏览器级身份恢复。
@@ -1451,7 +1451,7 @@ export async function launchForAccount(account, opts = {}) {
   const region = environment.mode === "fixed" ? {} : await resolveRegionForAccount(liveAccount);
   const snapshot = environmentSnapshot({ account: liveAccount, environment,
     group: liveAccount.groupId ? getGroup(liveAccount.groupId) : null, region });
-  launchArgs.timezoneId = snapshot.timezoneId;
+  if (snapshot.timezoneId) launchArgs.timezoneId = snapshot.timezoneId;
   launchArgs.locale = snapshot.locale;
 
   // 即使没有绑定私有节点，Chrome 也可能跟随系统 HTTP 代理；WebRTC UDP 不会
@@ -1486,6 +1486,7 @@ export async function launchForAccount(account, opts = {}) {
       headless,
       accountId: liveAccount.id,
       headlessIdentity,
+      environmentMode: environment.mode,
       runToken,
       signal: opts.signal ?? null,
     });
@@ -1498,6 +1499,11 @@ export async function launchForAccount(account, opts = {}) {
       activeBrowserContexts.delete(launched.context);
       if (!browserShutdownRequested) scheduleProfileCacheMaintenance(liveAccount.id);
     });
+    // Inherited environments retain the existing headed timezone
+    // behavior. Only an explicitly fixed account opts into the fatal barrier.
+    if (!headless && environment.mode !== "fixed" && launchArgs.timezoneId) {
+      await applyInteractiveTimezone(launched.context, launched.page, launchArgs.timezoneId);
+    }
     return launched;
   }
 

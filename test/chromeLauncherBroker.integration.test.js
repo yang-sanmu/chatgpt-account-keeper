@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { openWindowsProcessObserver } from "./helpers/windowsProcessObserver.js";
 import {
   BROKER_PROTOCOL_VERSION,
   ChromeLauncherBroker,
@@ -282,6 +283,7 @@ test(
     const broker = new ChromeLauncherBroker();
     const profiles = [tempProfile("crash1"), tempProfile("crash2")];
     const roots = [];
+    let observer;
     try {
       await broker.start();
       for (const profile of profiles) {
@@ -292,7 +294,7 @@ test(
           "--headless=new",
           "about:blank",
         ]);
-        roots.push(launched.rootPid);
+        roots.push(launched);
       }
       await new Promise((resolve) => setTimeout(resolve, 6_000));
 
@@ -307,18 +309,33 @@ test(
       assert.equal(refused.code, "ACTIVE_RUNS_REMAIN");
       assert.equal(refused.activeCount, 2);
 
+      observer = await openWindowsProcessObserver(roots.map(root => root.rootPid));
+      for (const [index, root] of roots.entries()) {
+        const observed = observer.initial[index];
+        // The existing broker wire format uses JSON numbers for FILETIME. Compare
+        // at that same precision, then retain the observer's exact decimal string.
+        assert.equal(Number(observed.creationFileTime), root.rootStartTime);
+        assert.equal(observed.state, "running", "The pre-crash positive control must still be alive");
+      }
       broker.killForTest();
+      const killedAt = Date.now();
       await new Promise((resolve) => setTimeout(resolve, 6_000));
-      for (const rootPid of roots) {
+      const observed = await observer.snapshot();
+      t.diagnostic(JSON.stringify({ kind: "broker-crash-root-exit", elapsedMs: Date.now() - killedAt, processes: observed }));
+      for (const [index, root] of observed.entries()) {
+        assert.equal(root.creationFileTime, observer.initial[index].creationFileTime);
         assert.equal(
-          processAlive(rootPid),
-          false,
-          `broker 崩溃后 root ${rootPid} 仍存活，KILL_ON_JOB_CLOSE 未生效`
+          root.state,
+          "exited",
+          `broker 崩溃后原始 root ${root.pid} 尚未退出（creationFileTime=${root.creationFileTime}）`
         );
       }
     } finally {
-      await broker.dispose();
-      for (const profile of profiles) removeProfile(profile);
+      try { await observer?.close(); }
+      finally {
+        await broker.dispose();
+        for (const profile of profiles) removeProfile(profile);
+      }
     }
   }
 );
@@ -368,15 +385,6 @@ $seen -join ','`;
     .split(",")
     .map((value) => Number(value.trim()))
     .filter((value) => Number.isInteger(value) && value > 0);
-}
-
-function processAlive(pid) {
-  const result = spawnSync(
-    "powershell.exe",
-    ["-NoProfile", "-Command", `[bool](Get-CimInstance Win32_Process -Filter "ProcessId=${pid}" -EA SilentlyContinue)`],
-    { encoding: "utf8" }
-  );
-  return String(result.stdout ?? "").trim() === "True";
 }
 
 void repositoryRoot;

@@ -10,9 +10,9 @@ import { WebSocketServer } from "ws";
 import { stringify } from "yaml";
 import { ChromeLauncherBroker, resolveBrokerExecutable } from "../src/chromeLauncherBroker.js";
 import { buildLaunchArgs } from "../src/chromeProcessLauncher.js";
-import { RawCdpConnection, findChromeExecutable, reserveLocalDebugPort, waitForDevToolsEndpoint, waitForInteractiveCdp } from "../src/browser.js";
+import { RawCdpConnection, findChromeExecutable, probeHeadlessIdentity, reserveLocalDebugPort, waitForDevToolsEndpoint, waitForInteractiveCdp } from "../src/browser.js";
 import { buildStrictProxyConfig, newProxyCredentials, STRICT_RESOLVER_ARGUMENT } from "../src/network/strictConfig.js";
-import { installProxyAuthBarrier } from "../src/network/proxyAuthBarrier.js";
+import { installBrowserStartupBarrier } from "../src/network/browserStartupBarrier.js";
 
 // Explicit opt-in: uses only newly created test Profiles; never installs WFP rules.
 const enabled = process.env.GPT_ACCOUNT_NETWORK_LAB === "1" && process.platform === "win32";
@@ -55,6 +55,7 @@ for (const headless of [true, false]) {
     const observations = { originRequests: 0, originReceivedProxyPassword: false, websiteReceivedAuthorization: false, upstreamRequests: 0 };
     const credentials = [newProxyCredentials(), newProxyCredentials()];
     const report = { kind: "loopback-auth", headless, wfpVerified: false, productionReady: false, checks: [] };
+    const firstWorkerEnvironment = 'const first = { timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, locale: Intl.DateTimeFormat().resolvedOptions().locale, language: navigator.language, ua: navigator.userAgent };';
     const mark = (check) => report.checks.push(check);
     let browser; let barrier; let failure; let rawCdp;
     const servers = [];
@@ -85,11 +86,14 @@ for (const headless of [true, false]) {
         if (req.headers.authorization) observations.websiteReceivedAuthorization = true;
         res.writeHead(401, { "WWW-Authenticate": 'Basic realm="website"' }); res.end("website authentication"); return;
       }
-      if (req.url === "/worker.js") { res.setHeader("Content-Type", "text/javascript"); res.end('fetch("/worker-fetch").then(r=>r.text()).then(v=>postMessage(v))'); return; }
-      if (req.url === "/shared.js") { res.setHeader("Content-Type", "text/javascript"); res.end('onconnect=e=>fetch("/shared-fetch").then(r=>r.text()).then(v=>e.ports[0].postMessage(v))'); return; }
-      if (req.url === "/sw.js") { res.setHeader("Content-Type", "text/javascript"); res.end('addEventListener("install",e=>e.waitUntil(fetch("/service-fetch"))); addEventListener("activate",e=>e.waitUntil(clients.claim()))'); return; }
+      if (req.url === "/worker.js") { res.setHeader("Content-Type", "text/javascript"); res.end(firstWorkerEnvironment + 'fetch("/worker-fetch").then(r=>r.text()).then(value=>postMessage({value,first}))'); return; }
+      if (req.url === "/shared.js") { res.setHeader("Content-Type", "text/javascript"); res.end(firstWorkerEnvironment + 'onconnect=e=>fetch("/shared-fetch").then(r=>r.text()).then(value=>e.ports[0].postMessage({value,first}))'); return; }
+      if (req.url === "/sw.js") { res.setHeader("Content-Type", "text/javascript"); res.end(firstWorkerEnvironment + 'addEventListener("install",e=>e.waitUntil(fetch("/service-fetch"))); addEventListener("activate",e=>e.waitUntil(clients.claim())); addEventListener("message",e=>e.ports[0].postMessage(first))'); return; }
       res.setHeader("Content-Type", req.url?.endsWith("fetch") ? "text/plain" : "text/html");
-      res.end(req.url?.endsWith("fetch") ? "ok" : "<!doctype html><title>network lab</title>");
+      res.end(req.url?.endsWith("fetch") ? "ok" : `<!doctype html><title>network lab</title><script>
+        window.initialEnvironment = { timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          locale: Intl.DateTimeFormat().resolvedOptions().locale, language: navigator.language, ua: navigator.userAgent };
+      </script>`);
     }));
     const originPort = await listen(origin);
     const originUrl = `http://127.0.0.1:${originPort}`;
@@ -134,29 +138,49 @@ for (const headless of [true, false]) {
     assert.equal(await proxyRequest(ports[0], `${originUrl}/allowed`, credentials[0]), 200);
     mark("missing-wrong-cross-group-credentials-denied-before-upstream");
     const profile = path.join(root, "profile"); await fs.mkdir(profile);
+    const identity = headless ? await probeHeadlessIdentity("chrome") : null;
+    const environment = { locale: "de-DE", timezone: "Europe/Berlin" };
     const debugPort = headless ? 0 : await reserveLocalDebugPort();
-    const args = buildLaunchArgs({ userDataDir: profile, launchArgs: { args: [STRICT_RESOLVER_ARGUMENT], proxy: { server: `http://127.0.0.1:${ports[0]}`, bypass: "<-loopback>" } }, headless, debugPort });
+    const args = buildLaunchArgs({ userDataDir: profile, launchArgs: { locale: environment.locale, userAgent: identity?.userAgent,
+      args: [STRICT_RESOLVER_ARGUMENT], proxy: { server: `http://127.0.0.1:${ports[0]}`, bypass: "<-loopback>" } }, headless, debugPort });
     args.unshift("--disable-background-networking");
     const token = broker.newRunToken(); const startedAt = Date.now();
     await broker.launch(token, chrome, args);
     const endpoint = headless ? await waitForDevToolsEndpoint(profile, startedAt) : (await waitForInteractiveCdp(debugPort), `http://127.0.0.1:${debugPort}`);
-    barrier = await installProxyAuthBarrier({ endpoint, proxyOrigin: `http://127.0.0.1:${ports[0]}`, credentials: credentials[0],
-      connect: async endpoint => { rawCdp = await RawCdpConnection.connect(endpoint); return rawCdp; },
+    let rawConnections = 0;
+    barrier = await installBrowserStartupBarrier({ endpoint, proxyOrigin: `http://127.0.0.1:${ports[0]}`, credentials: credentials[0], identity, environment,
+      connect: async endpoint => { rawConnections++; rawCdp = await RawCdpConnection.connect(endpoint); return rawCdp; },
       onFailure(error) { failure = error; void broker.terminate(token); } });
     browser = await chromium.connectOverCDP(endpoint); const context = browser.contexts()[0];
     const page = context.pages()[0]; page.setDefaultTimeout(12_000); page.setDefaultNavigationTimeout(12_000);
     assert.equal((await page.goto(originUrl)).status(), 200); assert.ok(barrier.state.provided > 0); mark("first-navigation-authenticated");
+    const assertEnvironment = first => {
+      assert.equal(first.timezone, environment.timezone); assert.equal(first.locale, environment.locale);
+      assert.equal(first.language, environment.locale); assert.doesNotMatch(first.ua, /HeadlessChrome/u);
+    };
+    const checkEnvironment = async target => assertEnvironment(await target.evaluate(() => window.initialEnvironment));
+    await checkEnvironment(page); assert.equal(rawConnections, 1); mark("combined-environment-auth-first-script");
     assert.equal((await page.goto(`${originUrl}/401`)).status(), 401);
     assert.equal(observations.websiteReceivedAuthorization, false); assert.equal(observations.originReceivedProxyPassword, false); mark("website-401-does-not-receive-proxy-password");
     await page.goto(originUrl);
     const popupPromise = context.waitForEvent("page"); await page.evaluate((url) => window.open(url), `${originUrl}/popup`);
-    const popup = await popupPromise; await popup.waitForLoadState(); await popup.close(); mark("popup");
+    const popup = await popupPromise; await popup.waitForLoadState(); await checkEnvironment(popup); await popup.close(); mark("popup");
     await page.evaluate(() => new Promise((resolve, reject) => { const frame = document.createElement("iframe"); frame.src = "/iframe"; frame.onload = resolve; frame.onerror = reject; document.body.append(frame); })); mark("iframe");
+    await checkEnvironment(page.frames().find(frame => frame.url() === `${originUrl}/iframe`));
     const wsResult = await page.evaluate((port) => new Promise((resolve, reject) => { const s = new WebSocket(`ws://127.0.0.1:${port}/ws`); s.onmessage = e => { resolve(e.data); s.close(); }; s.onerror = reject; }), originPort);
     assert.equal(wsResult, "ok"); mark("websocket");
-    assert.equal(await page.evaluate(() => new Promise((resolve, reject) => { const w = new Worker("/worker.js"); w.onmessage = e => { resolve(e.data); w.terminate(); }; w.onerror = reject; })), "ok"); mark("dedicated-worker");
-    assert.equal(await page.evaluate(() => new Promise((resolve, reject) => { const w = new SharedWorker("/shared.js"); w.port.onmessage = e => { resolve(e.data); w.port.close(); }; w.onerror = reject; })), "ok"); mark("shared-worker");
-    await page.evaluate(async () => { await navigator.serviceWorker.register("/sw.js"); await navigator.serviceWorker.ready; }); mark("service-worker");
+    const dedicated = await page.evaluate(() => new Promise((resolve, reject) => { const w = new Worker("/worker.js"); w.onmessage = e => { resolve(e.data); w.terminate(); }; w.onerror = reject; }));
+    assert.equal(dedicated.value, "ok"); assertEnvironment(dedicated.first); mark("dedicated-worker-first-environment-and-fetch");
+    const shared = await page.evaluate(() => new Promise((resolve, reject) => { const w = new SharedWorker("/shared.js"); w.port.onmessage = e => { resolve(e.data); w.port.close(); }; w.onerror = reject; }));
+    assert.equal(shared.value, "ok"); assertEnvironment(shared.first); mark("shared-worker-first-environment-and-fetch");
+    const service = await page.evaluate(async () => {
+      await navigator.serviceWorker.register("/sw.js"); const registration = await navigator.serviceWorker.ready;
+      return new Promise(resolve => {
+        const channel = new MessageChannel(); channel.port1.onmessage = e => { channel.port1.close(); resolve(e.data); };
+        registration.active.postMessage("initial-environment", [channel.port2]);
+      });
+    });
+    assertEnvironment(service); mark("service-worker-install-fetch-and-first-environment");
     assert.equal(failure, undefined); assert.equal(barrier.state.ready, true);
     rawCdp.socket.terminate();
     assert.equal((await broker.waitForEmpty(token, 10_000)).count, 0); mark("browser-job-empty");

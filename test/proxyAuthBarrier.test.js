@@ -148,3 +148,50 @@ test("a connected CDP transport that stops replying becomes control_error, never
   assert.equal(barrier.state.ready, false); assert.equal(barrier.state.controlState, "control_error");
   assert.equal(Object.hasOwn(barrier.state, "frozen"), false); barrier.close();
 });
+
+test("requested Browser.close disconnect does not kill Chrome while its Profile is flushing", async () => {
+  const cdp = fakeConnection(); const originalSend = cdp.send.bind(cdp); let failures = 0;
+  cdp.send = async (method, params, sessionId) => {
+    const result = originalSend(method, params, sessionId);
+    if (method === "Browser.close") { cdp.disconnect(); throw new Error("CDP connection closed"); }
+    return result;
+  };
+  const barrier = await installBrowserStartupBarrier({ endpoint: "ws://127.0.0.1:9001/browser/test", proxyOrigin: snapshot.origin,
+    credentials: snapshot, connect: async () => cdp, onFailure() { failures++; } });
+  await Promise.all([barrier.requestBrowserClose(), barrier.requestBrowserClose()]);
+  assert.equal(failures, 0); assert.equal(barrier.state.ready, false);
+  assert.equal(barrier.state.controlState, "closing", "CDP disconnect is not a process-close proof");
+  assert.equal(cdp.calls.filter(call => call.method === "Browser.close").length, 1);
+  barrier.close(); assert.equal(barrier.state.controlState, "closed");
+});
+
+test("a requested close without a reply or disconnect still fails and requires fallback", async () => {
+  const cdp = fakeConnection(); const originalSend = cdp.send.bind(cdp); let failures = 0;
+  cdp.send = (method, params, sessionId) => method === "Browser.close" ? new Promise(() => {}) : originalSend(method, params, sessionId);
+  const barrier = await installBrowserStartupBarrier({ endpoint: "ws://127.0.0.1:9001/browser/test", proxyOrigin: snapshot.origin,
+    credentials: snapshot, commandTimeoutMs: 20, connect: async () => cdp, onFailure() { failures++; } });
+  await assert.rejects(barrier.requestBrowserClose(), { code: "PROXY_AUTH_BARRIER_FAILED" });
+  assert.equal(failures, 1); assert.equal(barrier.state.controlState, "control_error"); barrier.close();
+});
+
+test("CONNECT rejection after credentials fails without a repeated challenge; unrelated network errors do not", async () => {
+  for (const [errorText, supplied, completed, shouldFail] of [
+    ["net::ERR_TUNNEL_CONNECTION_FAILED", true, false, true],
+    ["net::ERR_INVALID_AUTH_CREDENTIALS", true, false, true],
+    ["net::ERR_TUNNEL_CONNECTION_FAILED", false, false, false],
+    ["net::ERR_CERT_AUTHORITY_INVALID", true, false, false],
+    ["net::ERR_TUNNEL_CONNECTION_FAILED", true, true, false],
+  ]) {
+    const cdp = fakeConnection(); let failures = 0;
+    const barrier = await installBrowserStartupBarrier({ endpoint: "ws://127.0.0.1:9001/browser/test", proxyOrigin: snapshot.origin,
+      credentials: snapshot, connect: async () => cdp, onFailure() { failures++; } });
+    cdp.emit({ method: "Fetch.requestPaused", sessionId: "s1", params: { requestId: "connect", networkId: "network-connect" } });
+    if (supplied) cdp.emit({ method: "Fetch.authRequired", sessionId: "s1", params: { requestId: "connect",
+      authChallenge: { source: "Proxy", origin: snapshot.origin } } });
+    if (completed) cdp.emit({ method: "Network.loadingFinished", sessionId: "s1", params: { requestId: "network-connect" } });
+    cdp.emit({ method: "Network.loadingFailed", sessionId: "s1", params: { requestId: "network-connect", errorText } });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(failures, Number(shouldFail), `${errorText}, supplied=${supplied}, completed=${completed}`);
+    assert.equal(barrier.state.ready, !shouldFail); barrier.close();
+  }
+});

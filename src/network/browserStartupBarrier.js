@@ -63,6 +63,9 @@ export async function installBrowserStartupBarrier({ endpoint, proxyOrigin, cred
   const networkRequests = new Map();
   const seenTypes = new Set();
   let closed = false;
+  let closing = false;
+  let closeObserved = false;
+  let closeRequest;
   let failure = null;
   let initializing = true;
   let provided = 0;
@@ -70,13 +73,13 @@ export async function installBrowserStartupBarrier({ endpoint, proxyOrigin, cred
   const autoAttach = { autoAttach: true, waitForDebuggerOnStart: true, flatten: true };
 
   const fail = (error) => {
-    if (closed || failure) return;
+    if (closed || failure || (closing && closeObserved)) return;
     // Do not propagate URLs, protocol payloads, or secrets into logs/Operation errors.
     failure = authError(error?.code === -32601 ? "目标不支持认证拦截" : "初始化或运行连接异常");
     failure.details = Object.freeze({ protocolCode: Number.isInteger(error?.code) ? error.code : null,
       targetType: NETWORK_TARGETS.has(error?.targetType) ? error.targetType : null,
       method: ["Fetch.enable", "Target.setAutoAttach", "Runtime.runIfWaitingForDebugger", "Emulation.setUserAgentOverride",
-        "Emulation.setTimezoneOverride", "Emulation.setLocaleOverride", "Fetch.continueRequest", "Fetch.continueWithAuth", "Network.enable"].includes(error?.method) ? error.method : null });
+        "Emulation.setTimezoneOverride", "Emulation.setLocaleOverride", "Fetch.continueRequest", "Fetch.continueWithAuth", "Network.enable", "Network.loadingFailed", "Browser.close"].includes(error?.method) ? error.method : null });
     Promise.resolve().then(() => onFailure(failure)).catch(() => {});
   };
   const track = (task) => {
@@ -168,7 +171,17 @@ export async function installBrowserStartupBarrier({ endpoint, proxyOrigin, cred
     } else if (message.method === "Network.loadingFinished" || message.method === "Network.loadingFailed") {
       // Worker Network events can arrive on a different session than its owner's
       // Fetch events; networkId correlates them without retaining request URLs.
-      for (const key of [...(networkRequests.get(message.params.requestId) ?? [])]) forgetRequest(key);
+      const keys = [...(networkRequests.get(message.params.requestId) ?? [])];
+      // mihomo rejects supplied invalid credentials with 403, not a second 407.
+      // Chrome reports a CONNECT failure rather than another authRequired event.
+      // Fail only a tunnel/auth error on the request still awaiting the result of
+      // our credential response. A site's TLS certificate error is not this case.
+      if (message.method === "Network.loadingFailed"
+        && ["net::ERR_TUNNEL_CONNECTION_FAILED", "net::ERR_INVALID_AUTH_CREDENTIALS"].includes(message.params.errorText)
+        && keys.some(key => attempted.has(key))) {
+        fail(Object.assign(authError("提交代理凭据后隧道失败"), { method: "Network.loadingFailed" }));
+      }
+      for (const key of keys) forgetRequest(key);
     } else if (message.method === "Fetch.authRequired") track(authenticate(message));
     else if (message.method === "Fetch.requestPaused") {
       const { requestId, networkId } = message.params;
@@ -189,7 +202,10 @@ export async function installBrowserStartupBarrier({ endpoint, proxyOrigin, cred
       }
     }
   });
-  connection.onUnexpectedClose(() => fail(authError("CDP 断开")));
+  connection.onUnexpectedClose(() => {
+    if (closing) { closeObserved = true; return; }
+    fail(authError("CDP 断开"));
+  });
   function continueRequest(message) {
     if (!closed && !failure) track(send("Fetch.continueRequest", { requestId: message.params.requestId }, message.sessionId));
   }
@@ -206,10 +222,24 @@ export async function installBrowserStartupBarrier({ endpoint, proxyOrigin, cred
     if (failure) throw failure;
     initializing = false;
     return {
-      get state() { return { ready: !closed && !failure && !initializing, provided, rejected,
-        controlState: failure ? "control_error" : closed ? "closed" : initializing ? "initializing" : "ready",
+      get state() { return { ready: !closed && !closing && !failure && !initializing, provided, rejected,
+        controlState: failure ? "control_error" : closed ? "closed" : closing ? "closing" : initializing ? "initializing" : "ready",
         identityConfigured: !!identitySnapshot, environmentConfigured: !!region,
         targetTypes: [...seenTypes].sort(), activeSessions: sessions.size }; },
+      requestBrowserClose() {
+        if (closeRequest) return closeRequest;
+        if (failure || closed) return Promise.reject(failure ?? authError("屏障已关闭"));
+        // Keep authentication installed during graceful shutdown. Its expected
+        // transport disconnect must not race Profile flushing with a Job kill.
+        // This is only a close request: the caller still needs a bounded wait,
+        // terminate fallback and a separate Job-empty proof before any reuse.
+        closing = true;
+        closeRequest = send("Browser.close").catch(error => {
+          if (closeObserved) return;
+          fail(error); throw failure ?? error;
+        });
+        return closeRequest;
+      },
       close() { closed = true; attempted.clear(); requestNetworks.clear(); networkRequests.clear(); sessions.clear(); connection.close(); },
     };
   } catch (error) {

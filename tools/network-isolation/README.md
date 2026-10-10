@@ -4,6 +4,8 @@
 
 **2026-10-10 方案已更新为 [v4：每组独立 Chrome 路径](../../docs/BROWSER_NETWORK_ISOLATION.md)。本目录代码和示例仍是 v3 的共享 `chromePath` 原型。** 下列步骤只用于旧实验复现与只读检查，不具备 v4 的逐组路径、入口客户端默认拒绝及完整入站保护。不能只删除 mihomo 的 `users` 就运行新路线；新策略模型和启动门槛需先实现，再在专用环境验收。
 
+M1-A 已新增独立的 JavaScript [离线分组模型](../../docs/GROUP_PATH_PLAN.md)：生成逐组程序路径、校验清单和代次冲突，输出四项策略意图与受控配置草案。它不是本 C# 工具的策略格式，不能传给 `run`，也不执行预检查、配置落盘或 WFP 操作。所有输出仍缺少启动授权。
+
 ## 可运行的无策略写入检查
 
 在仓库根目录执行：
@@ -82,7 +84,7 @@ TLS 测试每次在内存生成有效期一天的临时 CA 和有效期 12 小�
 
 **冷 WSS 是已复现的 M1 阻塞项。** 全新 Profile 从 `about:blank` 发起 WSS 时，Chrome 155 没有发送 `Fetch.authRequired`，只返回 `Network.webSocketFrameError: Proxy authentication failed`。另一个全新 Profile 先通过 HTTPS 完成代理认证，再回到 `about:blank` 连接同一 WSS 端点即可成功。有头/后台均复现。原型现在将该确切错误标为 `control_error` 并关闭 Job；这只是失败处理，未修复冷 WSS 支持，不自动重发请求。验收用例保留失败断言，输出 `passed: false`。
 
-已按 `155.0.8059.40` 源码确认普通 WebSocket 认证路径未连接到 Fetch 处理器，不能用增加 CDP 客户端或延长超时作为已验证的修复。版本化源码证据和替代路线的门槛见 [冷 WSS 方案评估](../../docs/COLD_WSS_AUTHENTICATION_REVIEW.md)。每组 Chrome 路径已获用户接受并纳入 v4 计划，尚未实现或启用；扩展替代方案未采用。
+已按 `155.0.8059.40` 源码确认普通 WebSocket 认证路径未连接到 Fetch 处理器，不能用增加 CDP 客户端或延长超时作为已验证的修复。版本化源码证据和替代路线的门槛见 [冷 WSS 方案评估](../../docs/COLD_WSS_AUTHENTICATION_REVIEW.md)。每组 Chrome 路径已获用户接受并纳入 v4 计划，目前仅实现部分离线模型，运行保护尚未实现或启用；扩展替代方案未采用。
 
 同一冷认证用例还单独验证了全新 Profile 中 dedicated Worker 的第一次 HTTPS fetch，确有新的代理挑战并成功抵达上游。它不覆盖 shared/service Worker，也不等于运行中清空认证缓存后的所有行为。[CDP 实现](https://chromium.googlesource.com/chromium/src/+/main/content/browser/devtools/protocol/network_handler.cc) 的清 Cookie 与清网页缓存不能当作清代理认证缓存。本轮使用全新 Profile 实证冷状态，尚未声称运行中缓存清除已经验收。
 

@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { compileGroupPathPlan } from "../src/network/groupPathPlan.js";
+import { compileWfpResourcePlan } from "../src/network/wfpResourcePlan.js";
 
 const executable = fileURLToPath(new URL("../tools/network-isolation/bin/Release/net10.0-windows/win-x64/publish/network-isolation-lab.exe", import.meta.url));
 const options = { skip: process.platform !== "win32" || !fs.existsSync(executable) ? "Requires published Windows inventory tool" : false };
@@ -73,4 +74,30 @@ test("runtime inventory rejects actual junctions inside the tree and in its ance
     const result = run("runtime-space", path.join(alias, "subdir"));
     assert.equal(result.status, 1); assert.match(result.stderr, /reparse/u);
   } finally { fs.unlinkSync(alias); }
+});
+
+test("native directory observation binds to its registered v4 resource path", options, t => {
+  const f = fixture(t);
+  const manifest = success("runtime-manifest", f.chrome);
+  // TEMP may contain ADMINI~1; the v4 registry requires the full path spelling.
+  const programRoot = fs.realpathSync.native(f.root);
+  const raw = { isolationModel: "group_path_v1", installationId: "00000000-0000-4000-8000-000000000001",
+    programRoot, registrations: [{ userSid: "S-1-5-21-1-2-3-1001", dataDirectoryId: "00000000-0000-4000-8000-000000000002",
+      groupId: "grp_test", chrome: manifest, proxies: [{ generation: 1, role: "active", listenerPort: 23001, sha256: "a".repeat(64),
+        raw: { type: "http", server: "test.example", port: 443 }, approvedAddress: "192.0.2.1" }] }] };
+  const group = compileGroupPathPlan(raw).groups[0];
+  const directory = path.dirname(group.chromePath);
+  assert.ok(directory.startsWith(programRoot + path.sep));
+  fs.mkdirSync(directory, { recursive: true });
+  for (const file of manifest.files) fs.copyFileSync(path.join(f.chrome, file.relativePath), path.join(directory, file.relativePath));
+  const observation = success("runtime-report", directory);
+  const resources = compileWfpResourcePlan(raw, { runtimeObservations: [observation] });
+  assert.equal(resources.preflight.chrome[0].status, "matched_observation");
+  assert.equal(resources.launchAuthorization, "not_issued");
+  // Identical source bytes at an unregistered path cannot stand in for the copy.
+  const source = success("runtime-report", f.chrome);
+  assert.throws(() => compileWfpResourcePlan(raw, { runtimeObservations: [source] }), { code: "WFP_RESOURCE_PLAN_INVALID" });
+  fs.writeFileSync(path.join(directory, "resources.pak"), "changed bytes!");
+  const changed = success("runtime-report", directory);
+  assert.throws(() => compileWfpResourcePlan(raw, { runtimeObservations: [changed] }), { code: "WFP_RESOURCE_PLAN_INVALID" });
 });

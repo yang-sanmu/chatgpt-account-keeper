@@ -73,7 +73,7 @@ $lab = (Resolve-Path tools/network-isolation/bin/Release/net10.0-windows/win-x64
 
 ## 四项策略意图与配置草案
 
-每个代次分别输出以下意图。这不是可加载的 WFP 过滤器，尚无层条件编译、优先级、事务或重新授权实现：
+每个代次分别输出以下意图。这不是可加载的 WFP 过滤器；现已由独立的 [WFP 资源编译器](WFP_RESOURCE_PLAN.md)生成逐层条件、候选权重和清理键，但原生条件编码、策略安装事务和重新授权仍未实现：
 
 | 意图 | 草案内容 |
 | --- | --- |
@@ -96,4 +96,4 @@ $lab = (Resolve-Path tools/network-isolation/bin/Release/net10.0-windows/win-x64
 
 对本机 Chrome `155.0.8059.40` 程序目录的只读扫描及复核通过，共 278 个文件、10 个 exe、543,359,893 逻辑字节；清单位于 `artifacts/network-lab/runtime-inventory-20261013.json`。这没有复制程序、修改安装目录、访问账号 Profile 或证明签名/权限。未修改现有启动路径，未重跑全量 Node、前端或 Rust。
 
-下一步仍属于 M1-A：新格式到 WFP 策略资源的编译与一致性检查，以及只读预检查结果与资源登记的衔接。程序签名/ACL、端口和授权证据必须由管理侧产生。M1-B 的实际 WFP 四边界验证需要专用 Windows 测试环境；M1-C 再验证冷协议与路径迁移，不能从此离线模型推定网络保护通过。
+同日后续已完成[离线 WFP 资源清单和目录报告衔接](WFP_RESOURCE_PLAN.md)，34 项相关测试通过。下一步为原生条件编码与精确控制通道模型。程序签名/ACL、端口和授权证据必须由管理侧产生。M1-B 的实际 WFP 四边界验证需要专用 Windows 测试环境；M1-C 再验证冷协议与路径迁移，不能从此离线模型推定网络保护通过。

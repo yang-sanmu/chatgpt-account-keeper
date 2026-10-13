@@ -1,0 +1,58 @@
+# v4 离线 WFP 资源编译
+
+2026-10-13，M1-A。`src/network/wfpResourcePlan.js` 的 `compileWfpResourcePlan(input, { runtimeObservations })` 将 `group_path_v1` 原始登记输入编译成可检查的规则资源清单。它内部先运行 `compileGroupPathPlan()`，不接受调用方改写好的放行意图；旧 v3 的 C# `run` 命令不接受这份新清单。
+
+输出固定 `kind: offline_wfp_resources`、`schemaVersion: 1`、`launchAuthorization: not_issued`。这不是原生 `FWPM_FILTER0`，不打开 WFP、不登记端口、不生成启动许可，不包含上游密码或完整 mihomo 配置。严格模式仍不可用。
+
+## 规则与生命周期
+
+每条描述包含确定的资源 GUID、所属组和适用代次、层名、条件、动作、权重及持久/动态生命周期。同一安装及相同规则内容产生相同 GUID，输入分组/文件顺序变化不改变规则清单。Chrome 的默认规则在活动/候选代次间只生成一次。程序清单保留预期文件哈希，但 WFP 应用匹配本身不验证哈希。
+
+| 规则 | 层与条件 |
+| --- | --- |
+| 程序默认拒绝 | 每个 Chrome 主程序/辅助 exe 及 mihomo 在 IPv4/IPv6 的 CONNECT、LISTEN、RECV_ACCEPT 层按程序路径阻断 |
+| 入口客户端默认拒绝 | CONNECT 层按已登记 TCP 端口及 IPv4 回环、IPv6 回环、IPv4 映射回环地址阻断其它客户端；不阻断其它回环端口或同端口的公网连接 |
+| 入口监听归属 | RESOURCE_ASSIGNMENT、LISTEN、RECV_ACCEPT 对已登记入口端口默认拒绝；动态例外仅给对应 mihomo 路径、用户和 `127.0.0.1`。接收例外还要求远端为 `127.0.0.1` |
+| 活动链路放行 | CONNECT 层允许本组主 Chrome 路径和用户到本组入口，以及本组 mihomo 路径和用户到批准上游；后者单独区分 TCP/UDP |
+
+条件按层分别生成。LISTEN 不添加该层不支持的 `IP_PROTOCOL`；接收侧应用条件只表示接收程序，入口客户端身份由 CONNECT 侧约束。依据是 Microsoft 的[逐层可用条件表](https://learn.microsoft.com/en-us/windows/win32/fwp/filtering-conditions-available-at-each-filtering-layer)。不按程序封锁全部 RESOURCE_ASSIGNMENT，否则会一起拒绝正常出站所需的临时端口绑定。
+
+候选代次只声明对应入口的监听归属例外，没有浏览器入口及上游 CONNECT 放行。候选诊断通道尚未接入。上游若指向本清单任何已登记回环入口（含映射地址），编译直接拒绝，防止上游例外覆盖入口阻断；未指定地址也不能用作上游。
+
+默认拒绝为持久规则，权重 10；精确例外为动态规则，权重 100，均属于同一私有子层。`clearActionRight` 固定为 false，不要求不可覆盖的强制放行。权重只用于本子层的候选规则次序，不能证明已与现有防火墙正确共存；见 [WFP 仲裁规则](https://learn.microsoft.com/en-us/windows/win32/fwp/filter-arbitration)。实际优先级与回环行为仍必须实测。
+
+各组 `freezeKeys` 列出浏览器入口与代理上游两个动态规则的键，撤销后本组入口和出站默认拒绝继续保留；监听归属例外待进程关闭阶段撤销。`cleanupKeys` 分开列出整份清单的动态规则、持久规则、子层和 provider，供后续协调器保存与有序清理。当前只输出键，不执行删除，也不把删除清单当作已冻结或 Job 清零证据。
+
+## 原生目录报告衔接
+
+实验工具新增只读命令：
+
+```powershell
+& $lab runtime-report 'C:\NetworkLab\registered-chrome\active'
+```
+
+输出 `{ kind: "runtime_inventory_observation", directory, manifest }`，使用完整目录扫描、硬链接/重解析检查及扫描后复核。`manifest` 与原 `runtime-manifest` 格式相同。相对于只有文件清单的输出，新报告同时记录实际扫描目录。
+
+编译器按已生成的组 Chrome 活动路径匹配报告，再比较版本及每个文件的相对路径、大小和 SHA-256。源安装目录的相同文件不能替代组副本报告。重复、未知目录或不匹配清单返回错误；缺少某组报告则保留 `not_observed`，匹配时仅标记 `matched_observation`。
+
+报告是数据，不是签名证明或管理服务回执。离线匹配不验证报告来源/时效，也不保证检查后目录未变；因此不消除调用者身份、签名/ACL、更新锁、启动准入或其它待办门槛。代理文件仍标记为 `not_checked`。输入不能通过传入 `true` 来宣称目录已验证。
+
+## 原生编码与验收边界
+
+目前使用实际层/条件名称及地址掩码、端口和协议类型，但应用路径和用户身份仍是中间表示。后续必须把路径转为 WFP 应用 ID，并为用户生成正确的安全描述符；`ALE_USER_ID` 的原生类型是安全描述符，不能直接塞入 SID，见 [Microsoft 条件定义](https://learn.microsoft.com/en-us/windows/win32/fwp/filtering-condition-identifiers-)。
+
+Chrome 的监听/接收当前默认阻断，尚无 CDP 端口例外，因此这份清单不能直接用于可用的浏览器启动。待完成精确控制通道登记、原生条件编码、代理文件/签名/权限核对后，才进入专用环境的 WFP 安装与实测；原型不能为方便调试放行全部回环。
+
+测试中的条件匹配器只检查这份清单内部的允许/拒绝逻辑，不模拟原生安全描述符、其它 provider、真实流、重授权或服务崩溃清理。IPv6/映射地址条件能在模型中匹配，也不等于实际 Windows 数据路径已通过。
+
+## 本轮验证
+
+NativeAOT 发布、工具 `selftest` 和旧 v3 策略结构校验通过。以下 34 项定向测试全部通过，无跳过：
+
+```powershell
+node --test test/wfpResourcePlan.test.js test/runtimeCapacity.test.js test/runtimeInventory.integration.test.js test/groupPathPlan.test.js test/strictNetworkConfig.test.js
+```
+
+覆盖跨组/用户/辅助程序拒绝、入口别名、监听条件、通配绑定、出站临时端口、上游 TCP/UDP、候选与两端冻结描述、稳定清理键、密码不出现在清单中，以及真实目录报告的正确路径/错误路径/内容变化对照。报告集成使用临时合成文件，不启动 Chrome。测试曾因 TEMP 含 `ADMINI~1` 被原路径规则拒绝，修正为完整路径后通过，没有放宽生产路径校验。
+
+本轮没有修改生产启动路径、系统网络规则、真实账号或客户端。没有重跑全量 Node、Tauri 前端或 Rust。下一步是原生条件编码与精确控制通道模型；M1-B 仍要求专用 Windows 环境，M1 整体验收尚未通过。

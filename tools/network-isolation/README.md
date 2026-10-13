@@ -26,6 +26,8 @@ v4 目录检查使用 `runtime-manifest <Chrome目录>`（全文件清单、文�
 
 `selftest` 现也包含合成全文件清单、变更检测和容量查询；真实硬链接与 junction 对照通过 `node --test test/runtimeInventory.integration.test.js` 执行，需先发布本工具。工具是独立的网络实验组件，不属于已停止维护的 Avalonia 客户端。
 
+`runtime-report <Chrome目录>` 在上述完整只读扫描上附带实际目录，输出可交给 JavaScript `compileWfpResourcePlan()` 的观测数据。新[离线 WFP 资源清单](../../docs/WFP_RESOURCE_PLAN.md)包含逐层条件、生命周期及清理键；清单匹配仍不是管理服务授权，缺少原生条件编码和 CDP 例外，不能传给旧 `run` 命令。不要把“报告匹配”显示成“网络已保护”。
+
 ## 隔离测试机上的操作
 
 仅在专用 Windows 11 x64 测试机上执行以下步骤，使用新 Profile 和测试节点。保留原始 policy 文件；同一个 id 的配置不得改写，配置变更使用新 id。程序路径必须是 LabRoot 内的完整副本，不能是日常 Chrome、符号链接或 junction。程序主动拒绝根目录、UNC、目录外路径及重复代理路径。

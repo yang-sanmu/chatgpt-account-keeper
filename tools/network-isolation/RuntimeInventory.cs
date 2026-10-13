@@ -13,6 +13,7 @@ internal sealed record RuntimeFile(string RelativePath, long SizeBytes, string S
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 internal sealed record ChromeManifest(string Version, RuntimeFile[] Files);
 internal sealed record RuntimeSpace(string Directory, long AvailableBytes, bool ProductionReady = false);
+internal sealed record RuntimeObservation(string Kind, string Directory, ChromeManifest Manifest);
 
 // Read-only NTFS snapshot. No ACL/signature verification, copying, or launch authority.
 internal static partial class RuntimeInventory
@@ -164,4 +165,5 @@ internal static partial class RuntimeInventory
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase, WriteIndented = true)]
 [JsonSerializable(typeof(ChromeManifest))]
 [JsonSerializable(typeof(RuntimeSpace))]
+[JsonSerializable(typeof(RuntimeObservation))]
 internal partial class RuntimeJson : JsonSerializerContext { }

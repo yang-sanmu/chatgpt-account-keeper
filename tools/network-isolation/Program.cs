@@ -41,6 +41,12 @@ try
     {
         Console.WriteLine(JsonSerializer.Serialize(RuntimeInventory.ReadChrome(runtimeDirectory), RuntimeJson.Default.ChromeManifest)); return 0;
     }
+    if (args is ["runtime-report", var reportDirectory])
+    {
+        var root = RuntimeInventory.CheckedDirectory(reportDirectory);
+        var observation = new RuntimeObservation("runtime_inventory_observation", root, RuntimeInventory.ReadChrome(root));
+        Console.WriteLine(JsonSerializer.Serialize(observation, RuntimeJson.Default.RuntimeObservation)); return 0;
+    }
     if (args is ["runtime-verify", var verifyDirectory, var manifestFile])
     {
         var expected = JsonSerializer.Deserialize(File.ReadAllText(manifestFile), RuntimeJson.Default.ChromeManifest)
@@ -59,7 +65,7 @@ try
     }
     if (args.Length < 2 || args[0] is not ("validate" or "preflight" or "inspect" or "run" or "cleanup"))
     {
-        Console.Error.WriteLine("LAB ONLY: selftest | ports | manifest/runtime-manifest <chrome-directory> | runtime-verify <directory> <manifest.json> | runtime-space <existing-directory> | validate/preflight/inspect <policy.json> | run <policy.json> --isolated-lab | cleanup <policy.json> --isolated-lab --processes-stopped");
+        Console.Error.WriteLine("LAB ONLY: selftest | ports | manifest/runtime-manifest/runtime-report <chrome-directory> | runtime-verify <directory> <manifest.json> | runtime-space <existing-directory> | validate/preflight/inspect <policy.json> | run <policy.json> --isolated-lab | cleanup <policy.json> --isolated-lab --processes-stopped");
         return 2;
     }
     var command = args[0];

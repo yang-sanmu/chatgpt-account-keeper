@@ -19,6 +19,8 @@
 
 ## 产品与范围
 
+维护范围更新（2026-10-13）：客户端只维护当前 `app/` 下的 Tauri；`desktop/` 的 Avalonia 客户端停止维护，不纳入本计划的新功能、兼容适配或验收。Agent、Chrome broker 和独立 .NET 网络组件继续维护。
+
 每账号独立 Profile、每分组指定出口，单账号独享出口通过单账号分组实现；节点不同不保证公网 IP 不同。环境/基础诊断覆盖现有平台，严格保护首版 Windows 11 x64。新旧分组默认普通模式，严格模式显式开启；组件失效/节点缺失则阻断，不降级。
 
 普通模式保留 gw.alipayobjects.com、sv.creditcard.ecitic.com 两个付款直连例外并展示；不新增第三模式。严格模式取消例外，切模式先关闭浏览器。不创建 TUN、不修改系统代理、默认路由和全机 DNS。Chrome 禁外部直连/UDP，代理协议必要 UDP 单独放行。
@@ -131,7 +133,7 @@ Chrome 文件替换与 SQLite 不构成同一个事务。变更日志额外保�
 
 IPC 升至 1.4。环境接口为 `environments.get/update/reset`；目标网络接口为 `network.getCapabilities/getState`、`previewChange/applyChange`、`setGroupPolicy/resumeGroup`、`runDiagnostics/getDiagnostics`。未实现的接口不提前注册，也不返回虚构成功。环境预览通过 `probePending` 标识尚需探测，时区 `null` 表示不主动覆盖，不能显示为某个已验证时区。
 
-旧 DTO、错误 envelope 和事件 `seq/revision` 保持不变，不按客户端过滤全局事件。修改使用 commandId 和版本校验。详情或操作进行中每 2 秒查询，其余活动界面每 10 秒，托盘停止；单类查询最多一个在途，失败退避至 30 秒。Desktop 和 Agent 配套发布，验证旧客户端连接新 Agent；新客户端遇旧 Agent 明确拒绝并提示升级。本机保护、控制异常及公网诊断结果分开展示。
+旧 DTO、错误 envelope 和事件 `seq/revision` 保持不变，不按客户端过滤全局事件。修改使用 commandId 和版本校验。详情或操作进行中每 2 秒查询，其余活动界面每 10 秒，托盘停止；单类查询最多一个在途，失败退避至 30 秒。Tauri 客户端和 Agent 配套发布，验证仍受支持的旧 Tauri 客户端连接新 Agent；新客户端遇旧 Agent 明确拒绝并提示升级。本机保护、控制异常及公网诊断结果分开展示。
 
 ## v4 验收门槛
 

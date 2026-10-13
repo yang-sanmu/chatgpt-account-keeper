@@ -4,7 +4,7 @@
 
 **2026-10-10 方案已更新为 [v4：每组独立 Chrome 路径](../../docs/BROWSER_NETWORK_ISOLATION.md)。本目录代码和示例仍是 v3 的共享 `chromePath` 原型。** 下列步骤只用于旧实验复现与只读检查，不具备 v4 的逐组路径、入口客户端默认拒绝及完整入站保护。不能只删除 mihomo 的 `users` 就运行新路线；新策略模型和启动门槛需先实现，再在专用环境验收。
 
-M1-A 已新增独立的 JavaScript [离线分组模型](../../docs/GROUP_PATH_PLAN.md)：生成逐组程序路径、校验清单和代次冲突，输出四项策略意图与受控配置草案。它不是本 C# 工具的策略格式，不能传给 `run`，也不执行预检查、配置落盘或 WFP 操作。所有输出仍缺少启动授权。
+M1-A 已新增独立的 JavaScript [离线分组模型](../../docs/GROUP_PATH_PLAN.md)：生成逐组程序路径、校验清单和代次冲突，输出四项策略意图与受控配置草案。它不是本 C# 工具的 WFP 策略格式，不能传给 `run`。本工具新加的 `runtime-*` 命令仅提供目录与容量的只读检查，所有输出仍缺少启动授权。
 
 ## 可运行的无策略写入检查
 
@@ -21,6 +21,10 @@ $lab = (Resolve-Path tools/network-isolation/bin/Release/net10.0-windows/win-x64
 `selftest` 验证 Windows SDK 10.0.26100.0 的 x64 ABI、稳定资源键、程序清单与哈希、端口解析和路径拒绝；不打开 WFP。`validate` 只验证配置结构。`ports` 只读取 IPv4/IPv6 TCP 动态范围、排除范围及已占用端口，不修改主机配置。这些检查均不证明网络保护有效。
 
 示例中的 TEST-NET 地址与占位 SHA-256 不可直接运行。准备副本后，`manifest <Chrome副本目录>` 输出该目录内全部 `.exe` 的路径及哈希，填入 policy 的 `chromePrograms`；每组代理还必须填写自身 `proxySha256`。`preflight <policy.json>` 校验实际文件、完整清单、标记文件和入口端口，同样不打开 WFP。
+
+v4 目录检查使用 `runtime-manifest <Chrome目录>`（全文件清单、文件版本、SHA-256）、`runtime-verify <目录> <清单.json>`（完整复核）及 `runtime-space <已存在目录>`（当前用户可用空间）。这三个命令不打开 WFP，不启动扫描到的程序，不要求 `--isolated-lab`；当前只支持本地 NTFS，拒绝硬链接、目录及祖先的重解析跳转，变更中或无法读取的目录返回失败。将清单保存在扫描目录之外，避免自身成为额外文件。清单仅供后续 v4 编译器使用，不能当作来源签名、ACL、Profile 迁移或启动授权的证明。详细预算语义及测试记录见[分组模型说明](../../docs/GROUP_PATH_PLAN.md#只读目录预检查与容量)。
+
+`selftest` 现也包含合成全文件清单、变更检测和容量查询；真实硬链接与 junction 对照通过 `node --test test/runtimeInventory.integration.test.js` 执行，需先发布本工具。工具是独立的网络实验组件，不属于已停止维护的 Avalonia 客户端。
 
 ## 隔离测试机上的操作
 

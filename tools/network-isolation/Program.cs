@@ -29,12 +29,28 @@ try
         if (sample.ProtectedPrograms().Count() != 3 || sample.ProtectedPrograms().Select(program => program.Label).Distinct().Count() != 3)
             throw new Exception("Helper executable protection missing");
         PreflightTests.Run();
+        RuntimeInventoryTests.Run();
         Console.WriteLine("{\"event\":\"selftest-passed\",\"wfpModified\":false,\"productionReady\":false}");
         return 0;
     }
     if (args is ["manifest", var directory])
     {
         Console.WriteLine(JsonSerializer.Serialize(LabProgram.CreateManifest(directory), LabJson.Default.LabProgramArray)); return 0;
+    }
+    if (args is ["runtime-manifest", var runtimeDirectory])
+    {
+        Console.WriteLine(JsonSerializer.Serialize(RuntimeInventory.ReadChrome(runtimeDirectory), RuntimeJson.Default.ChromeManifest)); return 0;
+    }
+    if (args is ["runtime-verify", var verifyDirectory, var manifestFile])
+    {
+        var expected = JsonSerializer.Deserialize(File.ReadAllText(manifestFile), RuntimeJson.Default.ChromeManifest)
+            ?? throw new ArgumentException("Empty runtime manifest");
+        RuntimeInventory.Verify(RuntimeInventory.ReadChrome(verifyDirectory), expected);
+        Console.WriteLine("{\"event\":\"runtime-matches-manifest\",\"wfpModified\":false,\"productionReady\":false}"); return 0;
+    }
+    if (args is ["runtime-space", var targetDirectory])
+    {
+        Console.WriteLine(JsonSerializer.Serialize(RuntimeInventory.ReadSpace(targetDirectory), RuntimeJson.Default.RuntimeSpace)); return 0;
     }
     if (args is ["ports"])
     {
@@ -43,7 +59,7 @@ try
     }
     if (args.Length < 2 || args[0] is not ("validate" or "preflight" or "inspect" or "run" or "cleanup"))
     {
-        Console.Error.WriteLine("LAB ONLY: selftest | ports | manifest <chrome-directory> | validate/preflight/inspect <policy.json> | run <policy.json> --isolated-lab | cleanup <policy.json> --isolated-lab --processes-stopped");
+        Console.Error.WriteLine("LAB ONLY: selftest | ports | manifest/runtime-manifest <chrome-directory> | runtime-verify <directory> <manifest.json> | runtime-space <existing-directory> | validate/preflight/inspect <policy.json> | run <policy.json> --isolated-lab | cleanup <policy.json> --isolated-lab --processes-stopped");
         return 2;
     }
     var command = args[0];

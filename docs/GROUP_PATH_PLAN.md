@@ -41,7 +41,35 @@
 
 程序根目录必须是本地盘符绝对路径。相对文件名和生成路径标识拒绝目录穿越、盘符/UNC/设备路径注入、ADS、DOS 保留名称、短名称写法、尾随空格或点及大小写冲突。清单必须含根目录的 `chrome.exe`，不能有文件/目录同名冲突，每个文件有非负安全整数大小和 SHA-256。所有 `.exe` 进入浏览器默认阻断资源清单，辅助程序不会自动得到主程序的访问许可。
 
-这是对调用方提供的**清单数据**进行校验，尚未遍历真实目录或证明清单完整。返回的 `totalBytes` 是清单总量，`inventoryHash` 是版本与排序后文件清单的摘要，不代表签名、实际磁盘哈希或磁盘峰值。重解析点、硬链接、大小写/文件系统别名、ACL、来源签名、复制期间更新及磁盘容量必须通过后续只读预检查和服务侧锁定核对。单凭路径字符串符合格式不能证明目录受保护。
+编译器只校验调用方提供的**清单数据**，不自行遍历磁盘。返回的 `totalBytes` 是清单逻辑字节总量，`inventoryHash` 是版本与排序后清单的摘要；真实目录可用下述独立工具核对。单凭路径或清单符合格式不能证明目录受保护，签名、ACL 及服务侧锁定仍待实现。
+
+## 只读目录预检查与容量
+
+现有 .NET 实验工具新增三个不打开 WFP 的命令（先按工具 README 执行 NativeAOT 发布）：
+
+```powershell
+$lab = (Resolve-Path tools/network-isolation/bin/Release/net10.0-windows/win-x64/publish/network-isolation-lab.exe).Path
+& $lab runtime-manifest 'C:\Program Files\Google\Chrome\Application'
+& $lab runtime-verify 'C:\NetworkLab\chrome' 'C:\NetworkLab\chrome-manifest.json'
+& $lab runtime-space 'C:\NetworkLab'
+```
+
+`runtime-manifest` 扫描完整程序目录，读取 `chrome.exe` 文件版本并为每个文件计算大小和 SHA-256，输出 `{ version, files }`，可直接作为 v4 模型的 `chrome` 输入。`runtime-verify` 重新扫描后比较保存的清单，文件新增、遗漏、大小、哈希或版本不一致均失败。清单文件应保存在被扫描目录外；扫描包括 DLL、资源和辅助 exe，不读取账号 Profile，也不执行扫描到的程序。
+
+首版只接受本地 NTFS 目录，拒绝扫描整卷。扫描目录及祖先的重解析属性拒绝 junction、符号链接等目录跳转；通过 [Windows 文件句柄信息](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/ns-fileapi-by_handle_file_information)检查硬链接数量。逐文件以禁止并发写入/删除的共享方式读取，计算哈希后重新枚举目录并核对文件标识、大小与时间等元数据。发现变更或无法读取则失败，不跳过问题文件。这是检查时的快照，不持有整棵目录的更新锁，不承诺抵抗恶意并发替换，检查后仍须由管理服务保证文件和权限未变化。没有验证 Authenticode 或管理员 ACL，文件版本也不证明可信来源。
+
+`runtime-space` 返回目标已存在目录所在卷的[当前调用用户可用空间](https://learn.microsoft.com/en-us/dotnet/api/system.io.driveinfo.availablefreespace?view=net-10.0)。新 `estimateRuntimeCapacity()` 接受同一目标卷上的字节预算：
+
+| 参数 | 含义 |
+| --- | --- |
+| `availableBytes` | 本次查询的可用空间 |
+| `existingRuntimeBytes` | 已占用的活动及保留副本总量 |
+| `candidateBytes` | 本次候选仍需新增的空间 |
+| `additionalBackupBytes` | 尚未创建、需要额外分配的备份空间 |
+| `temporaryBytes` | 本次额外临时空间 |
+| `safetyMarginBytes` | 调用方明确给出的安全余量 |
+
+需用空闲空间等于候选、额外备份、临时空间和余量之和；峰值预算再加已有副本总量。活动副本原地重命名为保留旧副本不会新增分配，不能同时计入额外备份。返回 `sufficient`、缺口与固定的 `launchAuthorization: not_issued`，不足时由后续协调器停止准备。当前是逻辑字节预算，不计算分配单元、文件系统元数据或压缩差异，不自动选择余量，也不预留空间；管理侧接入时需按目标卷补齐这些成本，多卷分别核算。
 
 ## 四项策略意图与配置草案
 
@@ -64,6 +92,8 @@
 
 ## 验证与下一步
 
-`node --test test/groupPathPlan.test.js test/strictNetworkConfig.test.js` 共 20 项通过，覆盖身份与路径边界、跨组/代次冲突、候选默认阻断、辅助程序、七类上游编译、v3 认证兼容、证书校验和能力开关。本轮未修改现有运行路径，未重跑全量 Node、前端或 Rust；既有全量结果见进度记录。
+2026-10-13：`node --test test/runtimeCapacity.test.js test/runtimeInventory.integration.test.js test/groupPathPlan.test.js test/strictNetworkConfig.test.js` 共 26 项通过，无跳过；另通过 NativeAOT 发布、工具 `selftest` 和旧 v3 策略结构校验。集成测试使用合成程序目录，实建硬链接及 junction，验证目录内外链接拒绝、资源改动与额外文件拒绝、清单进入 v4 模型及只读空间查询。没有已发布 Windows 工具时，三个原生集成测试明确跳过。
 
-下一步仍属于 M1-A：实现真实目录的只读清单核对、链接拒绝、容量峰值预览，以及新格式到 WFP 策略资源的编译与一致性检查。程序签名/ACL、端口和授权证据必须由管理侧产生。M1-B 的实际 WFP 四边界验证需要专用 Windows 测试环境；M1-C 再验证冷协议与路径迁移，不能从此离线模型推定网络保护通过。
+对本机 Chrome `155.0.8059.40` 程序目录的只读扫描及复核通过，共 278 个文件、10 个 exe、543,359,893 逻辑字节；清单位于 `artifacts/network-lab/runtime-inventory-20261013.json`。这没有复制程序、修改安装目录、访问账号 Profile 或证明签名/权限。未修改现有启动路径，未重跑全量 Node、前端或 Rust。
+
+下一步仍属于 M1-A：新格式到 WFP 策略资源的编译与一致性检查，以及只读预检查结果与资源登记的衔接。程序签名/ACL、端口和授权证据必须由管理侧产生。M1-B 的实际 WFP 四边界验证需要专用 Windows 测试环境；M1-C 再验证冷协议与路径迁移，不能从此离线模型推定网络保护通过。

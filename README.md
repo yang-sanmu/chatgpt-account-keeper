@@ -7,13 +7,13 @@ ChatGPT 多账号的桌面管理与后台自动对话工具。每个账号使用
 ## 架构
 
 管理端已迁移到 Rust + Tauri（见 [迁移计划](docs/TAURI_MIGRATION_PLAN.md)）。`app/` 是当前
-0.2.x 客户端，`desktop/` 仅保留旧 0.1.x Avalonia 代码。首个 Tauri `v0.2.0` 不提供从
+0.2.x 客户端，`desktop/` 仅保留旧 0.1.x Avalonia 历史代码，已停止维护和验收。首个 Tauri `v0.2.0` 不提供从
 Avalonia 应用内升级的桥接包，旧版用户需退出 Avalonia 后手动安装；两条版本线继续使用
 相同的数据目录和 IPC v1 契约。
 
 ```text
 管理端
-desktop/  Avalonia 12 · .NET 10 NativeAOT · VeloPack   ← 旧版 0.1.x
+desktop/  Avalonia 12 · .NET 10 NativeAOT · VeloPack   ← 历史 0.1.x，不再维护
 app/      Tauri 2 · Rust · React                       ← 当前版 0.2.x
                     │
         Named Pipe / Unix Domain Socket
@@ -25,14 +25,14 @@ Keeper.Agent
            本机 Google Chrome
 ```
 
-- 管理端：托盘常驻，八个功能页。Avalonia 版是原生控件；Tauri 版把前端资源编进二进制，
+- 管理端：托盘常驻，八个功能页。Tauri 把前端资源编进二进制，
   经自定义协议加载——**不监听任何端口，CSP 不允许任何远端源，且永不访问 chatgpt.com**。
   访问 ChatGPT 是真实 Chrome 的职责，管理界面不参与。
 - 后台端：独立的每用户 Agent；管理窗口隐藏到托盘后，自动对话、巡检和调度继续运行。
 - 本地通信：Windows Named Pipe；macOS/Linux Unix Domain Socket。帧为 4 字节小端长度加 UTF-8 JSON，最大 8 MiB。
 - 持久化：SQLite（WAL、外键、幂等命令回执）和平台用户数据目录；安装与更新不触碰 Profile/数据库。
 - 浏览器：只使用本机真实 Google Chrome。未安装时返回稳定错误 `CHROME_NOT_FOUND`，不下载或回退 Chromium。
-- 更新：Avalonia 版用 VeloPack，Tauri 版用 Tauri updater；两者都从公开 GitHub Releases
+- 更新：当前客户端用 Tauri updater，从公开 GitHub Releases
   检查，默认只提醒，安装前调用 Agent drain 和 SQLite checkpoint。Linux 上只有 AppImage
   参与应用内更新，deb/rpm 由发行版包管理器升级（它们的安装路径会要求 root 授权，不适合
   由后台更新器发起）。
@@ -94,7 +94,7 @@ curl -x proxy.example.com:3000 -U "user:password" ipinfo.io
 
 - Node.js `24.11.1`（见 `.node-version`）
 - 本机 Google Chrome
-- Avalonia 客户端：.NET SDK 10（见 `desktop/global.json`）
+- Windows Chrome broker 与独立网络工具：.NET SDK 10（现有版本固定文件为 `desktop/global.json`，不要求构建 Avalonia）
 - Tauri 客户端：Rust 稳定版 + 平台 WebView 依赖
   （Windows 需 MSVC C++ 生成工具与 WebView2；Linux 需 `libwebkit2gtk-4.1-dev`）
 
@@ -104,7 +104,6 @@ curl -x proxy.example.com:3000 -U "user:password" ipinfo.io
 $env:PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = '1'
 npm ci --ignore-scripts
 npm test
-dotnet build desktop/GptAccountKeeper.Desktop.sln -c Release
 ```
 
 Tauri 客户端（`app/`）：
@@ -124,16 +123,7 @@ cargo run --example containment_spike   # 关闭 job 句柄必须回收整棵进
 cargo run --example agent_handshake     # 用真 Agent 跑通 hello / bootstrap / accounts.list
 ```
 
-旧 0.1.x Avalonia 的 NativeAOT 构建（仅维护旧版本时使用）：
-
-```powershell
-dotnet publish desktop/src/GptAccountKeeper.Desktop/GptAccountKeeper.Desktop.csproj `
-  -c Release -r win-x64 -o artifacts/desktop-win-x64
-```
-
-开发时直接启动原生 Desktop；它会从仓库向上查找 `src/agent/launcher.js`，用本机 Node 启动 Agent。安装包则从 `agent/runtime/node.exe`（Windows）或 `agent/runtime/node`（macOS/Linux）启动私有 Node，用户无需安装 Git、Node、npm、.NET 或 Playwright 浏览器。
-
-Visual Studio 打开 `desktop/GptAccountKeeper.Desktop.sln`，将 `GptAccountKeeper.Desktop` 设为启动项目并按 F5。内置的 Development 启动配置会使用独立的 `GptAccountKeeper-dev` 数据、IPC 和日志，不会连接或覆盖安装版数据。首次页面可选择“预览并导入旧项目”或“创建全新数据”；旧项目根目录和其中的 `profiles` 目录都可选择。
+开发 Tauri 客户端时，在 `app/` 下运行 `npm run tauri dev`。Avalonia 不再列入开发、构建或回归要求；旧代码仅供历史参考。安装包使用私有 Node，用户无需自行安装 Git、Node、npm、.NET 或 Playwright 浏览器。
 
 ## Agent 与数据目录
 

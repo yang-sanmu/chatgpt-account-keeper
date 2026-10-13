@@ -26,7 +26,7 @@ v4 目录检查使用 `runtime-manifest <Chrome目录>`（全文件清单、文�
 
 `selftest` 现也包含合成全文件清单、变更检测和容量查询；真实硬链接与 junction 对照通过 `node --test test/runtimeInventory.integration.test.js` 执行，需先发布本工具。工具是独立的网络实验组件，不属于已停止维护的 Avalonia 客户端。
 
-`runtime-report <Chrome目录>` 在上述完整只读扫描上附带实际目录，输出可交给 JavaScript `compileWfpResourcePlan()` 的观测数据。新[离线 WFP 资源清单](../../docs/WFP_RESOURCE_PLAN.md)包含逐层条件、生命周期及清理键；清单匹配仍不是管理服务授权，缺少 CDP 例外及安装流程，不能传给旧 `run` 命令。不要把“报告匹配”显示成“网络已保护”。
+`runtime-report <Chrome目录>` 在上述完整只读扫描上附带实际目录，输出可交给 JavaScript `compileWfpResourcePlan()` 的观测数据。新[离线 WFP 资源清单](../../docs/WFP_RESOURCE_PLAN.md)包含逐层条件、可选 CDP 例外、生命周期及清理键；清单匹配仍不是管理服务授权，缺少实际登记与安装流程，不能传给旧 `run` 命令。不要把“报告匹配”显示成“网络已保护”。
 
 `encode-wfp <resources.json>` 接收 `compileWfpResourcePlan()` 的离线输出，在内存中编码应用 ID、用户安全描述符、地址掩码及过滤器，再回读成 JSON 报告。它只读取输入及程序路径信息，不打开 WFP engine、不安装规则。报告含本机路径与 SID，仅供本地检查，始终 `productionReady: false`。运行 `node --test test/wfpResourceEncoding.integration.test.js` 验证真实 Windows API 编码，需先重新发布当前工具；测试仅创建临时合成文件，不执行它们。规则被 BFE 接受及实际网络行为仍须专用环境验证。
 

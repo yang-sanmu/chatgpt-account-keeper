@@ -160,3 +160,83 @@ test("WFP preflight binds observed directory and every file, while absent observ
   assert.throws(() => compileWfpResourcePlan(raw, { runtimeObservations: [observation, observation] }), { code: "WFP_RESOURCE_PLAN_INVALID" });
   assert.throws(() => compileWfpResourcePlan(raw, { runtimeObservations: [true] }), { code: "WFP_RESOURCE_PLAN_INVALID" });
 });
+
+function controlInput() {
+  const raw = input();
+  raw.registrations[1].dataDirectoryId = "00000000-0000-4000-8000-000000000003";
+  raw.controllers = raw.registrations.map((group, i) => ({ userSid: group.userSid, dataDirectoryId: group.dataDirectoryId,
+    path: `C:\\Keeper${i}\\node.exe`, sha256: "c".repeat(64) }));
+  raw.registrations.forEach((group, i) => { group.browserRuns = [{ accountId: `acc_${i}`,
+    runToken: `run-00000000-0000-4000-8000-00000000000${i}`, debugPort: 24001 + i }]; });
+  return raw;
+}
+
+test("CDP permits only its registered controller and owning Chrome on the precise IPv4 channel", () => {
+  const raw = controlInput(); const plan = compileGroupPathPlan(raw); const resources = compileWfpResourcePlan(raw);
+  const [a, b] = plan.groups;
+  const client = { app: raw.controllers[0].path, user: SID, protocol: 6,
+    localAddress: "127.0.0.1", remoteAddress: "127.0.0.1", remotePort: 24001 };
+  assert.equal(decision(resources, "AUTH_CONNECT_V4", client), "permit");
+  for (const app of [raw.controllers[1].path, a.chromePath, b.chromePath, a.proxies[0].proxyPath, "C:\\Other.exe"]) {
+    assert.equal(decision(resources, "AUTH_CONNECT_V4", { ...client, app }), "block");
+  }
+  for (const changes of [{ remotePort: 24002 }, { user: "S-1-5-21-1-2-3-1002" }, { localAddress: "127.0.0.2" }]) {
+    assert.equal(decision(resources, "AUTH_CONNECT_V4", { ...client, ...changes }), "block");
+  }
+  for (const remoteAddress of ["127.0.0.2", "::1", "::ffff:127.0.0.1"]) {
+    assert.equal(decision(resources, `AUTH_CONNECT_V${isIP(remoteAddress)}`, { ...client, remoteAddress }), "block");
+  }
+  assert.equal(decision(resources, "AUTH_CONNECT_V4", { ...client, remotePort: 23001 }), "block"); // no Agent proxy relay
+  assert.equal(decision(resources, "AUTH_CONNECT_V4", { ...client, remotePort: 25001 }), "unmatched");
+  assert.equal(decision(resources, "AUTH_CONNECT_V4", { ...client, remoteAddress: "192.0.2.1" }), "unmatched");
+  const server = { ...client, app: a.chromePath, localPort: 24001 };
+  for (const layer of ["RESOURCE_ASSIGNMENT_V4", "AUTH_LISTEN_V4", "AUTH_RECV_ACCEPT_V4"]) {
+    assert.equal(decision(resources, layer, server), "permit");
+    for (const changes of [{ app: b.chromePath }, { app: raw.controllers[0].path }, { app: "C:\\Other.exe" },
+      { localAddress: "0.0.0.0" }, { localAddress: "127.0.0.2" }, { user: "S-1-5-21-1-2-3-1002" }]) {
+      assert.equal(decision(resources, layer, { ...server, ...changes }), "block");
+    }
+    assert.equal(decision(resources, layer.replace("V4", "V6"), { ...server, localAddress: "::1", remoteAddress: "::1" }), "block");
+  }
+  assert.equal(decision(resources, "AUTH_RECV_ACCEPT_V4", { ...server, remoteAddress: "192.0.2.3" }), "block");
+  assert.equal(decision(resources, "AUTH_CONNECT_V4", { ...client, app: a.chromePath, protocol: 17 }), "block");
+  assert.equal(resources.preflight.controllerFiles, "not_checked");
+});
+
+test("CDP survives business freeze and has independent per-run cleanup; dynamic session loss denies it", () => {
+  const raw = controlInput();
+  raw.registrations[0].browserRuns.push({ accountId: "acc_second", runToken: "run-00000000-0000-4000-8000-000000000002", debugPort: 24003 });
+  const resources = compileWfpResourcePlan(raw); const a = resources.groups[0];
+  const [first, second] = a.controlChannels;
+  assert.equal(first.cleanupKeys.dynamic.length, 4); assert.equal(first.cleanupKeys.persistent.length, 9);
+  assert.equal(new Set([...first.cleanupKeys.dynamic, ...first.cleanupKeys.persistent, ...a.freezeKeys]).size, 15);
+  const client = { app: raw.controllers[0].path, user: SID, protocol: 6, localAddress: "127.0.0.1", remoteAddress: "127.0.0.1", remotePort: first.endpoint.port };
+  const frozen = { ...resources, filters: resources.filters.filter(f => !a.freezeKeys.includes(f.key)) };
+  assert.equal(decision(frozen, "AUTH_CONNECT_V4", client), "permit");
+  const closed = { ...frozen, filters: frozen.filters.filter(f => !first.cleanupKeys.dynamic.includes(f.key)) };
+  assert.equal(decision(closed, "AUTH_CONNECT_V4", client), "block");
+  assert.equal(decision(closed, "AUTH_CONNECT_V4", { ...client, remotePort: second.endpoint.port }), "permit");
+  assert.equal(decision(closed, "AUTH_CONNECT_V4", { ...client, app: raw.controllers[1].path, remotePort: 24002 }), "permit");
+  const crashed = { ...resources, filters: resources.filters.filter(f => f.lifetime === "persistent") };
+  assert.equal(decision(crashed, "AUTH_CONNECT_V4", client), "block");
+  const plan = compileGroupPathPlan(raw);
+  assert.equal(decision(crashed, "AUTH_LISTEN_V4", { ...client, app: plan.groups[0].chromePath, localPort: first.endpoint.port }), "block");
+  const before = structuredClone(resources);
+  raw.registrations.reverse(); raw.controllers.reverse(); raw.registrations.forEach(g => g.browserRuns.reverse());
+  const reordered = compileWfpResourcePlan(raw);
+  assert.deepEqual(reordered.filters, before.filters); assert.deepEqual(reordered.cleanupKeys, before.cleanupKeys);
+  // Same owner/program/port permissions retain stable keys; runToken is bookkeeping, not WFP identity.
+  raw.registrations.find(g => g.groupId === "grp_a").browserRuns.find(r => r.accountId === "acc_0").runToken = "run-00000000-0000-4000-8000-000000000003";
+  assert.deepEqual(compileWfpResourcePlan(raw).filters, before.filters);
+});
+
+test("CDP rules do not change proxy filters and upstream permits cannot override control-port denial", () => {
+  const raw = controlInput(); const resources = compileWfpResourcePlan(raw);
+  const stripped = structuredClone(raw); delete stripped.controllers; stripped.registrations.forEach(g => { delete g.browserRuns; });
+  assert.deepEqual(resources.filters.filter(f => !f.purpose.startsWith("cdp_")), compileWfpResourcePlan(stripped).filters);
+  for (const address of ["127.0.0.1", "127.1.2.3", "::1", "::ffff:127.0.0.1"]) {
+    const broken = structuredClone(raw); broken.registrations[0].proxies[0].approvedAddress = address;
+    broken.registrations[0].proxies[0].raw.port = 24002;
+    assert.throws(() => compileWfpResourcePlan(broken), { code: "WFP_RESOURCE_PLAN_INVALID" });
+  }
+});

@@ -23,7 +23,7 @@ const LAYERS = {
   AUTH_LISTEN_V4: "88bb5dad-76d7-4227-9c71-df0a3ed7be7e", AUTH_LISTEN_V6: "7ac9de24-17dd-4814-b4bd-a9fbc95a321b",
   AUTH_RECV_ACCEPT_V4: "e1cd9fe7-f4b5-4273-96c0-592e487b8650", AUTH_RECV_ACCEPT_V6: "a3b42c97-9f04-4672-b87e-cee9c483257f",
 };
-function fixture(t) {
+function fixture(t, withControl = false) {
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "keeper-wfp-encoding-"));
   t.after(() => { assert.equal(path.dirname(temporary), os.tmpdir()); fs.rmSync(temporary, { recursive: true, force: true }); });
   const root = fs.realpathSync.native(temporary);
@@ -33,10 +33,20 @@ function fixture(t) {
       proxies: [{ generation: 1, role: "active", listenerPort: 23001 + i, sha256: "b".repeat(64),
         raw: { type: i ? "hysteria2" : "http", server: "test.example", port: 443, password: "test" },
         approvedAddress: i ? "2001:db8::1" : "192.0.2.1" }] })) };
+  if (withControl) {
+    raw.controllers = [{ userSid: SID, dataDirectoryId: raw.registrations[0].dataDirectoryId,
+      path: path.join(root, "agent", "node.exe"), sha256: "c".repeat(64) }];
+    raw.registrations.forEach((group, i) => { group.browserRuns = [{ accountId: `acc_${i}`,
+      runToken: `run-00000000-0000-4000-8000-00000000000${i}`, debugPort: 24001 + i }]; });
+  }
   const plan = compileGroupPathPlan(raw);
   // App-ID translation uses real temporary files. Nothing executes these bytes.
   for (const group of plan.groups) for (const file of [...group.chrome.executablePaths, ...group.proxies.map(p => p.proxyPath)]) {
     assert.ok(file.startsWith(root + path.sep)); fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, "x");
+  }
+  for (const controller of plan.controllers) {
+    assert.ok(controller.path.startsWith(root + path.sep));
+    fs.mkdirSync(path.dirname(controller.path), { recursive: true }); fs.writeFileSync(controller.path, "x");
   }
   const resources = compileWfpResourcePlan(raw);
   function run(value = resources) {
@@ -103,5 +113,28 @@ test("native encoder rejects schema, layer, type and address errors instead of e
   ]) {
     const broken = structuredClone(resources); mutate(broken); const result = run(broken);
     assert.equal(result.status, 1, result.stdout); assert.equal(result.stdout, ""); assert.ok(result.stderr.trim());
+  }
+});
+
+test("native encoder accepts CDP client and listener resources while retaining precise ports and user conditions", options, t => {
+  const { resources, run } = fixture(t, true); const result = run(); assert.equal(result.status, 0, result.stderr);
+  const report = JSON.parse(result.stdout); assert.equal(report.productionReady, false);
+  for (const group of resources.groups) for (const channel of group.controlChannels) {
+    const keys = [...channel.cleanupKeys.dynamic, ...channel.cleanupKeys.persistent];
+    const native = report.filters.filter(filter => keys.includes(filter.key));
+    assert.equal(native.length, 13);
+    for (const filter of native) {
+      const port = filter.conditions.find(c => c.field === FIELDS.IP_LOCAL_PORT || c.field === FIELDS.IP_REMOTE_PORT);
+      assert.equal(port.value, String(channel.endpoint.port)); assert.equal(port.type, 2);
+      if (filter.action === 0x1002) {
+        assert.equal(filter.conditions.find(c => c.field === FIELDS.ALE_USER_ID).value, `D:(A;;CC;;;${SID})`);
+      }
+    }
+    const clientKey = resources.filters.find(filter => keys.includes(filter.key) && filter.purpose === "cdp_client_allow").key;
+    const client = native.find(filter => filter.key === clientKey);
+    assert.ok(client.conditions.find(c => c.field === FIELDS.ALE_APP_ID).value.endsWith("\\agent\\node.exe"));
+    for (const field of [FIELDS.IP_LOCAL_ADDRESS, FIELDS.IP_REMOTE_ADDRESS]) {
+      assert.equal(client.conditions.find(c => c.field === field).value, "7f000001/ffffffff");
+    }
   }
 });

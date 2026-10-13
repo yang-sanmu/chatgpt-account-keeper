@@ -70,7 +70,9 @@ function matchObservations(groups, observations) {
 export function compileWfpResourcePlan(input, { runtimeObservations = [] } = {}) {
   const plan = compileGroupPathPlan(input);
   const observations = matchObservations(plan.groups, runtimeObservations);
-  const reservedPorts = new Set(plan.groups.flatMap(group => group.proxies.map(proxy => proxy.listener.port)));
+  const reservedPorts = new Set(plan.groups.flatMap(group => [
+    ...group.proxies.map(proxy => proxy.listener.port), ...group.browserRuns.map(run => run.endpoint.port),
+  ]));
   // A same-sublayer upstream permit must never override another entry's deny.
   for (const group of plan.groups) for (const proxy of group.proxies) {
     if (unspecified.check(proxy.endpoint.address, isIP(proxy.endpoint.address) === 4 ? "ipv4" : "ipv6")) {
@@ -78,7 +80,7 @@ export function compileWfpResourcePlan(input, { runtimeObservations = [] } = {})
     }
     if (proxy.endpoint.protocol === "tcp" && reservedPorts.has(proxy.endpoint.port)
       && loopback.check(proxy.endpoint.address, isIP(proxy.endpoint.address) === 4 ? "ipv4" : "ipv6")) {
-      throw invalid("上游不能指向本次登记的代理入口（包括回环别名）");
+      throw invalid("上游不能指向本次登记的代理或 CDP 入口（包括回环别名）");
     }
   }
   const providerKey = guid(plan.installationId, "provider");
@@ -91,6 +93,25 @@ export function compileWfpResourcePlan(input, { runtimeObservations = [] } = {})
     const key = guid(plan.installationId, specification);
     if (!filters.has(key)) filters.set(key, { key, groupKey: group.key, generation, purpose, ...specification });
     return key;
+  }
+  function listenerRules(group, prefix, entryPort, owner, generation = null) {
+    const persistent = []; const dynamic = [];
+    for (const [af, network, bits] of [["V4", "127.0.0.0", 8], ["V6", "::1", 128], ["V6", "::ffff:127.0.0.0", 104]]) {
+      persistent.push(add(group, `${prefix}_client_default_deny`, CONNECT, af, "block",
+        [protocol("tcp"), address("REMOTE", network, bits), port("REMOTE", entryPort)], generation));
+    }
+    for (const layer of [BIND, LISTEN, RECEIVE]) {
+      // AUTH_LISTEN has no IP_PROTOCOL condition; the layer is TCP-specific.
+      const tcp = layer === LISTEN ? [] : [protocol("tcp")];
+      for (const af of ["V4", "V6"]) {
+        persistent.push(add(group, `${prefix}_owner_default_deny`, layer, af, "block",
+          [...tcp, port("LOCAL", entryPort)], generation));
+      }
+      dynamic.push(add(group, `${prefix}_owner_allow`, layer, "V4", "permit", [app(owner), user(group.identity.userSid),
+        ...tcp, address("LOCAL", "127.0.0.1"), port("LOCAL", entryPort),
+        ...(layer === RECEIVE ? [address("REMOTE", "127.0.0.1")] : [])], generation));
+    }
+    return { persistent, dynamic };
   }
   const resources = plan.groups.map(group => {
     const programs = group.chrome.files.filter(file => file.relativePath.toLowerCase().endsWith(".exe"))
@@ -106,20 +127,7 @@ export function compileWfpResourcePlan(input, { runtimeObservations = [] } = {})
     const freezeKeys = [];
     for (const proxy of group.proxies) {
       const entryPort = proxy.listener.port;
-      for (const [af, network, prefix] of [["V4", "127.0.0.0", 8], ["V6", "::1", 128], ["V6", "::ffff:127.0.0.0", 104]]) {
-        add(group, "entry_client_default_deny", CONNECT, af, "block",
-          [protocol("tcp"), address("REMOTE", network, prefix), port("REMOTE", entryPort)], proxy.generation);
-      }
-      for (const layer of [BIND, LISTEN, RECEIVE]) {
-        // AUTH_LISTEN has no IP_PROTOCOL condition; the layer is TCP-specific.
-        const tcp = layer === LISTEN ? [] : [protocol("tcp")];
-        for (const af of ["V4", "V6"]) {
-          add(group, "entry_owner_default_deny", layer, af, "block", [...tcp, port("LOCAL", entryPort)], proxy.generation);
-        }
-        add(group, "entry_owner_allow", layer, "V4", "permit", [app(proxy.proxyPath), user(group.identity.userSid),
-          ...tcp, address("LOCAL", "127.0.0.1"), port("LOCAL", entryPort),
-          ...(layer === RECEIVE ? [address("REMOTE", "127.0.0.1")] : [])], proxy.generation);
-      }
+      listenerRules(group, "entry", entryPort, proxy.proxyPath, proxy.generation);
       if (proxy.role !== "active") continue;
       freezeKeys.push(add(group, "browser_entry_allow", CONNECT, "V4", "permit",
         [app(group.chromePath), user(group.identity.userSid), protocol("tcp"), address("REMOTE", "127.0.0.1"), port("REMOTE", entryPort)], proxy.generation));
@@ -127,17 +135,27 @@ export function compileWfpResourcePlan(input, { runtimeObservations = [] } = {})
         [app(proxy.proxyPath), user(group.identity.userSid), protocol(proxy.endpoint.protocol),
           address("REMOTE", proxy.endpoint.address), port("REMOTE", proxy.endpoint.port)], proxy.generation));
     }
+    const controlChannels = group.browserRuns.map(run => {
+      const controller = plan.controllers.find(item => item.key === run.controllerKey);
+      const keys = listenerRules(group, "cdp", run.endpoint.port, group.chromePath);
+      keys.dynamic.push(add(group, "cdp_client_allow", CONNECT, "V4", "permit", [app(controller.path), user(controller.userSid),
+        protocol("tcp"), address("LOCAL", "127.0.0.1"), address("REMOTE", "127.0.0.1"), port("REMOTE", run.endpoint.port)]));
+      // Keep the control channel during business freeze so Browser.close can run.
+      // Its rules may be released only after this run's processes/connections drain.
+      return { accountId: run.accountId, runToken: run.runToken, controllerKey: run.controllerKey, endpoint: run.endpoint,
+        cleanupKeys: { dynamic: keys.dynamic.sort(), persistent: keys.persistent.sort() } };
+    });
     return { key: group.key, identity: group.identity, inventoryHash: group.chrome.inventoryHash, programs,
-      freezeKeys: freezeKeys.sort() };
+      freezeKeys: freezeKeys.sort(), controlChannels };
   });
   const ordered = [...filters.values()].sort((a, b) => a.key < b.key ? -1 : 1);
   return freeze({ kind: "offline_wfp_resources", schemaVersion: 1, isolationModel: plan.isolationModel,
     launchAuthorization: "not_issued", provider: { key: providerKey, persistent: true },
     sublayer: { key: sublayerKey, providerKey, weight: 0x7000, persistent: true },
-    groups: resources, filters: ordered,
+    groups: resources, controllers: plan.controllers, filters: ordered,
     cleanupKeys: { dynamic: ordered.filter(f => f.lifetime === "dynamic").map(f => f.key),
       persistent: ordered.filter(f => f.lifetime === "persistent").map(f => f.key), sublayer: sublayerKey, provider: providerKey },
-    preflight: { chrome: observations, proxyFiles: "not_checked", signaturesAndAcl: "not_checked" },
+    preflight: { chrome: observations, proxyFiles: "not_checked", controllerFiles: "not_checked", signaturesAndAcl: "not_checked" },
     pendingChecks: [...plan.pendingChecks, "native_appid_and_user_descriptor_encoding", "wfp_layer_and_priority_acceptance", "cdp_channel_registration"],
   });
 }

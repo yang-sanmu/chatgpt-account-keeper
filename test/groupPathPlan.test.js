@@ -170,3 +170,71 @@ test("v4 drafts are immutable, detached from inputs and explicitly lack launch a
   assert.equal(getStrictNetworkCapabilities().available, false);
   assert.equal(getStrictNetworkCapabilities().reason, "M1_NOT_ACCEPTED");
 });
+
+function browserRun(index) {
+  return { accountId: `acc_${index}`, runToken: `run-00000000-0000-4000-8000-${String(index).padStart(12, "0")}`, debugPort: 24000 + index };
+}
+function controlInput() {
+  const value = input();
+  value.controllers = [{ userSid: SID, dataDirectoryId: DIRECTORY, path: "C:\\Keeper\\agent\\runtime\\node.exe", sha256: HASH }];
+  value.registrations[0].browserRuns = [browserRun(1), browserRun(2)];
+  value.registrations[1].browserRuns = [browserRun(3), browserRun(4)];
+  return value;
+}
+
+test("CDP runs bind a controller to the owner and generate fixed per-run ports without launch authority", () => {
+  const raw = controlInput(); const original = structuredClone(raw); const plan = compileGroupPathPlan(raw);
+  assert.deepEqual(raw, original);
+  assert.equal(plan.controllers.length, 1);
+  for (const group of plan.groups) for (const run of group.browserRuns) {
+    assert.equal(run.controllerKey, plan.controllers[0].key);
+    assert.equal(run.endpoint.address, "127.0.0.1"); assert.equal(run.endpoint.protocol, "tcp");
+    assert.ok(run.browserArgumentsDraft.includes(`--remote-debugging-port=${run.endpoint.port}`));
+    assert.ok(run.browserArgumentsDraft.includes("--remote-debugging-address=127.0.0.1"));
+    assert.ok(run.browserArgumentsDraft.includes(`--proxy-server=http://127.0.0.1:${group.proxies[0].listener.port}`));
+  }
+  raw.controllers[0].path = "C:\\Changed.exe"; raw.registrations[0].browserRuns[0].debugPort = 25000;
+  assert.equal(plan.controllers[0].path, original.controllers[0].path);
+  assert.equal(plan.groups[0].browserRuns[0].endpoint.port, 24001);
+  assert.throws(() => { plan.groups[0].browserRuns[0].endpoint.port = 1; }, TypeError);
+  assert.equal(plan.launchAuthorization, "not_issued");
+  assert.deepEqual(compileGroupPathPlan(input()).groups[0].browserRuns, []);
+});
+
+test("CDP registration rejects port, run, account and controller conflicts across the supplied snapshot", () => {
+  const bad = mutate => { const raw = controlInput(); mutate(raw); assert.throws(() => compileGroupPathPlan(raw), { code: "GROUP_PATH_PLAN_INVALID" }); };
+  for (const port of [0, 1023, 65536, 24001.5, "24001", 23002, 24003]) {
+    bad(v => { v.registrations[0].browserRuns[0].debugPort = port; });
+  }
+  bad(v => { v.registrations[1].proxies.push(proxy(2, "candidate", 24001)); });
+  bad(v => { v.registrations[1].browserRuns[0].accountId = "acc_1"; });
+  bad(v => { v.registrations[1].browserRuns[0].runToken = v.registrations[0].browserRuns[0].runToken; });
+  bad(v => { v.registrations[1].browserRuns.push(browserRun(5)); });
+  bad(v => { v.controllers = []; });
+  bad(v => { v.controllers[0].dataDirectoryId = "00000000-0000-4000-8000-000000000003"; });
+  bad(v => { v.controllers[0].userSid = "S-1-5-21-100-200-300-1002"; });
+  bad(v => { v.controllers.push(structuredClone(v.controllers[0])); });
+  bad(v => { v.controllers[0].path = compileGroupPathPlan(input()).groups[0].chromePath.replace("chrome.exe", "CHROME.EXE"); });
+  bad(v => { v.controllers[0].path = compileGroupPathPlan(input()).groups[1].proxies[0].proxyPath; });
+  bad(v => { v.controllers[0].path = "C:\\a\\..\\node.exe"; });
+  bad(v => { v.controllers[0].sha256 = "invalid"; });
+  bad(v => { v.controllers.push({ ...v.controllers[0], dataDirectoryId: "00000000-0000-4000-8000-000000000003", sha256: "b".repeat(64) }); });
+  bad(v => { v.registrations[0].browserRuns[0].runToken = "reusable-label"; });
+  bad(v => { v.registrations[0].browserRuns[0].accountId = ""; });
+  bad(v => { v.registrations[0].browserRuns[0].clientPath = "C:\\Other.exe"; });
+});
+
+test("CDP metadata separates data directories while allowing a shared registered Agent binary", () => {
+  const raw = controlInput();
+  const other = "00000000-0000-4000-8000-000000000003";
+  raw.registrations[1].dataDirectoryId = other;
+  raw.registrations[1].browserRuns[0].accountId = "acc_1";
+  raw.controllers.push({ ...raw.controllers[0], dataDirectoryId: other });
+  const before = compileGroupPathPlan(raw);
+  assert.notEqual(before.groups[0].browserRuns[0].controllerKey, before.groups[1].browserRuns[0].controllerKey);
+  assert.equal(before.controllers[0].path, before.controllers[1].path);
+  raw.controllers.reverse(); raw.registrations.reverse(); raw.registrations.forEach(g => g.browserRuns.reverse());
+  const after = compileGroupPathPlan(raw);
+  assert.deepEqual(after.controllers, before.controllers);
+  for (const group of before.groups) assert.deepEqual(after.groups.find(g => g.key === group.key).browserRuns, group.browserRuns);
+});

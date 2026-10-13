@@ -107,7 +107,7 @@ function configDraft(upstream, listenerPort) {
  * Contains upstream credentials: never publish the returned draft as diagnostics.
  */
 export function compileGroupPathPlan(input) {
-  keys(input, ["isolationModel", "installationId", "programRoot", "registrations"], "计划");
+  keys(input, ["isolationModel", "installationId", "programRoot", "registrations", "controllers"], "计划");
   if (input.isolationModel !== GROUP_PATH_MODEL) throw invalid("必须显式指定 group_path_v1；不接受旧策略或自动降级");
   textMatch(input.installationId, UUID, "安装 ID");
   const root = rootPath(input.programRoot);
@@ -115,7 +115,7 @@ export function compileGroupPathPlan(input) {
   const identities = new Set();
   const reservedPorts = new Set();
   const groups = input.registrations.map((registration) => {
-    keys(registration, ["userSid", "dataDirectoryId", "groupId", "chrome", "proxies"], "分组登记");
+    keys(registration, ["userSid", "dataDirectoryId", "groupId", "chrome", "proxies", "browserRuns"], "分组登记");
     const sid = userSid(registration.userSid);
     textMatch(registration.dataDirectoryId, UUID, "数据目录登记 ID");
     textMatch(registration.groupId, /^[a-z0-9][a-z0-9_-]{0,63}$/u, "不可变分组 ID");
@@ -171,8 +171,57 @@ export function compileGroupPathPlan(input) {
     return { key, identity, groupRoot, chromePath, chrome, proxies,
       browserArgumentsDraft: strictBrowserArguments(active.listener.port) };
   });
+
+  // These are installer/service-supplied program registrations, not a public
+  // arbitrary-executable allow API. Identity, files and ownership remain unchecked.
+  const controllerInputs = input.controllers ?? [];
+  if (!Array.isArray(controllerInputs)) throw invalid("控制程序登记必须是数组");
+  const controllers = new Map();
+  const programHashes = new Map();
+  const protectedPrograms = new Set(groups.flatMap(group => [
+    ...group.chrome.executablePaths, ...group.proxies.map(proxy => proxy.proxyPath),
+  ]).map(program => program.toLowerCase()));
+  for (const controller of controllerInputs) {
+    keys(controller, ["userSid", "dataDirectoryId", "path", "sha256"], "控制程序登记");
+    const sid = userSid(controller.userSid);
+    textMatch(controller.dataDirectoryId, UUID, "控制程序数据目录 ID");
+    const key = hash([sid, controller.dataDirectoryId]);
+    if (controllers.has(key)) throw invalid("同一用户和数据目录只能登记一个控制程序");
+    rootPath(controller.path);
+    if (!controller.path.toLowerCase().endsWith(".exe")) throw invalid("控制程序必须是 exe");
+    textMatch(controller.sha256, SHA256, "控制程序 SHA-256");
+    const program = controller.path.toLowerCase();
+    if (protectedPrograms.has(program)) throw invalid("控制程序不能复用浏览器或代理程序路径");
+    if (programHashes.has(program) && programHashes.get(program) !== controller.sha256) throw invalid("同一路径的控制程序哈希冲突");
+    programHashes.set(program, controller.sha256);
+    controllers.set(key, { key, ...controller });
+  }
+  const accounts = new Set(); const runs = new Set(); const runCounts = new Map();
+  groups.forEach((group, index) => {
+    const browserRuns = input.registrations[index].browserRuns ?? [];
+    if (!Array.isArray(browserRuns)) throw invalid("浏览器运行登记必须是数组");
+    const controllerKey = hash([group.identity.userSid, group.identity.dataDirectoryId]);
+    group.browserRuns = browserRuns.map(run => {
+      keys(run, ["accountId", "runToken", "debugPort"], "浏览器运行登记");
+      // IDs are metadata, never filesystem path segments or native process identity.
+      textMatch(run.accountId, /^[a-zA-Z0-9_-]{1,128}$/u, "账号 ID");
+      textMatch(run.runToken, /^run-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u, "运行 token");
+      integer(run.debugPort, 1024, 65535, "CDP 端口");
+      if (!controllers.has(controllerKey)) throw invalid("浏览器运行缺少所属用户和数据目录的控制程序登记");
+      const accountKey = hash([controllerKey, run.accountId]);
+      if (accounts.has(accountKey) || runs.has(run.runToken)) throw invalid("账号或运行 token 重复登记");
+      if (reservedPorts.has(run.debugPort)) throw invalid("CDP 端口与代理入口或其它运行冲突");
+      const count = (runCounts.get(controllerKey) ?? 0) + 1;
+      if (count > 4) throw invalid("同一用户和数据目录最多登记四个浏览器运行");
+      accounts.add(accountKey); runs.add(run.runToken); reservedPorts.add(run.debugPort); runCounts.set(controllerKey, count);
+      return { accountId: run.accountId, runToken: run.runToken, controllerKey,
+        endpoint: { address: "127.0.0.1", port: run.debugPort, protocol: "tcp" },
+        browserArgumentsDraft: [...group.browserArgumentsDraft, "--remote-debugging-address=127.0.0.1", `--remote-debugging-port=${run.debugPort}`] };
+    }).sort((a, b) => a.runToken < b.runToken ? -1 : 1);
+  });
   return freeze({ isolationModel: GROUP_PATH_MODEL, kind: "offline_group_path_plan", launchAuthorization: "not_issued",
     installationId: input.installationId, programRoot: root, groups,
+    controllers: [...controllers.values()].sort((a, b) => a.key < b.key ? -1 : 1),
     pendingChecks: ["complete_resource_registry", "caller_and_session_identity", "filesystem_links_acl_signatures_hashes",
       "disk_peak_and_update_layout", "port_inventory_and_reservation", "persistent_wfp_four_boundaries",
       "profile_lock_and_migration", "job_and_listener_ownership", "dynamic_wfp_commit", "cdp_initialization", "M1_ACCEPTANCE"],

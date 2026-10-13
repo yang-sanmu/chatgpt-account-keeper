@@ -4,7 +4,7 @@
 
 **2026-10-10 方案已更新为 [v4：每组独立 Chrome 路径](../../docs/BROWSER_NETWORK_ISOLATION.md)。本目录代码和示例仍是 v3 的共享 `chromePath` 原型。** 下列步骤只用于旧实验复现与只读检查，不具备 v4 的逐组路径、入口客户端默认拒绝及完整入站保护。不能只删除 mihomo 的 `users` 就运行新路线；新策略模型和启动门槛需先实现，再在专用环境验收。
 
-M1-A 已新增独立的 JavaScript [离线分组模型](../../docs/GROUP_PATH_PLAN.md)：生成逐组程序路径、校验清单和代次冲突，输出四项策略意图与受控配置草案。它不是本 C# 工具的 WFP 策略格式，不能传给 `run`。本工具新加的 `runtime-*` 命令仅提供目录与容量的只读检查，所有输出仍缺少启动授权。
+M1-A 已新增独立的 JavaScript [离线分组模型](../../docs/GROUP_PATH_PLAN.md)：生成逐组程序路径、校验清单和代次冲突，输出四项策略意图与受控配置草案。它不是本 C# 工具的 WFP 策略格式，不能传给 `run`。本工具新加的 `runtime-*` 命令提供目录与容量的只读检查，`encode-wfp` 提供 v4 资源清单的内存编码检查，所有输出仍缺少启动授权。
 
 ## 可运行的无策略写入检查
 
@@ -26,7 +26,9 @@ v4 目录检查使用 `runtime-manifest <Chrome目录>`（全文件清单、文�
 
 `selftest` 现也包含合成全文件清单、变更检测和容量查询；真实硬链接与 junction 对照通过 `node --test test/runtimeInventory.integration.test.js` 执行，需先发布本工具。工具是独立的网络实验组件，不属于已停止维护的 Avalonia 客户端。
 
-`runtime-report <Chrome目录>` 在上述完整只读扫描上附带实际目录，输出可交给 JavaScript `compileWfpResourcePlan()` 的观测数据。新[离线 WFP 资源清单](../../docs/WFP_RESOURCE_PLAN.md)包含逐层条件、生命周期及清理键；清单匹配仍不是管理服务授权，缺少原生条件编码和 CDP 例外，不能传给旧 `run` 命令。不要把“报告匹配”显示成“网络已保护”。
+`runtime-report <Chrome目录>` 在上述完整只读扫描上附带实际目录，输出可交给 JavaScript `compileWfpResourcePlan()` 的观测数据。新[离线 WFP 资源清单](../../docs/WFP_RESOURCE_PLAN.md)包含逐层条件、生命周期及清理键；清单匹配仍不是管理服务授权，缺少 CDP 例外及安装流程，不能传给旧 `run` 命令。不要把“报告匹配”显示成“网络已保护”。
+
+`encode-wfp <resources.json>` 接收 `compileWfpResourcePlan()` 的离线输出，在内存中编码应用 ID、用户安全描述符、地址掩码及过滤器，再回读成 JSON 报告。它只读取输入及程序路径信息，不打开 WFP engine、不安装规则。报告含本机路径与 SID，仅供本地检查，始终 `productionReady: false`。运行 `node --test test/wfpResourceEncoding.integration.test.js` 验证真实 Windows API 编码，需先重新发布当前工具；测试仅创建临时合成文件，不执行它们。规则被 BFE 接受及实际网络行为仍须专用环境验证。
 
 ## 隔离测试机上的操作
 

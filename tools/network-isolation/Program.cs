@@ -4,6 +4,12 @@ using GptAccountKeeper.NetworkIsolation;
 try
 {
     NativeWfp.CheckLayout();
+    if (args is ["encode-wfp", var resourceFile])
+    {
+        using var resources = JsonDocument.Parse(File.ReadAllText(resourceFile));
+        var report = WfpResourceEncoding.Read(resources.RootElement);
+        Console.WriteLine(JsonSerializer.Serialize(report, EncodingJson.Default.EncodingReport)); return 0;
+    }
     if (args.Length == 1 && args[0] == "selftest")
     {
         var sample = new LabPolicy { Id = Guid.NewGuid(), LabRoot = @"C:\NetworkLab", ChromePath = @"C:\NetworkLab\chrome\chrome.exe",
@@ -65,7 +71,7 @@ try
     }
     if (args.Length < 2 || args[0] is not ("validate" or "preflight" or "inspect" or "run" or "cleanup"))
     {
-        Console.Error.WriteLine("LAB ONLY: selftest | ports | manifest/runtime-manifest/runtime-report <chrome-directory> | runtime-verify <directory> <manifest.json> | runtime-space <existing-directory> | validate/preflight/inspect <policy.json> | run <policy.json> --isolated-lab | cleanup <policy.json> --isolated-lab --processes-stopped");
+        Console.Error.WriteLine("LAB ONLY: selftest | ports | encode-wfp <resources.json> | manifest/runtime-manifest/runtime-report <chrome-directory> | runtime-verify <directory> <manifest.json> | runtime-space <existing-directory> | validate/preflight/inspect <policy.json> | run <policy.json> --isolated-lab | cleanup <policy.json> --isolated-lab --processes-stopped");
         return 2;
     }
     var command = args[0];

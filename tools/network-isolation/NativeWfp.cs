@@ -9,7 +9,13 @@ internal static unsafe partial class NativeWfp
     internal static readonly Guid Connect6 = new("4a72393b-319f-44bc-84c3-ba54dcb3b6b4");
     internal static readonly Guid Bind4 = new("1247d66d-0b60-4a15-8d44-7155d0f53a0c");
     internal static readonly Guid Bind6 = new("55a650e1-5f0a-4eca-a653-88f53b26aa8c");
+    internal static readonly Guid Listen4 = new("88bb5dad-76d7-4227-9c71-df0a3ed7be7e");
+    internal static readonly Guid Listen6 = new("7ac9de24-17dd-4814-b4bd-a9fbc95a321b");
+    internal static readonly Guid Receive4 = new("e1cd9fe7-f4b5-4273-96c0-592e487b8650");
+    internal static readonly Guid Receive6 = new("a3b42c97-9f04-4672-b87e-cee9c483257f");
     internal static readonly Guid AppId = new("d78e1e87-8644-4ea5-9437-d809ecefc971");
+    internal static readonly Guid UserId = new("af043a0a-b34d-4f86-979c-c90371af6e66");
+    internal static readonly Guid LocalAddress = new("d9ee00de-c1ef-4617-bfe3-ffd8f5a08957");
     internal static readonly Guid RemoteAddress = new("b235ae9a-1d64-49b8-a44c-5ff3d9095045");
     internal static readonly Guid RemotePort = new("c35a604d-d22b-4e1a-91b4-68f674ee674b");
     internal static readonly Guid LocalPort = new("0c1ba1af-5765-453f-af22-a8f791ac775b");
@@ -25,6 +31,10 @@ internal static unsafe partial class NativeWfp
     internal struct Display { internal nint Name; internal nint Description; }
     [StructLayout(LayoutKind.Sequential)]
     internal struct Blob { internal uint Size; internal nint Data; }
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct V4Mask { internal uint Address; internal uint Mask; }
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct V6Mask { internal fixed byte Address[16]; internal byte PrefixLength; }
     [StructLayout(LayoutKind.Explicit, Size = 16)]
     internal struct Value
     {
@@ -104,7 +114,9 @@ internal static unsafe partial class NativeWfp
     {
         if (IntPtr.Size != 8 || sizeof(Filter) != 200 || sizeof(Condition) != 40
             || sizeof(Value) != 16 || sizeof(Session) != 72 || sizeof(Provider) != 64
-            || sizeof(Sublayer) != 72 || Marshal.OffsetOf<Filter>(nameof(Filter.Conditions)) != 120
+            || sizeof(Sublayer) != 72 || sizeof(Blob) != 16 || sizeof(V4Mask) != 8 || sizeof(V6Mask) != 17
+            || Marshal.OffsetOf<V6Mask>(nameof(V6Mask.PrefixLength)) != 16
+            || Marshal.OffsetOf<Filter>(nameof(Filter.Conditions)) != 120
             || Marshal.OffsetOf<Filter>(nameof(Filter.Action)) != 128)
             throw new PlatformNotSupportedException("WFP x64 ABI layout mismatch");
     }

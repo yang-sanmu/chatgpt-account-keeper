@@ -39,13 +39,13 @@
 
 ## 原生编码与验收边界
 
-目前使用实际层/条件名称及地址掩码、端口和协议类型，但应用路径和用户身份仍是中间表示。后续必须把路径转为 WFP 应用 ID，并为用户生成正确的安全描述符；`ALE_USER_ID` 的原生类型是安全描述符，不能直接塞入 SID，见 [Microsoft 条件定义](https://learn.microsoft.com/en-us/windows/win32/fwp/filtering-condition-identifiers-)。
+JavaScript 清单中的应用路径和用户身份保留为中间表示。独立原生工具现可将其编码为 WFP 应用 ID 和用户安全描述符；`ALE_USER_ID` 的原生类型是安全描述符，不能直接塞入 SID，见 [Microsoft 条件定义](https://learn.microsoft.com/en-us/windows/win32/fwp/filtering-condition-identifiers-)。编码结果仍不是管理服务授权。
 
-Chrome 的监听/接收当前默认阻断，尚无 CDP 端口例外，因此这份清单不能直接用于可用的浏览器启动。待完成精确控制通道登记、原生条件编码、代理文件/签名/权限核对后，才进入专用环境的 WFP 安装与实测；原型不能为方便调试放行全部回环。
+Chrome 的监听/接收当前默认阻断，尚无 CDP 端口例外，因此这份清单不能直接用于可用的浏览器启动。待完成精确控制通道登记、代理文件/签名/权限核对后，才进入专用环境的 WFP 安装与实测；原型不能为方便调试放行全部回环。
 
 测试中的条件匹配器只检查这份清单内部的允许/拒绝逻辑，不模拟原生安全描述符、其它 provider、真实流、重授权或服务崩溃清理。IPv6/映射地址条件能在模型中匹配，也不等于实际 Windows 数据路径已通过。
 
-## 本轮验证
+## 资源清单验证（2026-10-13）
 
 NativeAOT 发布、工具 `selftest` 和旧 v3 策略结构校验通过。以下 34 项定向测试全部通过，无跳过：
 
@@ -56,3 +56,38 @@ node --test test/wfpResourcePlan.test.js test/runtimeCapacity.test.js test/runti
 覆盖跨组/用户/辅助程序拒绝、入口别名、监听条件、通配绑定、出站临时端口、上游 TCP/UDP、候选与两端冻结描述、稳定清理键、密码不出现在清单中，以及真实目录报告的正确路径/错误路径/内容变化对照。报告集成使用临时合成文件，不启动 Chrome。测试曾因 TEMP 含 `ADMINI~1` 被原路径规则拒绝，修正为完整路径后通过，没有放宽生产路径校验。
 
 本轮没有修改生产启动路径、系统网络规则、真实账号或客户端。没有重跑全量 Node、Tauri 前端或 Rust。下一步是原生条件编码与精确控制通道模型；M1-B 仍要求专用 Windows 环境，M1 整体验收尚未通过。
+
+## 原生编码检查（2026-10-13 后续）
+
+新增 `WfpResourceEncoding.cs` 和只读命令：
+
+```powershell
+& $lab encode-wfp 'C:\NetworkLab\resources.json'
+```
+
+输入为 `compileWfpResourcePlan()` 输出的完整 JSON。工具只接受 `offline_wfp_resources / group_path_v1 / schemaVersion: 1`，在内存中构造 `FWPM_FILTER0` 和条件，再从非托管结构回读生成 `offline_wfp_encoding` 报告。每条规则处理完即释放对应内存。它不打开 WFP engine、不调用规则安装接口、不创建进程或端口。旧 `run` 命令仍不接受 v4 清单。
+
+- 程序路径使用 `FwpmGetAppIdFromFileName0` 转成应用 ID，检查会读取路径信息；不把传入路径字符串直接当作设备路径。它不验证文件哈希、ACL、签名或进程身份。
+- 用户 SID 转成含单个 allow ACE 的自相对安全描述符，访问掩码为 `FWP_ACTRL_MATCH_FILTER`，再封装成 `FWP_BYTE_BLOB`。该掩码用于条件匹配，不是流量许可，依据 [Microsoft 应用和用户过滤示例](https://learn.microsoft.com/en-us/windows/win32/fwp/permitting-and-blocking-applications-and-users)。
+- IPv4 地址和掩码编码为两个主机序 `UINT32`；IPv6 编码为 16 个地址字节及一个前缀长度字节。x64 布局检查覆盖这些结构以及现有过滤器/条件结构。
+- 层、字段、值类型、地址族和前缀必须一致；拒绝未知类型、重复条件/规则及本模型未使用的强制放行标志。这里的校验服务于编码，不能替代管理侧重新编译与授权。
+
+输出固定 `wfpModified: false`、`productionReady: false`、`launchAuthorization: not_issued`。报告含本机程序设备路径和用户 SID，供本地调试，不应直接当作可上传的脱敏诊断。原生指针仅在工具进程内使用，不序列化为可复用句柄。
+
+NativeAOT 发布、工具自检、旧 v3 结构校验及以下 **36 项测试通过，无跳过**：
+
+```powershell
+node --test test/wfpResourceEncoding.integration.test.js test/wfpResourcePlan.test.js test/runtimeCapacity.test.js test/runtimeInventory.integration.test.js test/groupPathPlan.test.js test/strictNetworkConfig.test.js
+```
+
+新增两个原生集成测试使用临时合成文件，核对全部 8 个层 GUID、条件类型、应用 ID、用户 DACL、地址字节、权重及持久化标志，并验证错误输入不输出部分成功结果。工具未发布或不在 Windows 时明确跳过。首次测试命中了上轮旧工具（没有新命令），重新完成本次 NativeAOT 发布后全部通过。没有运行 BFE 接受性测试，未验证回环、真实流、重授权或动态会话退出行为；未重跑全量 Node、Tauri 或 Rust。
+
+## 下一步：精确 CDP 控制通道
+
+现有 `ChromeProcessLauncher` 的后台启动使用 `--remote-debugging-port=0`，有头启动则预先选非零端口；实际 CDP 客户端是 Node Agent（含 Playwright 与原始屏障连接），不是仅负责创建进程的 broker。本轮不改变这些生产行为。
+
+下一步的离线模型需按一次 BrowserRun 登记非零 CDP 端口、账号/runToken、组路径及已登记 Agent 程序与用户身份，并检查与代理入口/其它运行端口的冲突。严格启动应先取得该端口的保护资源，再用确定端口创建 Chrome，不能先放行整个回环等待 Chrome 自选端口。端口检查至绑定之间的竞争仍须管理组件和专用环境验证。
+
+规则需要同时描述：登记端口的客户端默认拒绝与精确 Agent 例外；本组 Chrome 在 `127.0.0.1` 的绑定、监听、接收例外；IPv6/映射别名拒绝。保留 CDP 以执行关闭时，不应把它混入业务链路的 `freezeKeys`；它在 BrowserRun 关闭及连接清理后回收。
+
+同一用户、同一 Agent 可控制其登记运行；程序路径和 SID 无法独自区分同组的账号进程或不同登录会话。账号/runToken 绑定、实际监听进程归属、单写 Agent 与调用者验证仍由管理侧承担，不能用清单里的标签宣称 WFP 已完成逐进程隔离。本轮仅明确上述衔接要求，尚未实现 CDP 规则或生产启动接入。

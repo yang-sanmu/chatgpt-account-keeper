@@ -14,6 +14,8 @@ internal sealed record RuntimeFile(string RelativePath, long SizeBytes, string S
 internal sealed record ChromeManifest(string Version, RuntimeFile[] Files);
 internal sealed record RuntimeSpace(string Directory, long AvailableBytes, bool ProductionReady = false);
 internal sealed record RuntimeObservation(string Kind, string Directory, ChromeManifest Manifest);
+internal sealed record ProgramObservation(string Kind, string Path, long SizeBytes, string Sha256,
+    DateTimeOffset ObservedAt, bool ProductionReady = false);
 
 // Read-only NTFS snapshot. No ACL/signature verification, copying, or launch authority.
 internal static partial class RuntimeInventory
@@ -26,12 +28,18 @@ internal static partial class RuntimeInventory
 
     internal static string CheckedDirectory(string directory)
     {
-        if (!Path.IsPathFullyQualified(directory) || !Regex.IsMatch(directory, @"^[a-zA-Z]:\\"))
-            throw new ArgumentException("Runtime directory must be a local drive path");
-        var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory));
+        var root = CheckedPath(directory);
         if (root == Path.GetPathRoot(root)) throw new ArgumentException("Do not scan a whole volume");
-        CheckAncestors(root);
         if (!Directory.Exists(root)) throw new ArgumentException("Runtime directory missing");
+        return root;
+    }
+
+    private static string CheckedPath(string value)
+    {
+        if (!Path.IsPathFullyQualified(value) || !Regex.IsMatch(value, @"^[a-zA-Z]:\\") || value.AsSpan(2).Contains(':'))
+            throw new ArgumentException("Runtime path must be a local drive path without alternate data streams");
+        var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(value));
+        CheckAncestors(root);
         // The 64-bit file index used below is not a unique identity on ReFS.
         if (!string.Equals(new DriveInfo(Path.GetPathRoot(root)!).DriveFormat, "NTFS", StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException("Runtime inventory prototype requires NTFS");
@@ -132,6 +140,20 @@ internal static partial class RuntimeInventory
         return new(version, snapshot.Files);
     }
 
+    internal static ProgramObservation ReadProgram(string file)
+    {
+        var path = CheckedPath(file);
+        using var stream = Open(path);
+        var before = Stamp(stream);
+        var hash = Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
+        if (before != Stamp(stream)) throw new ArgumentException("Program changed while hashing");
+        // Retain the read handle while checking that the path still names this file.
+        CheckAncestors(path);
+        using var current = Open(path);
+        if (before != Stamp(current)) throw new ArgumentException("Program path changed during inspection");
+        return new("program_file_observation", path, before.Size, hash, DateTimeOffset.UtcNow);
+    }
+
     internal static void Verify(ChromeManifest actual, ChromeManifest expected)
     {
         // Expected paths are never opened; compare against a fresh complete scan.
@@ -166,4 +188,6 @@ internal static partial class RuntimeInventory
 [JsonSerializable(typeof(ChromeManifest))]
 [JsonSerializable(typeof(RuntimeSpace))]
 [JsonSerializable(typeof(RuntimeObservation))]
+[JsonSerializable(typeof(ProgramObservation))]
+[JsonSerializable(typeof(PortObservation))]
 internal partial class RuntimeJson : JsonSerializerContext { }

@@ -22,10 +22,21 @@ internal sealed record PortInventory(PortRange[] Dynamic, PortRange[] Excluded, 
     }
 }
 
+internal sealed record PortObservation(string Kind, string Scope, DateTimeOffset ObservedAt,
+    PortRange[] DynamicRanges, PortRange[] ExcludedRanges, int[] OccupiedPorts,
+    bool PortsReserved = false, bool ProductionReady = false);
+
 // Read-only preflight. It does not reserve ports and cannot replace the future
 // coordinator's admission lock/recheck at bind time. It never changes host ranges.
 internal static class PortPreflight
 {
+    internal static PortObservation ReadReport()
+    {
+        var inventory = Read();
+        return new("tcp_port_observation", "tcp_ipv4_ipv6", DateTimeOffset.UtcNow,
+            inventory.Dynamic, inventory.Excluded, inventory.Occupied.Order().ToArray());
+    }
+
     internal static PortInventory Read()
     {
         var dynamic = new List<PortRange>(); var excluded = new List<PortRange>();

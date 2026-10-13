@@ -64,15 +64,62 @@ function matchObservations(groups, observations) {
     inventoryHash: group.chrome.inventoryHash, status: matched.has(group.key) ? "matched_observation" : "not_observed" }));
 }
 
+const observedTime = value => typeof value === "string" && Number.isFinite(Date.parse(value));
+function matchPrograms(plan, observations) {
+  if (!Array.isArray(observations)) throw invalid("程序观测必须是数组");
+  const proxyFiles = plan.groups.flatMap(group => group.proxies.map(proxy => ({ groupKey: group.key,
+    generation: proxy.generation, path: proxy.proxyPath, sha256: proxy.sha256 })));
+  const controllerFiles = plan.controllers.map(controller => ({ controllerKey: controller.key, path: controller.path, sha256: controller.sha256 }));
+  const remaining = new Map([...proxyFiles, ...controllerFiles].map(file => [file.path.toLowerCase(), file]));
+  const matched = new Map();
+  for (const observation of observations) {
+    if (observation?.kind !== "program_file_observation" || typeof observation.path !== "string"
+      || !Number.isSafeInteger(observation.sizeBytes) || observation.sizeBytes < 0 || !observedTime(observation.observedAt)) {
+      throw invalid("必须提供完整的 program-report 程序观测");
+    }
+    const key = observation.path.toLowerCase(); const expected = remaining.get(key);
+    if (!expected || observation.sha256 !== expected.sha256) throw invalid("程序观测路径或哈希不匹配，或重复提交");
+    matched.set(key, { status: "matched_observation", sizeBytes: observation.sizeBytes, observedAt: observation.observedAt });
+    remaining.delete(key);
+  }
+  const result = files => files.map(file => ({ ...file, ...(matched.get(file.path.toLowerCase()) ?? { status: "not_observed" }) }));
+  return { proxyFiles: result(proxyFiles), controllerFiles: result(controllerFiles) };
+}
+
+function checkPorts(ports, observation) {
+  const validPort = value => Number.isInteger(value) && value >= 1 && value <= 65535;
+  const validRanges = ranges => Array.isArray(ranges) && ranges.every(range => range
+    && validPort(range.start) && validPort(range.end) && range.start <= range.end);
+  if (observation !== null && (observation?.kind !== "tcp_port_observation" || observation.scope !== "tcp_ipv4_ipv6"
+    || !observedTime(observation.observedAt) || observation.portsReserved !== false
+    || !validRanges(observation.dynamicRanges) || observation.dynamicRanges.length !== 2
+    || !validRanges(observation.excludedRanges) || !Array.isArray(observation.occupiedPorts) || !observation.occupiedPorts.every(validPort))) {
+    throw invalid("必须提供包含 IPv4/IPv6 范围及占用信息的完整 ports-report 观测");
+  }
+  const contains = (ranges, port) => ranges.some(range => port >= range.start && port <= range.end);
+  const occupied = new Set(observation?.occupiedPorts);
+  const entries = [...ports].sort((a, b) => a - b).map(port => {
+    if (!observation) return { port, status: "not_observed", reasons: [] };
+    const reasons = [];
+    if (contains(observation.dynamicRanges, port)) reasons.push("dynamic_range");
+    if (contains(observation.excludedRanges, port)) reasons.push("excluded_range");
+    if (occupied.has(port)) reasons.push("occupied");
+    return { port, status: reasons.length ? "conflict_observed" : "no_conflict_observed", reasons };
+  });
+  return { scope: "tcp_ipv4_ipv6", portsReserved: false, observedAt: observation?.observedAt ?? null, entries };
+}
+
 /** Compile only controlled input. These are symbolic WFP resources, not native
  * filters or an authorization receipt. Reports are compared, never attested.
  * No filesystem, WFP, process, or network operations occur here. */
-export function compileWfpResourcePlan(input, { runtimeObservations = [] } = {}) {
+export function compileWfpResourcePlan(input, { runtimeObservations = [], programObservations = [], portObservation = null } = {}) {
   const plan = compileGroupPathPlan(input);
   const observations = matchObservations(plan.groups, runtimeObservations);
+  const programs = matchPrograms(plan, programObservations);
   const reservedPorts = new Set(plan.groups.flatMap(group => [
     ...group.proxies.map(proxy => proxy.listener.port), ...group.browserRuns.map(run => run.endpoint.port),
   ]));
+  const ports = checkPorts(reservedPorts, portObservation);
   // A same-sublayer upstream permit must never override another entry's deny.
   for (const group of plan.groups) for (const proxy of group.proxies) {
     if (unspecified.check(proxy.endpoint.address, isIP(proxy.endpoint.address) === 4 ? "ipv4" : "ipv6")) {
@@ -155,7 +202,7 @@ export function compileWfpResourcePlan(input, { runtimeObservations = [] } = {})
     groups: resources, controllers: plan.controllers, filters: ordered,
     cleanupKeys: { dynamic: ordered.filter(f => f.lifetime === "dynamic").map(f => f.key),
       persistent: ordered.filter(f => f.lifetime === "persistent").map(f => f.key), sublayer: sublayerKey, provider: providerKey },
-    preflight: { chrome: observations, proxyFiles: "not_checked", controllerFiles: "not_checked", signaturesAndAcl: "not_checked" },
+    preflight: { chrome: observations, ...programs, ports, signaturesAndAcl: "not_checked" },
     pendingChecks: [...plan.pendingChecks, "native_appid_and_user_descriptor_encoding", "wfp_layer_and_priority_acceptance", "cdp_channel_registration"],
   });
 }

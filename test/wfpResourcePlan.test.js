@@ -149,7 +149,7 @@ test("WFP preflight binds observed directory and every file, while absent observ
     manifest: structuredClone(raw.registrations[0].chrome) };
   const resources = compileWfpResourcePlan(raw, { runtimeObservations: [observation] });
   assert.deepEqual(resources.preflight.chrome.map(c => c.status), ["matched_observation", "not_observed"]);
-  assert.equal(resources.preflight.proxyFiles, "not_checked");
+  assert.ok(resources.preflight.proxyFiles.every(file => file.status === "not_observed"));
   assert.equal(resources.launchAuthorization, "not_issued");
   for (const mutate of [o => { o.directory = "C:\\Unregistered"; }, o => { o.manifest.version = "1.0.0.0"; },
     o => { o.manifest.files.pop(); }, o => { o.manifest.files[0].sha256 = "b".repeat(64); },
@@ -170,6 +170,74 @@ function controlInput() {
     runToken: `run-00000000-0000-4000-8000-00000000000${i}`, debugPort: 24001 + i }]; });
   return raw;
 }
+
+test("program observations bind proxy generations and shared controllers without granting authorization", () => {
+  const raw = controlInput();
+  raw.controllers[1].path = raw.controllers[0].path; // one file, two registered owners
+  raw.registrations[0].proxies.push({ ...raw.registrations[0].proxies[0], generation: 2, role: "candidate", listenerPort: 23003 });
+  const plan = compileGroupPathPlan(raw);
+  const report = (file, sha256) => ({ kind: "program_file_observation", path: file, sha256, sizeBytes: 100,
+    observedAt: "2026-10-13T01:00:00Z", productionReady: false });
+  const proxy = report(plan.groups[0].proxies[1].proxyPath.toUpperCase(), "b".repeat(64));
+  const controller = report(raw.controllers[0].path, "c".repeat(64));
+  const options = { programObservations: [proxy, controller] };
+  const before = structuredClone(options); const resources = compileWfpResourcePlan(raw, options);
+  assert.deepEqual(resources.preflight.proxyFiles.map(file => file.status), ["not_observed", "matched_observation", "not_observed"]);
+  assert.ok(resources.preflight.controllerFiles.every(file => file.status === "matched_observation"));
+  assert.equal(resources.preflight.proxyFiles[1].observedAt, proxy.observedAt);
+  assert.deepEqual(options, before); assert.equal(Object.isFrozen(proxy), false);
+  assert.equal(resources.preflight.signaturesAndAcl, "not_checked");
+  const unobserved = compileWfpResourcePlan(raw);
+  assert.deepEqual(resources.filters, unobserved.filters);
+  assert.deepEqual(resources.pendingChecks, unobserved.pendingChecks);
+  assert.equal(resources.launchAuthorization, "not_issued");
+  assert.throws(() => resources.preflight.proxyFiles.push({}), TypeError);
+  for (const change of [{ path: "C:\\Other\\mihomo.exe" }, { sha256: "c".repeat(64) },
+    { kind: "verified" }, { observedAt: "invalid" }, { sizeBytes: -1 }]) {
+    assert.throws(() => compileWfpResourcePlan(raw, { programObservations: [{ ...proxy, ...change }] }), { code: "WFP_RESOURCE_PLAN_INVALID" });
+  }
+  for (const observations of [true, [true], [proxy, proxy], [controller, controller]]) {
+    assert.throws(() => compileWfpResourcePlan(raw, { programObservations: observations }), { code: "WFP_RESOURCE_PLAN_INVALID" });
+  }
+});
+
+function portReport() {
+  return { kind: "tcp_port_observation", scope: "tcp_ipv4_ipv6", observedAt: "2026-10-13T01:00:00Z",
+    dynamicRanges: [{ start: 23001, end: 23001 }, { start: 24001, end: 24002 }],
+    excludedRanges: [{ start: 23002, end: 23002 }], occupiedPorts: [24002], portsReserved: false, productionReady: false };
+}
+
+test("port observations cover every proxy generation and CDP port with explicit conflict reasons", () => {
+  const raw = controlInput();
+  raw.registrations[0].proxies.push({ ...raw.registrations[0].proxies[0], generation: 2, role: "candidate", listenerPort: 23003 });
+  const baseline = compileWfpResourcePlan(raw);
+  assert.ok(baseline.preflight.ports.entries.every(entry => entry.status === "not_observed"));
+  assert.equal(baseline.preflight.ports.observedAt, null);
+  const observation = portReport(); const resources = compileWfpResourcePlan(raw, { portObservation: observation });
+  assert.deepEqual(resources.preflight.ports.entries, [
+    { port: 23001, status: "conflict_observed", reasons: ["dynamic_range"] },
+    { port: 23002, status: "conflict_observed", reasons: ["excluded_range"] },
+    { port: 23003, status: "no_conflict_observed", reasons: [] },
+    { port: 24001, status: "conflict_observed", reasons: ["dynamic_range"] },
+    { port: 24002, status: "conflict_observed", reasons: ["dynamic_range", "occupied"] },
+  ]);
+  assert.equal(resources.preflight.ports.portsReserved, false);
+  assert.equal(resources.preflight.ports.observedAt, observation.observedAt);
+  assert.equal(Object.isFrozen(observation), false);
+  assert.deepEqual(resources.filters, baseline.filters);
+  assert.deepEqual(resources.pendingChecks, baseline.pendingChecks);
+  assert.equal(resources.launchAuthorization, "not_issued");
+});
+
+test("missing, incomplete and malformed TCP inventories never become conflict-free observations", () => {
+  for (const change of [{ kind: "verified" }, { scope: "tcp_ipv4" }, { portsReserved: true }, { observedAt: null },
+    { dynamicRanges: [] }, { dynamicRanges: [{ start: 1, end: 65535 }] }, { excludedRanges: undefined },
+    { excludedRanges: [{ start: 30000, end: 20000 }] }, { excludedRanges: [{ start: 0, end: 65536 }] },
+    { occupiedPorts: undefined }, { occupiedPorts: ["23001"] }, { occupiedPorts: [65536] }]) {
+    assert.throws(() => compileWfpResourcePlan(controlInput(), { portObservation: { ...portReport(), ...change } }), { code: "WFP_RESOURCE_PLAN_INVALID" });
+  }
+  assert.throws(() => compileWfpResourcePlan(controlInput(), { portObservation: true }), { code: "WFP_RESOURCE_PLAN_INVALID" });
+});
 
 test("CDP permits only its registered controller and owning Chrome on the precise IPv4 channel", () => {
   const raw = controlInput(); const plan = compileGroupPathPlan(raw); const resources = compileWfpResourcePlan(raw);
@@ -200,7 +268,7 @@ test("CDP permits only its registered controller and owning Chrome on the precis
   }
   assert.equal(decision(resources, "AUTH_RECV_ACCEPT_V4", { ...server, remoteAddress: "192.0.2.3" }), "block");
   assert.equal(decision(resources, "AUTH_CONNECT_V4", { ...client, app: a.chromePath, protocol: 17 }), "block");
-  assert.equal(resources.preflight.controllerFiles, "not_checked");
+  assert.ok(resources.preflight.controllerFiles.every(file => file.status === "not_observed"));
 });
 
 test("CDP survives business freeze and has independent per-run cleanup; dynamic session loss denies it", () => {

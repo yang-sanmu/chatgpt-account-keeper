@@ -1,6 +1,6 @@
 # v4 离线 WFP 资源编译
 
-2026-10-13，M1-A。`src/network/wfpResourcePlan.js` 的 `compileWfpResourcePlan(input, { runtimeObservations })` 将 `group_path_v1` 原始登记输入编译成可检查的规则资源清单。它内部先运行 `compileGroupPathPlan()`，不接受调用方改写好的放行意图；旧 v3 的 C# `run` 命令不接受这份新清单。
+2026-10-13，M1-A。`src/network/wfpResourcePlan.js` 的 `compileWfpResourcePlan(input, { runtimeObservations, programObservations, portObservation })` 将 `group_path_v1` 原始登记输入编译成可检查的规则资源清单。三个观测选项均可省略，省略时相应检查保留未观测。它内部先运行 `compileGroupPathPlan()`，不接受调用方改写好的放行意图；旧 v3 的 C# `run` 命令不接受这份新清单。
 
 输出固定 `kind: offline_wfp_resources`、`schemaVersion: 1`、`launchAuthorization: not_issued`。这不是原生 `FWPM_FILTER0`，不打开 WFP、不登记端口、不生成启动许可，不包含上游密码或完整 mihomo 配置。严格模式仍不可用。
 
@@ -35,13 +35,31 @@
 
 编译器按已生成的组 Chrome 活动路径匹配报告，再比较版本及每个文件的相对路径、大小和 SHA-256。源安装目录的相同文件不能替代组副本报告。重复、未知目录或不匹配清单返回错误；缺少某组报告则保留 `not_observed`，匹配时仅标记 `matched_observation`。
 
-报告是数据，不是签名证明或管理服务回执。离线匹配不验证报告来源/时效，也不保证检查后目录未变；因此不消除调用者身份、签名/ACL、更新锁、启动准入或其它待办门槛。代理文件仍标记为 `not_checked`。输入不能通过传入 `true` 来宣称目录已验证。
+报告是数据，不是签名证明或管理服务回执。离线匹配不验证报告来源/时效，也不保证检查后目录未变；因此不消除调用者身份、签名/ACL、更新锁、启动准入或其它待办门槛。代理和控制程序可通过下述独立文件报告核对，缺少报告时逐项保留 `not_observed`。输入不能通过传入 `true` 来宣称目录已验证。
+
+## 程序文件与 TCP 端口报告
+
+```powershell
+& $lab program-report 'C:\NetworkLab\registered-proxy\mihomo.exe'
+& $lab program-report 'C:\Keeper\node.exe'
+& $lab ports-report
+```
+
+`program-report` 输出 `{ kind: "program_file_observation", path, sizeBytes, sha256, observedAt, productionReady: false }`。只读打开本地 NTFS 文件并计算 SHA-256，复用目录工具的硬链接和祖先重解析检查；拒绝备用数据流路径，哈希前后核对文件标识，并在持有读句柄时复查路径。命令不执行文件、不验证 PE 格式、签名或 ACL，结束后也不保留启动锁。
+
+将文件报告数组传入 `programObservations`。编译器按已登记的代理代次路径、控制程序路径及预期哈希匹配，路径比较忽略大小写；同一路径的多个控制程序登记共用一份报告。未知路径、重复报告、哈希不符或缺失观测字段返回错误。`preflight.proxyFiles/controllerFiles` 为逐资源结果，包含路径、预期哈希及 `matched_observation / not_observed`；匹配时附带文件大小和观测时间。大小仅为观测信息，预期内容由哈希核对。
+
+`ports-report` 输出 `{ kind: "tcp_port_observation", scope: "tcp_ipv4_ipv6", observedAt, dynamicRanges, excludedRanges, occupiedPorts, portsReserved: false, productionReady: false }`。复用现有只读查询，汇总 IPv4 和 IPv6 各自的 TCP 动态范围、两者的排除范围以及监听/连接表中的本地端口。任一家族查询或解析失败时整个命令失败；不将不完整结果当作空集合，也不检查或占用 UDP 端口。
+
+将该报告传入 `portObservation`，`preflight.ports.entries` 覆盖所有代理代次入口和全部 CDP 端口。结果分别为 `not_observed`、`conflict_observed`、`no_conflict_observed`，冲突原因可同时包含 `dynamic_range / excluded_range / occupied`。不能仅依据固定的 49152 分界判断端口；两个家族的范围合并保守检查。冲突保留在离线报告中供调整草案，不自动换端口或终止占用程序。
+
+观测时间只是查询完成时间，这些多步读取不是原子快照，也不证明报告新鲜或端口已预留。没有发现冲突不保证下一次绑定成功；管理侧准入锁、绑定时复查和实际监听归属仍待实现。观测不改变规则、`pendingChecks` 或 `launchAuthorization: not_issued`，签名/ACL 继续为 `not_checked`。
 
 ## 原生编码与验收边界
 
 JavaScript 清单中的应用路径和用户身份保留为中间表示。独立原生工具现可将其编码为 WFP 应用 ID 和用户安全描述符；`ALE_USER_ID` 的原生类型是安全描述符，不能直接塞入 SID，见 [Microsoft 条件定义](https://learn.microsoft.com/en-us/windows/win32/fwp/filtering-condition-identifiers-)。编码结果仍不是管理服务授权。
 
-Chrome 的监听/接收默认阻断，现可从可选运行登记生成精确 CDP 端口例外。实际控制程序登记、端口/进程归属、文件/签名/权限核对及启动流程尚未实现，因此这份清单仍不能直接用于可用的浏览器启动。完成这些前置条件后，才进入专用环境的 WFP 安装与实测；原型不能为方便调试放行全部回环。
+Chrome 的监听/接收默认阻断，现可从可选运行登记生成精确 CDP 端口例外。文件哈希与端口快照可离线核对；实际控制程序授权登记、端口/进程归属、签名/权限核对及启动流程尚未实现，因此这份清单仍不能直接用于可用的浏览器启动。完成这些前置条件后，才进入专用环境的 WFP 安装与实测；原型不能为方便调试放行全部回环。
 
 测试中的条件匹配器只检查这份清单内部的允许/拒绝逻辑，不模拟原生安全描述符、其它 provider、真实流、重授权或服务崩溃清理。IPv6/映射地址条件能在模型中匹配，也不等于实际 Windows 数据路径已通过。
 
@@ -101,10 +119,10 @@ CDP 例外不放行 Agent 访问业务代理入口，不给 Chrome 额外出站�
 
 各组 `controlChannels` 输出运行元数据及各自 `cleanupKeys`（4 条动态、9 条持久化）。这些键不进入业务 `freezeKeys`，冻结业务时保留 CDP 用于正常关闭；确认该 BrowserRun 的进程与连接清理后再撤销控制例外及端口登记。程序默认阻断为组共享规则，不归单次运行清理。动态会话失效时，持久化的客户端/监听拒绝继续保留。当前仅输出资源键，不执行上述流程。
 
-同一用户、同一 Agent 可控制其登记运行；程序路径和 SID 无法独自区分同组账号进程、使用相同 Agent 程序的不同数据目录、不同脚本或登录会话。账号/runToken 绑定、实际监听进程归属、单写 Agent 与调用者验证仍由管理侧承担，不能用清单里的标签宣称 WFP 已完成逐进程隔离。程序哈希只是预期清单，`preflight.controllerFiles` 固定为 `not_checked`；`pendingChecks` 不因新增字段自动清零。
+同一用户、同一 Agent 可控制其登记运行；程序路径和 SID 无法独自区分同组账号进程、使用相同 Agent 程序的不同数据目录、不同脚本或登录会话。账号/runToken 绑定、实际监听进程归属、单写 Agent 与调用者验证仍由管理侧承担，不能用清单里的标签宣称 WFP 已完成逐进程隔离。程序哈希可通过只读报告匹配，`preflight.controllerFiles` 逐项记录观测情况；`pendingChecks` 不因报告匹配自动清零。
 
 相同路径、用户、端口和条件复用稳定规则键，runToken 不是 WFP 条件。因此端口重用仍须经过旧运行清理与管理侧版本校验，不能凭旧 token/旧清理清单删除新运行规则。当前既没有端口预留，也没有服务授权或生产启动接入。
 
 本轮上述同一测试命令共 **43 项通过，无跳过**，工具自检和旧 v3 结构校验通过。新增覆盖四运行登记、控制程序/账号/token/端口冲突、跨组/用户/别名拒绝、通配监听拒绝、冻结保留控制通道、逐运行清理、动态规则全部移除，以及新 CDP 条件进入原生编码。测试仍是条件模型和合成文件回读，不证明存量连接撤销或真实 Chrome 控制。C# 源码未变，使用上轮已发布工具；未重跑全量 Node、Tauri 或 Rust，没有写入 WFP 或启动代理/浏览器。
 
-下一步衔接管理侧程序与实际端口预检查；M1-B 的真实过滤和故障验收仍需要专用 Windows 环境。
+程序与实际端口的只读预检查已按上节衔接。后续可继续 M1-A 的程序来源签名和安装目录权限核对；实际授权、启动锁和监听归属不能由快照替代。M1-B 的真实过滤和故障验收仍需要专用 Windows 环境。

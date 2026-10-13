@@ -64,6 +64,14 @@ try
     {
         Console.WriteLine(JsonSerializer.Serialize(RuntimeInventory.ReadSpace(targetDirectory), RuntimeJson.Default.RuntimeSpace)); return 0;
     }
+    if (args is ["program-report", var programFile])
+    {
+        Console.WriteLine(JsonSerializer.Serialize(RuntimeInventory.ReadProgram(programFile), RuntimeJson.Default.ProgramObservation)); return 0;
+    }
+    if (args is ["ports-report"])
+    {
+        Console.WriteLine(JsonSerializer.Serialize(PortPreflight.ReadReport(), RuntimeJson.Default.PortObservation)); return 0;
+    }
     if (args is ["ports"])
     {
         var inventory = PortPreflight.Read();
@@ -71,7 +79,7 @@ try
     }
     if (args.Length < 2 || args[0] is not ("validate" or "preflight" or "inspect" or "run" or "cleanup"))
     {
-        Console.Error.WriteLine("LAB ONLY: selftest | ports | encode-wfp <resources.json> | manifest/runtime-manifest/runtime-report <chrome-directory> | runtime-verify <directory> <manifest.json> | runtime-space <existing-directory> | validate/preflight/inspect <policy.json> | run <policy.json> --isolated-lab | cleanup <policy.json> --isolated-lab --processes-stopped");
+        Console.Error.WriteLine("LAB ONLY: selftest | ports/ports-report | program-report <file> | encode-wfp <resources.json> | manifest/runtime-manifest/runtime-report <chrome-directory> | runtime-verify <directory> <manifest.json> | runtime-space <existing-directory> | validate/preflight/inspect <policy.json> | run <policy.json> --isolated-lab | cleanup <policy.json> --isolated-lab --processes-stopped");
         return 2;
     }
     var command = args[0];

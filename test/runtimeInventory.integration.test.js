@@ -5,6 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { createServer } from "node:net";
 import { compileGroupPathPlan } from "../src/network/groupPathPlan.js";
 import { compileWfpResourcePlan } from "../src/network/wfpResourcePlan.js";
 
@@ -100,4 +102,67 @@ test("native directory observation binds to its registered v4 resource path", op
   fs.writeFileSync(path.join(directory, "resources.pak"), "changed bytes!");
   const changed = success("runtime-report", directory);
   assert.throws(() => compileWfpResourcePlan(raw, { runtimeObservations: [changed] }), { code: "WFP_RESOURCE_PLAN_INVALID" });
+});
+
+test("native program reports bind real proxy and Agent files and detect changed bytes", options, t => {
+  const f = fixture(t); const programRoot = fs.realpathSync.native(f.root);
+  const bytes = Buffer.from("synthetic program, never executed");
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  const controllerPath = path.join(programRoot, "node.exe"); fs.writeFileSync(controllerPath, bytes);
+  const identity = { userSid: "S-1-5-21-1-2-3-1001", dataDirectoryId: "00000000-0000-4000-8000-000000000002" };
+  const raw = { isolationModel: "group_path_v1", installationId: "00000000-0000-4000-8000-000000000001", programRoot,
+    controllers: [{ ...identity, path: controllerPath, sha256 }],
+    registrations: [{ ...identity, groupId: "grp_test", chrome: success("runtime-manifest", f.chrome),
+      proxies: [{ generation: 1, role: "active", listenerPort: 23001, sha256,
+        raw: { type: "http", server: "node.example", port: 443 }, approvedAddress: "192.0.2.1" }] }] };
+  const proxyPath = compileGroupPathPlan(raw).groups[0].proxies[0].proxyPath;
+  assert.ok(proxyPath.startsWith(programRoot + path.sep));
+  fs.mkdirSync(path.dirname(proxyPath), { recursive: true }); fs.writeFileSync(proxyPath, bytes);
+  const proxy = success("program-report", proxyPath); const controller = success("program-report", controllerPath);
+  assert.equal(proxy.path, proxyPath); assert.equal(proxy.sizeBytes, bytes.length); assert.equal(proxy.sha256, sha256);
+  assert.ok(Number.isFinite(Date.parse(proxy.observedAt))); assert.equal(proxy.productionReady, false);
+  const resources = compileWfpResourcePlan(raw, { programObservations: [proxy, controller] });
+  assert.equal(resources.preflight.proxyFiles[0].status, "matched_observation");
+  assert.equal(resources.preflight.controllerFiles[0].status, "matched_observation");
+  assert.equal(resources.launchAuthorization, "not_issued");
+  const alternate = path.join(programRoot, "other.exe"); fs.writeFileSync(alternate, bytes);
+  assert.throws(() => compileWfpResourcePlan(raw, { programObservations: [success("program-report", alternate)] }), { code: "WFP_RESOURCE_PLAN_INVALID" });
+  fs.writeFileSync(proxyPath, Buffer.alloc(bytes.length, "x"));
+  assert.throws(() => compileWfpResourcePlan(raw, { programObservations: [success("program-report", proxyPath)] }), { code: "WFP_RESOURCE_PLAN_INVALID" });
+  assert.equal(run("program-report", path.join(programRoot, "missing.exe")).status, 1);
+});
+
+test("native program reports reject hard links, junction ancestors and alternate data streams", options, t => {
+  const f = fixture(t); const file = path.join(f.chrome, "resources.pak");
+  const hardLink = path.join(f.root, "alias.exe"); fs.linkSync(file, hardLink);
+  try {
+    const result = run("program-report", file); assert.equal(result.status, 1); assert.match(result.stderr, /hard-linked/u);
+  } finally { fs.unlinkSync(hardLink); }
+  const junction = path.join(f.root, "junction"); fs.symlinkSync(f.chrome, junction, "junction");
+  try {
+    const result = run("program-report", path.join(junction, "resources.pak"));
+    assert.equal(result.status, 1); assert.match(result.stderr, /reparse/u);
+  } finally { fs.unlinkSync(junction); }
+  const stream = run("program-report", file + ":alternate");
+  assert.equal(stream.status, 1); assert.match(stream.stderr, /alternate data streams/u);
+});
+
+test("native TCP observation detects a real occupied port and feeds the offline plan", options, async t => {
+  const server = createServer();
+  // A bound loopback socket is a positive control; no client or public endpoint is used.
+  await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
+  t.after(() => new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve())));
+  const port = server.address().port; const report = success("ports-report");
+  assert.equal(report.kind, "tcp_port_observation"); assert.equal(report.scope, "tcp_ipv4_ipv6");
+  assert.equal(report.dynamicRanges.length, 2); assert.ok(report.occupiedPorts.includes(port));
+  assert.equal(report.portsReserved, false); assert.equal(report.productionReady, false);
+  const raw = { isolationModel: "group_path_v1", installationId: "00000000-0000-4000-8000-000000000001", programRoot: "C:\\RuntimeTest",
+    registrations: [{ userSid: "S-1-5-21-1-2-3-1001", dataDirectoryId: "00000000-0000-4000-8000-000000000002", groupId: "grp_test",
+      chrome: { version: "1.0.0.0", files: [{ relativePath: "chrome.exe", sizeBytes: 1, sha256: "a".repeat(64) }] },
+      proxies: [{ generation: 1, role: "active", listenerPort: port, sha256: "b".repeat(64),
+        raw: { type: "http", server: "node.example", port: 443 }, approvedAddress: "192.0.2.1" }] }] };
+  const resources = compileWfpResourcePlan(raw, { portObservation: report });
+  assert.equal(resources.preflight.ports.entries[0].status, "conflict_observed");
+  assert.ok(resources.preflight.ports.entries[0].reasons.includes("occupied"));
+  assert.equal(resources.launchAuthorization, "not_issued");
 });

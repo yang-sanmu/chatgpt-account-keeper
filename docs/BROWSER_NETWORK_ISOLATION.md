@@ -1,6 +1,6 @@
 # 浏览器环境与网络隔离改进计划 v4
 
-修订日期：2026-10-10。用户已接受“每个严格分组使用一份独立 Chrome 副本”。本版替代 v3 的共享 Chrome 与入口密码隔离路线，保留原产品边界、两端出口约束、环境管理、协调器和恢复要求。现已开始 M1-A 的[离线资源与配置模型](GROUP_PATH_PLAN.md)，v4 的运行保护尚未实现或验收。真实能力见 [NETWORK_ISOLATION_PROGRESS.md](NETWORK_ISOLATION_PROGRESS.md)，M1 未通过前不得开放严格保护。
+修订日期：2026-10-10；实施状态更新：2026-10-13。用户已接受“每个严格分组使用一份独立 Chrome 副本”。本版替代 v3 的共享 Chrome 与入口密码隔离路线，保留原产品边界、两端出口约束、环境管理、协调器和恢复要求。M1-A 已有[离线资源与配置模型](GROUP_PATH_PLAN.md)、规则内存编码、CDP 资源登记，以及目录/程序文件/端口的只读报告匹配；v4 的运行保护尚未实现或验收。真实能力见 [NETWORK_ISOLATION_PROGRESS.md](NETWORK_ISOLATION_PROGRESS.md)，M1 未通过前不得开放严格保护。
 
 修订依据是 2026-10-08 复现的冷 WSS 认证失败及同版本 Chromium 源码，见 [冷 WSS 方案评估](COLD_WSS_AUTHENTICATION_REVIEW.md)。旧路线的失败证据仍然保留，不将其改记为通过；新路线必须重新验证冷 HTTP/HTTPS/WS/WSS 和分组隔离。
 

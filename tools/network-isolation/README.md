@@ -28,6 +28,10 @@ v4 目录检查使用 `runtime-manifest <Chrome目录>`（全文件清单、文�
 
 `runtime-report <Chrome目录>` 在上述完整只读扫描上附带实际目录，输出可交给 JavaScript `compileWfpResourcePlan()` 的观测数据。新[离线 WFP 资源清单](../../docs/WFP_RESOURCE_PLAN.md)包含逐层条件、可选 CDP 例外、生命周期及清理键；清单匹配仍不是管理服务授权，缺少实际登记与安装流程，不能传给旧 `run` 命令。不要把“报告匹配”显示成“网络已保护”。
 
+`program-report <文件>` 只读检查代理或 Agent 的实际路径、大小和 SHA-256，记录观测时间，拒绝硬链接、祖先重解析点和备用数据流；不执行文件或验证签名/ACL。`ports-report` 输出 IPv4/IPv6 TCP 动态范围、排除范围和当前监听/连接表的本地端口明细，任一步查询失败则整体失败。报告可分别传给 `compileWfpResourcePlan()` 的 `programObservations` 和 `portObservation`；全部代理代次与 CDP 端口都纳入比较，冲突以原因列表报告。这些命令无需 `--isolated-lab`，不修改网络策略；`portsReserved` 和 `productionReady` 固定为 false。
+
+报告仅作离线观测，不证明来源、时效、启动许可或端口预留。`node --test test/runtimeInventory.integration.test.js` 覆盖文件变更、链接拒绝及实际占用端口阳性对照；端口用例临时监听本机回环，不连接公网或启动浏览器/代理。需先发布本工具。
+
 `encode-wfp <resources.json>` 接收 `compileWfpResourcePlan()` 的离线输出，在内存中编码应用 ID、用户安全描述符、地址掩码及过滤器，再回读成 JSON 报告。它只读取输入及程序路径信息，不打开 WFP engine、不安装规则。报告含本机路径与 SID，仅供本地检查，始终 `productionReady: false`。运行 `node --test test/wfpResourceEncoding.integration.test.js` 验证真实 Windows API 编码，需先重新发布当前工具；测试仅创建临时合成文件，不执行它们。规则被 BFE 接受及实际网络行为仍须专用环境验证。
 
 ## 隔离测试机上的操作

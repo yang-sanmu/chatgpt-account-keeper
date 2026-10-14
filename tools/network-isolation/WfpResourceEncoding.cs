@@ -57,7 +57,7 @@ internal static unsafe class WfpResourceEncoding
         return new EncodingReport("offline_wfp_encoding", reports.ToArray());
     }
 
-    private static Filter EncodeFilter(Arena arena, JsonElement item, Guid provider, Guid sublayer)
+    internal static Filter EncodeFilter(Arena arena, JsonElement item, Guid provider, Guid sublayer)
     {
         var layerName = Text(item, "layer");
         var layer = Layer(layerName);
@@ -143,8 +143,10 @@ internal static unsafe class WfpResourceEncoding
 
     // Read back the unmanaged structures while their arena is alive. This is a
     // diagnostic of bytes/pointers, not a claim that BFE accepted the filters.
-    private static EncodedFilter Describe(Filter filter)
+    internal static EncodedFilter Describe(Filter filter)
     {
+        if (filter.ProviderKey == 0 || filter.Weight.Type != 4 || filter.Weight.Pointer == 0)
+            throw new ArgumentException("Unexpected native provider or weight representation");
         var conditions = new ReadOnlySpan<Condition>((void*)filter.Conditions, checked((int)filter.Count));
         var reports = new List<EncodedCondition>();
         foreach (var condition in conditions)

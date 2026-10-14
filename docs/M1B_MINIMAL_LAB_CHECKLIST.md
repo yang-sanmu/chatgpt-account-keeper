@@ -1,10 +1,10 @@
 # M1-B 最小实验清单：v4 分组路径隔离
 
-2026-10-14。用于下一轮实现和验收，**尚未执行 M1-B，不代表严格模式可用**。当前缺少专用 Windows 测试环境，也缺少可安装/冻结/回收 v4 规则的实验执行器。主计划与完整验收范围见 [v4 计划](BROWSER_NETWORK_ISOLATION.md)，历史结果见[实施进度](NETWORK_ISOLATION_PROGRESS.md)。
+2026-10-14。用于下一轮实现和验收，**尚未执行 M1-B，不代表严格模式可用**。[v4 实验执行器](V4_WFP_LAB_EXECUTOR.md)已实现并有离线测试，尚缺专用 Windows 测试环境及首次写入前的运行/权限准备。主计划与完整验收范围见 [v4 计划](BROWSER_NETWORK_ISOLATION.md)，历史结果见[实施进度](NETWORK_ISOLATION_PROGRESS.md)。
 
 ## 1. 当前可以执行的准备
 
-在仓库根目录构建只读工具并运行离线检查：
+在仓库根目录构建实验工具，仅运行无 WFP 写入的离线检查：
 
 ```powershell
 dotnet publish tools/network-isolation/NetworkIsolation.csproj -c Release -r win-x64
@@ -12,7 +12,7 @@ if ($LASTEXITCODE -ne 0) { throw 'NativeAOT publish failed' }
 $lab = (Resolve-Path tools/network-isolation/bin/Release/net10.0-windows/win-x64/publish/network-isolation-lab.exe).Path
 & $lab selftest
 if ($LASTEXITCODE -ne 0) { throw 'Lab selftest failed' }
-node --test test/runtimeAcl.integration.test.js test/runtimeInventory.integration.test.js test/runtimeCapacity.test.js test/groupPathPlan.test.js test/strictNetworkConfig.test.js test/wfpResourcePlan.test.js test/wfpResourceEncoding.integration.test.js
+node --test test/runtimeAcl.integration.test.js test/runtimeInventory.integration.test.js test/runtimeCapacity.test.js test/groupPathPlan.test.js test/strictNetworkConfig.test.js test/wfpResourcePlan.test.js test/wfpResourceEncoding.integration.test.js test/v4Lab.integration.test.js
 if ($LASTEXITCODE -ne 0) { throw 'Offline tests failed' }
 ```
 
@@ -29,6 +29,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Offline tests failed' }
 | `ports-report` | IPv4/IPv6 TCP 范围、排除范围与占用快照 | 端口已预留、绑定进程归属 |
 | `compileWfpResourcePlan()` | 登记与目录/程序/端口报告匹配，规则和清理键 | 调用者授权；ACL 报告尚未作为该函数输入 |
 | `encode-wfp <resources.json>` | 规则的原生内存编码及回读 | BFE 接受、真实过滤或冻结 |
+| `v4-prepare <resources.json> <labRoot> <新回执.json>`、`v4-test <回执.json>` | 实际文件/端口复核、保存回执、内存生命周期与故障测试 | 原生事务、真实进程及流量阻断 |
 
 登记输入和编译调用方式见[分组模型](GROUP_PATH_PLAN.md)与[资源编译](WFP_RESOURCE_PLAN.md)。配置草案包含上游凭据，只留在测试用户的数据目录；可分享证据须先去除凭据和不必要的个人信息。
 
@@ -37,7 +38,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Offline tests failed' }
 | 条件 | 最小要求 | 当前状态 |
 | --- | --- | --- |
 | 专用环境 | 可恢复的 Windows 11 x64 测试机/虚拟机；具备管理员权限，Secure Boot、内存完整性正常开启；保存恢复点/快照和测试前网络状态 | 用户尚无测试环境 |
-| v4 实验执行器 | 使用 `group_path_v1` 完整规则；事务安装持久拒绝和动态许可；按组冻结；读取规则内容；保存本轮资源键并支持异常退出后的定向回收 | 尚未实现，现有 `run/inspect/cleanup` 是 v3 |
+| v4 实验执行器 | 使用 `group_path_v1` 完整规则；事务安装持久拒绝和动态许可；按组冻结；读取规则内容；保存本轮资源键并支持异常退出后的定向回收 | 已实现 `v4-*` 独立命令并通过离线测试，原生效果未验证；原 `run/inspect/cleanup` 仍是 v3 |
 | 程序与运行归属 | 两组完整 Chrome 副本、独立 mihomo 代次路径；普通用户测试进程；固定入口/CDP 端口；Job 记录和关闭证明；实际监听程序/用户/运行关联 | 有离线模型，实验衔接未完成 |
 | 文件与权限准入 | 绑定实际登记路径、清单及报告；明确测试维护主体与运行用户，验证后者能读/执行且不能修改/替换程序；复制、检查、运行期间不更新文件 | 有只读观测，准入和有效权限验收未完成 |
 | 检测与恢复 | 受控测试目标、包捕获/规则/接收端记录、可见性阳性对照；备好回收步骤与资源清单，B01 先在无活动浏览器时验证回收和错误退出 | 准备及演练尚未完成 |
@@ -54,7 +55,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Offline tests failed' }
 
 ## 4. 按顺序执行的最小矩阵
 
-下表是执行器完成后的操作顺序，不是当前可运行的命令。每一行单独保存开始/结束时间、资源版本及证据；前置项未通过时，下游项记为 `blocked`，不跳过后算整体通过。
+下表是实验操作顺序；执行器命令见[专用说明](V4_WFP_LAB_EXECUTOR.md)。命令不会自动完成进程/Job、有效权限和捕获准备。每一行单独保存开始/结束时间、资源版本及证据；前置项未通过时，下游项记为 `blocked`，不跳过后算整体通过。
 
 | ID | 操作 | 最小通过证据 |
 | --- | --- | --- |
@@ -76,12 +77,12 @@ B07 回收时先关闭准入、冻结业务并取得原进程/Job 关闭证明�
 
 网络证据至少包括已验证可见性的本机捕获、相关 WFP 规则/审计，以及受控目标的连接或接收记录；DNS 单独观察。回环、物理网卡、IPv6 和 VPN/虚拟接口分别做阳性对照。单纯超时、无日志、未收到 UDP、`inspect` 数量吻合或规则事务成功均不能单独通过。抓包及审计操作参考[实验工具说明](../tools/network-isolation/README.md#证据与阳性对照)，仅在专用环境配置，并保留原设置用于恢复。
 
-结果统一记录 `not_run / blocked / passed / failed`，并附 `reason` 和证据文件路径。初始所有 B01–B07 均为 `not_run`；当前就绪结论为 `blocked`，原因同时包含“无专用测试环境”和“v4 执行器未实现”。不创建预填成功的验收报告。
+结果统一记录 `not_run / blocked / passed / failed`，并附 `reason` 和证据文件路径。初始所有 B01–B07 均为 `not_run`；当前就绪结论为 `blocked`，原因是“无专用测试环境，首次写入前的运行/权限与检测准备未完成”。执行器的离线测试不计作 B01 通过，不创建预填成功的验收报告。
 
 通过这张最小矩阵，只能说明对应版本/布局的基础路径获得实测证据。M1-B 还需覆盖现有 VPN/防火墙共存、四浏览器并发、100 次生命周期、重启后的持久规则、更多用户/会话及各目标传输。缺少相关环境或协议时如实保留未验证，不能取消主计划门槛。
 
 M1-C 再使用已验证策略完成冷 HTTP/HTTPS/WS/WSS、Worker、各协议与 Profile 路径/更新兼容。M1 整体通过前，生产能力继续为 `M1_NOT_ACCEPTED`。
 
-## 6. 下一项实现
+## 6. 下一步
 
-先补**仅限专用实验环境的 v4 规则执行器**，复用现有原生编码和资源键，补充事务安装、精确查询、动态撤销、失败/重启回收与相应离线测试。首次 WFP 写入仍等待本清单第 2 节的环境和条件，不在日常主机试装。无需扩展为生产 Windows 服务、安装器或新的权限框架。
+v4 执行器及离线生命周期测试已完成。下一步准备第 2 节的专用环境、实际运行用户权限与 Job/监听归属证据，再从 B01 空载事务/回收开始验证。没有测试环境时仅继续离线夹具准备，不在日常主机试装，不提前扩展为生产 Windows 服务或安装器。

@@ -4,6 +4,7 @@ using GptAccountKeeper.NetworkIsolation;
 try
 {
     NativeWfp.CheckLayout();
+    if (args.Length > 0 && args[0].StartsWith("v4-", StringComparison.Ordinal)) return V4LabCommands.Run(args);
     if (args is ["encode-wfp", var resourceFile])
     {
         using var resources = JsonDocument.Parse(File.ReadAllText(resourceFile));

@@ -97,6 +97,10 @@ internal static unsafe partial class NativeWfp
     internal static partial uint DeleteFilter(nint engine, in Guid key);
     [LibraryImport("fwpuclnt.dll", EntryPoint = "FwpmFilterGetByKey0")]
     internal static partial uint GetFilter(nint engine, in Guid key, out nint filter);
+    [LibraryImport("fwpuclnt.dll", EntryPoint = "FwpmProviderGetByKey0")]
+    internal static partial uint GetProvider(nint engine, in Guid key, out nint provider);
+    [LibraryImport("fwpuclnt.dll", EntryPoint = "FwpmSubLayerGetByKey0")]
+    internal static partial uint GetSublayer(nint engine, in Guid key, out nint sublayer);
     [LibraryImport("fwpuclnt.dll", EntryPoint = "FwpmSubLayerDeleteByKey0")]
     internal static partial uint DeleteSublayer(nint engine, in Guid key);
     [LibraryImport("fwpuclnt.dll", EntryPoint = "FwpmProviderDeleteByKey0")]

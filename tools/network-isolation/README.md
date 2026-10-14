@@ -2,11 +2,11 @@
 
 这是 **未验收的原型**，不是 Windows 服务或发行版安装器，不应安装到日常主机。当前没有专用 Windows 测试机，项目没有运行任何 WFP 写入命令。生产能力始终为 `M1_NOT_ACCEPTED`。
 
-**2026-10-10 方案已更新为 [v4：每组独立 Chrome 路径](../../docs/BROWSER_NETWORK_ISOLATION.md)。本目录代码和示例仍是 v3 的共享 `chromePath` 原型。** 下列步骤只用于旧实验复现与只读检查，不具备 v4 的逐组路径、入口客户端默认拒绝及完整入站保护。不能只删除 mihomo 的 `users` 就运行新路线；新策略模型和启动门槛需先实现，再在专用环境验收。
+**方案已更新为 [v4：每组独立 Chrome 路径](../../docs/BROWSER_NETWORK_ISOLATION.md)。2026-10-14 新增独立 `v4-*` 实验命令，使用说明见 [v4 专用执行器](../../docs/V4_WFP_LAB_EXECUTOR.md)。** 本页原 `run/inspect/cleanup` 和 `policy.example.json` 仍是 v3 的共享 `chromePath` 原型，只用于旧实验复现，不具备 v4 的逐组路径、入口客户端默认拒绝及完整入站保护。不能只删除 mihomo 的 `users` 就运行新路线；两套命令/策略不能混用。
 
 M1-A 已新增独立的 JavaScript [离线分组模型](../../docs/GROUP_PATH_PLAN.md)：生成逐组程序路径、校验清单和代次冲突，输出四项策略意图与受控配置草案。它不是本 C# 工具的 WFP 策略格式，不能传给 `run`。本工具新加的 `runtime-*` 命令提供目录与容量的只读检查，`encode-wfp` 提供 v4 资源清单的内存编码检查，所有输出仍缺少启动授权。
 
-v4 下一轮操作顺序见 [M1-B 最小实验清单](../../docs/M1B_MINIMAL_LAB_CHECKLIST.md)。其中列出了当前可执行的离线准备和待实现的实验步骤；**现有 v3 `run/inspect/cleanup` 不支持 v4**，尚不能照清单执行新路线的 WFP 写入和验收。
+v4 操作顺序见 [M1-B 最小实验清单](../../docs/M1B_MINIMAL_LAB_CHECKLIST.md)。`v4-prepare` 保存完整回执，`v4-test` 运行内存生命周期故障测试，均不写 WFP。`v4-run/v4-inspect/v4-cleanup` 用于专用测试环境，原生效果尚未验收；当前缺少该环境，不能在日常主机试装。
 
 ## 可运行的无策略写入检查
 

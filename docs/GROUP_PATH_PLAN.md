@@ -115,6 +115,8 @@ $lab = (Resolve-Path tools/network-isolation/bin/Release/net10.0-windows/win-x64
 
 输出及嵌套对象均不可变，与输入对象分离。`active` 只表示期望的配置角色，不表示进程运行或规则已安装。`pendingChecks` 保留完整资源登记、调用者身份、真实文件/权限、磁盘、端口、WFP、Profile 锁、Job/监听归属、动态事务、CDP 及 M1 验收等待办条件；不能由前端提交布尔值消除这些门槛。
 
+2026-10-14 签名决策：项目自身 Windows 程序不要求 Authenticode。现有待办名称 `filesystem_links_acl_signatures_hashes` 是尚未拆分的文件检查分类，不代表所有文件都必须已签名；后续实现应区分目录 ACL、哈希完整性和第三方来源核验，不添加项目代码签名证书门槛。此轮仅修订计划，离线结构和能力状态保持原样。
+
 ## 验证与下一步
 
 2026-10-13：`node --test test/runtimeCapacity.test.js test/runtimeInventory.integration.test.js test/groupPathPlan.test.js test/strictNetworkConfig.test.js` 共 26 项通过，无跳过；另通过 NativeAOT 发布、工具 `selftest` 和旧 v3 策略结构校验。集成测试使用合成程序目录，实建硬链接及 junction，验证目录内外链接拒绝、资源改动与额外文件拒绝、清单进入 v4 模型及只读空间查询。没有已发布 Windows 工具时，三个原生集成测试明确跳过。

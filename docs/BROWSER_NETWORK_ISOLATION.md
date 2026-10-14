@@ -4,6 +4,8 @@
 
 修订依据是 2026-10-08 复现的冷 WSS 认证失败及同版本 Chromium 源码，见 [冷 WSS 方案评估](COLD_WSS_AUTHENTICATION_REVIEW.md)。旧路线的失败证据仍然保留，不将其改记为通过；新路线必须重新验证冷 HTTP/HTTPS/WS/WSS 和分组隔离。
 
+发布范围更新（2026-10-14）：按用户决定暂缓 WFP，先完成普通模式 0.2.12 本地检查版。已实现的账号环境管理继续交付，严格网络能力仍返回 `available: false / M1_NOT_ACCEPTED`。本轮不要求准备虚拟机，不继续推进 WFP 生产服务或界面；未来恢复该功能时，仍须独立测试环境与 M1 验收。验证记录见 [普通模式收尾](ORDINARY_MODE_RELEASE_0_2_12.md)。
+
 ## 本版决策与行为变化
 
 | 项目 | v3 | v4 |
@@ -21,7 +23,7 @@
 
 维护范围更新（2026-10-13）：客户端只维护当前 `app/` 下的 Tauri；`desktop/` 的 Avalonia 客户端停止维护，不纳入本计划的新功能、兼容适配或验收。Agent、Chrome broker 和独立 .NET 网络组件继续维护。
 
-签名决策更新（2026-10-14）：用户明确本程序不需要 Windows 代码签名。本项目客户端、broker、网络工具及后续管理服务/安装器不以 Authenticode、购买代码签名证书或签名资格为开发和验收前提。保留安装产物的固定版本/哈希、管理员目录 ACL 和调用者身份核对；第三方 Chrome 已有发布者签名的来源核验不等于为本程序购买或添加签名，也不要求所有第三方文件均有 Authenticode。Tauri updater 更新包签名继续保留，它使用项目自己的密钥，与 Windows 代码签名不同，见 [Tauri 更新签名说明](https://v2.tauri.app/zh-cn/plugin/updater/)。当前发布工作流仍有 Windows Authenticode 硬门槛，后续发布调整须取消该强制要求，同时保留 updater 和其它现有验收要求；本次仅修订计划，尚未修改发布工作流。
+签名决策更新（2026-10-14）：用户明确本程序不需要 Windows 代码签名。本项目客户端、broker、网络工具及后续管理服务/安装器不以 Authenticode、购买代码签名证书或签名资格为开发和验收前提。保留安装产物的固定版本/哈希、管理员目录 ACL 和调用者身份核对；第三方 Chrome 已有发布者签名的来源核验不等于为本程序购买或添加签名，也不要求所有第三方文件均有 Authenticode。Tauri updater 更新包签名继续保留，它使用项目自己的密钥，与 Windows 代码签名不同，见 [Tauri 更新签名说明](https://v2.tauri.app/zh-cn/plugin/updater/)。普通模式收尾已取消发布工作流的 Windows Authenticode 硬门槛，保留 updater、其它平台签名与既有安装更新验收要求。
 
 每账号独立 Profile、每分组指定出口，单账号独享出口通过单账号分组实现；节点不同不保证公网 IP 不同。环境/基础诊断覆盖现有平台，严格保护首版 Windows 11 x64。新旧分组默认普通模式，严格模式显式开启；组件失效/节点缺失则阻断，不降级。
 

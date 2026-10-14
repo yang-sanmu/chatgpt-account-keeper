@@ -100,13 +100,36 @@ test("v6 upgrade creates a consistent v6 backup before the new environment table
     db.pragma(`user_version=${migration.version}`);
   }
   db.prepare("INSERT INTO accounts(id,sort_order,profile_name) VALUES ('old',0,'untouched')").run(); db.close();
+  const profile = path.join(root, "profiles", "untouched"); fs.mkdirSync(profile, { recursive: true });
+  const profileFile = path.join(profile, "synthetic-session"); fs.writeFileSync(profileFile, "keep-session");
+  let backupPath;
   const repository = await openKeeperRepository({ filePath });
   try {
     assert.equal(repository.getAccountEnvironment("old").mode, "inherit");
     assert.equal(repository.getAccount("old").profileName, "untouched");
     const backups = fs.readdirSync(path.join(root, "backups")); assert.equal(backups.length, 1);
-    const backup = new Database(path.join(root, "backups", backups[0]), { readonly: true });
+    backupPath = path.join(root, "backups", backups[0]);
+    const backup = new Database(backupPath, { readonly: true });
     try { assert.equal(backup.pragma("user_version", { simple: true }), 6); assert.equal(backup.prepare("SELECT profile_name FROM accounts WHERE id='old'").get().profile_name, "untouched"); }
     finally { backup.close(); }
+    repository.updateAccountEnvironment("old", { mode: "fixed", locale: "de-DE", timezone: "Europe/Berlin" }, 0);
+    repository.createAccount({ id: "new-after-upgrade", profileName: "new-profile" });
   } finally { repository.close(); }
+  // Stop the writer and preserve post-upgrade data before replacing the database.
+  // Never merge a v6 backup with v7 WAL/SHM sidecars.
+  const upgraded = path.join(root, "upgraded-v7.db"); fs.copyFileSync(filePath, upgraded);
+  assert.equal(fs.existsSync(filePath + "-wal"), false); assert.equal(fs.existsSync(filePath + "-shm"), false);
+  fs.copyFileSync(backupPath, filePath);
+  const restored = new Database(filePath, { readonly: true });
+  const preserved = new Database(upgraded, { readonly: true });
+  try {
+    assert.equal(restored.pragma("user_version", { simple: true }), 6);
+    assert.equal(restored.pragma("integrity_check", { simple: true }), "ok");
+    assert.equal(restored.prepare("SELECT COUNT(*) AS n FROM accounts").get().n, 1);
+    assert.equal(restored.prepare("SELECT name FROM sqlite_master WHERE name='account_environments'").get(), undefined);
+    assert.equal(preserved.pragma("user_version", { simple: true }), 7);
+    assert.equal(preserved.prepare("SELECT COUNT(*) AS n FROM accounts").get().n, 2);
+    assert.equal(preserved.prepare("SELECT locale FROM account_environments WHERE account_id='old'").get().locale, "de-DE");
+    assert.equal(fs.readFileSync(profileFile, "utf8"), "keep-session");
+  } finally { restored.close(); preserved.close(); }
 });

@@ -50,8 +50,13 @@ tauri.conf.json 中还必须已经内联对应公钥。脚本会拒绝 M5 占位
 | -AllowDirty | 允许脏工作树；产物只可丢弃性检查 |
 
 本地包会带 Tauri updater 签名，但不会做 Authenticode，因此目录中包含
-UNSIGNED-win-x64.txt，不能通过远端 Draft 门禁。SmartScreen 的未知发布者提示属于该
-本地检查包的预期行为。
+UNSIGNED-win-x64.txt。Windows Authenticode 已改为可选，但本地单平台产物仍不能代替远端
+四平台 Draft 门禁。SmartScreen 可能显示未知发布者提示。
+
+原签名凭据仅在 GitHub Actions 时，可以仅为本地检查使用临时 Tauri config overlay，设置
+`bundle.createUpdaterArtifacts: false`。此类包必须标记为 inspection-only，不生成 `.sig` 或
+`latest.json`，不能使用正式资产收集/发布流程，也不能更换生产更新公钥。默认本地脚本仍要求
+原更新签名凭据，不会因凭据缺失自动降级。0.2.12 的检查记录见 [普通模式收尾](ORDINARY_MODE_RELEASE_0_2_12.md)。
 
 正式发布始终使用 RELEASE_REMOTE.md。publish-windows-release.ps1 的 UploadDraft 模式
 会明确拒绝本地单平台上传。

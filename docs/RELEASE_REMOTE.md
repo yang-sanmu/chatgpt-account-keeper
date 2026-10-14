@@ -29,14 +29,15 @@ npm run tauri signer generate -- -w D:\offline-backup\gpt-account-keeper-updater
 
 ### 2. 配置平台签名 Secrets
 
-- Windows：WINDOWS_SIGNING_CERTIFICATE_BASE64、WINDOWS_SIGNING_CERTIFICATE_PASSWORD
+- Windows（可选）：WINDOWS_SIGNING_CERTIFICATE_BASE64、WINDOWS_SIGNING_CERTIFICATE_PASSWORD
 - macOS：MACOS_APP_CERTIFICATE_BASE64、MACOS_P12_PASSWORD、MACOS_APP_IDENTITY、
   APPLE_ID、APPLE_APP_SPECIFIC_PASSWORD、APPLE_TEAM_ID
 - Linux：LINUX_MINISIGN_SECRET_KEY_BASE64、LINUX_MINISIGN_PASSWORD、
   LINUX_MINISIGN_PUBLIC_KEY
 
-同一平台的 Secrets 必须完整配置。缺失整组时仍可产出带 Tauri 更新签名的内部检查包，
-但会生成 UNSIGNED-<rid>.txt，正常发布的 aggregate job 不允许据此创建 Draft。
+选择配置时，同一平台的 Secrets 必须完整。Windows 缺少整组时生成 `UNSIGNED-win-x64.txt`，
+允许继续常规 Draft，更新摘要会说明未知发布者提示；Tauri updater 签名仍必须生成。
+macOS/Linux 缺失整组时只能产出内部检查包，正常 aggregate 不允许这些平台的 unsigned 产物创建 Draft。
 
 ## `v0.2.11` 一次性 unsigned 发布例外
 
@@ -100,8 +101,8 @@ AppImage、deb 和 rpm；用真实数据确认 Agent、Profile、SQLite、代理
 .\scripts\publish-windows-release.ps1 -Version 0.2.5 -Mode Release -NMinusOneVerified -ReleaseNotesFile .\release-notes-0.2.5.md
 ~~~
 
-工作流只在 Authenticode、两种 macOS Developer ID + 公证 + stapling、Linux Minisign
-全部通过时创建唯一 Draft。
+工作流在两种 macOS Developer ID + 公证 + stapling、Linux Minisign 与更新签名门禁
+通过后创建唯一 Draft。Windows Authenticode 可选，未配置时保留明确的 unsigned 标记。
 
 ### 4. 真实更新验收
 
@@ -158,7 +159,7 @@ Draft 还不会被 GitHub releases/latest 返回，因此不能把“Draft 已�
 3. 生成 Tauri release-resources，拒绝 Chromium、ms-playwright、旧管理页和 Avalonia
    可执行文件，随后用私有 Node 做 Agent IPC/SQLite 烟测。
 4. 在 Windows、macOS arm64/x64、固定 ubuntu-22.04 上执行四次 tauri build。
-5. 生成并验证 Tauri .sig；保留 Authenticode、Apple 公证/stapling 与 Minisign 门禁。
+5. 生成并验证 Tauri .sig；Windows Authenticode 可选，Apple 公证/stapling 与 Minisign 门禁保留。
 6. 从各 bundle 目录只收集唯一的本次产物，生成 latest.json、源码归档和总校验和。
 7. Candidate 只上传 workflow artifact；正常 Release 模式创建 Draft。
 

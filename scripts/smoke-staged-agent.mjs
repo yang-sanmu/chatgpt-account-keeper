@@ -106,7 +106,7 @@ try {
   socket = await connect(child);
   const call = clientFor(socket);
   const hello = await call("system.hello", {
-    protocol: { major: 1, minor: 0 },
+    protocol: { major: 1, minor: 4 },
     clientVersion: "release-smoke",
     capabilities: ["events"],
   });
@@ -119,8 +119,20 @@ try {
   const bootstrap = await call("system.bootstrap");
   if (!Array.isArray(bootstrap.accounts)) throw new Error("invalid bootstrap snapshot");
   if (!fs.existsSync(path.join(dataRoot, "keeper.db"))) throw new Error("SQLite database was not initialized");
+  const capabilities = await call("network.getCapabilities");
+  assert.equal(capabilities.available, false);
+  assert.equal(capabilities.reason, "M1_NOT_ACCEPTED");
+  const account = await call("accounts.create", { note: "release-smoke", enabled: false }, randomUUID());
+  const inherited = await call("environments.get", { accountId: account.id });
+  assert.equal(inherited.configuration.mode, "inherit");
+  const fixed = await call("environments.update", { accountId: account.id, expectedVersion: 0,
+    locale: "en-US", timezone: "America/New_York" }, randomUUID());
+  assert.equal(fixed.configuration.mode, "fixed");
+  assert.equal((await call("environments.get", { accountId: account.id })).next.timezoneId, "America/New_York");
+  const reset = await call("environments.reset", { accountId: account.id, expectedVersion: 1 }, randomUUID());
+  assert.equal(reset.configuration.mode, "inherit");
   // 校验发布包里的实际契约：随机不存在的账号应走到业务层并返回 NOT_FOUND，
-  // 不能在入站校验阶段拒绝新参数。不会创建账号或启动 Chrome。
+  // 不能在入站校验阶段拒绝新参数。这些登录请求不会启动 Chrome。
   for (const closeOnSuccess of [false, true]) {
     await assert.rejects(
       () => call("browser.startLogin", {
@@ -142,7 +154,7 @@ try {
       else resolve();
     });
   });
-  console.log("Staged private Node Agent passed IPC/SQLite startup smoke test.");
+  console.log("Staged private Node Agent passed IPC 1.4/SQLite/environment smoke test; strict network unavailable.");
 } catch (error) {
   console.error(output);
   throw error;

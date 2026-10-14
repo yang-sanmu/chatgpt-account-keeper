@@ -168,7 +168,7 @@ Canonical JSON Schema 位于 `contracts/ipc-v1.schema.json`（消息信封/共�
 6. 将项目许可证、第三方声明、隐私和源码说明写入安装包的 `licenses/`。
 7. 在四个原生 runner 上执行 `tauri build`，生成 Windows NSIS、两种 macOS DMG、
    Linux AppImage/deb/rpm 以及各自的 updater `.sig`。
-8. 分别执行 Authenticode、Apple Developer ID/公证/stapling、Linux Minisign 门禁；
+8. Windows Authenticode 可选；保留 Apple Developer ID/公证/stapling、Linux Minisign 门禁；
    `v0.2.11` 有一个写死版本号、不可复用的一次性 unsigned 发布例外。
 9. 生成只含四个允许目标的 `latest.json`，再汇总 SBOM、项目与 mihomo 对应源码及
    `SHA256SUMS.release.txt` 到同一个 Draft Release。
@@ -182,11 +182,11 @@ Canonical JSON Schema 位于 `contracts/ipc-v1.schema.json`（消息信封/共�
 
 ### 签名发布门禁
 
-缺少任一平台凭据时，工作流仍会生成带 `UNSIGNED-<rid>.txt` 标记的内部检查产物，但正常版本拒绝创建 GitHub Draft。正式发布要求 Windows Authenticode、macOS Developer ID + Apple 公证以及 Linux Minisign 全部通过。经本次明确授权，`v0.2.11` 可使用专用开关跳过这些平台签名与安装更新验收并直接公开；Tauri updater 私钥、公钥、四平台构建、`.sig`、SBOM 与校验和仍是硬门禁，该开关不能用于任何其他版本。具体见 [远端发布流程](docs/RELEASE_REMOTE.md)。
+Windows Authenticode 不再是发布前置条件，未配置时保留 `UNSIGNED-win-x64.txt` 并在更新摘要中说明。macOS Developer ID + Apple 公证及 Linux Minisign 仍是常规 Draft 门禁；这些平台缺少签名时只能生成内部检查产物。Tauri updater 私钥、公钥、四平台构建、`.sig`、SBOM、校验和及安装更新验收继续保留。历史 `v0.2.11` 有专用的一次性 unsigned 直接公开例外，不能用于任何其他版本。具体见 [远端发布流程](docs/RELEASE_REMOTE.md)。
 
 ### 发布新版本
 
-发布与本地诊断都要求 `main` 工作树干净且与 `origin/main` 一致：
+正式发布与标准本地构建脚本要求 `main` 工作树干净且与 `origin/main` 一致。开发分支上的本地检查包须单独标记 inspection-only，不能用于正式更新；本次 [0.2.12 检查记录](docs/ORDINARY_MODE_RELEASE_0_2_12.md) 包含验证结果和隔离启动方式。
 
 - **[远端发布流程](docs/RELEASE_REMOTE.md)** —— 用 GitHub Actions 构建。日常首选。
 - **[本地 Windows 检查流程](docs/RELEASE_LOCAL.md)** —— 只用于 Windows 包诊断，不能替代四平台 Draft 发布。

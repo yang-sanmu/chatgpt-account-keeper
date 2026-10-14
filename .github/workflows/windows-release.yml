@@ -12,7 +12,7 @@ on:
         required: true
         type: string
       publish_draft:
-        description: Create the shared GitHub draft after all signing gates pass
+        description: Create the shared GitHub draft after update and required platform signing gates pass
         required: true
         default: false
         type: boolean
@@ -452,6 +452,8 @@ jobs:
           node scripts/write-release-notes.mjs artifacts/release-notes.md
           if [[ '${{ inputs.publish_unsigned_v0_2_11 }}' == true ]]; then
             printf '\n> **平台代码签名提示：** 此版本保留 Tauri updater 签名，但未进行 Windows Authenticode、Apple Developer ID/公证或 Linux Minisign 签名；操作系统可能显示未知发布者或安全警告。\n' >> artifacts/release-notes.md
+          elif [[ -s artifacts/assets/UNSIGNED-win-x64.txt ]]; then
+            printf '\n> Windows 安装包未做 Authenticode 代码签名，可能显示未知发布者提示；Tauri 更新包签名仍保留。\n' >> artifacts/release-notes.md
           fi
           git archive --format=zip --prefix="chatgpt-account-keeper-$VERSION/" --output="artifacts/assets/chatgpt-account-keeper-$VERSION-source.zip" HEAD
           mihomo_version=$(node -p "require('./build/runtime-versions.json').mihomo.version")
@@ -479,14 +481,7 @@ jobs:
             echo 'Draft creation requires the N-1 to N attestation.' >&2
             exit 1
           fi
-          if find artifacts/assets -maxdepth 1 -type f -name 'UNSIGNED-*.txt' -print -quit | grep -q .; then
-            echo 'A Draft cannot be created from unsigned or unnotarized candidates:' >&2
-            find artifacts/assets -maxdepth 1 -type f -name 'UNSIGNED-*.txt' -print >&2
-            exit 1
-          fi
-          for rid in win-x64 osx-arm64 osx-x64 linux-x64; do
-            test -s "artifacts/assets/SIGNED-$rid.txt"
-          done
+          node scripts/verify-platform-signing.mjs artifacts/assets
 
       - name: Require explicit unsigned markers for the one-time v0.2.11 release
         if: inputs.publish_unsigned_v0_2_11 == true

@@ -199,7 +199,8 @@ impl Connection {
                 None,
                 CONNECT_TIMEOUT + Duration::from_secs(5),
             )
-            .await.map_err(negotiation_error)?;
+            .await
+            .map_err(negotiation_error)?;
         let hello: HelloResult =
             serde_json::from_value(result).map_err(|error| CallError::Decode(error.to_string()))?;
 
@@ -356,8 +357,10 @@ mod tests {
     #[test]
     fn an_old_agent_rejecting_hello_also_requests_a_paired_upgrade() {
         let error = negotiation_error(CallError::Agent(super::super::protocol::AgentError {
-            code: "PROTOCOL_MISMATCH".into(), message: "Agent only supports minor 3".into(),
-            retryable: false, details: serde_json::json!({"supported":{"major":1,"minor":3}}),
+            code: "PROTOCOL_MISMATCH".into(),
+            message: "Agent only supports minor 3".into(),
+            retryable: false,
+            details: serde_json::json!({"supported":{"major":1,"minor":3}}),
         }));
         assert!(matches!(error, ConnectError::ProtocolNegotiation(_)));
         assert!(error.to_string().contains("配套升级"));

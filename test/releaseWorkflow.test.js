@@ -2,9 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
 import { fileURLToPath } from "node:url";
 import YAML from "yaml";
 import { spawnSync } from "node:child_process";
+import { verifyPlatformSigning } from "../scripts/verify-platform-signing.mjs";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const releaseSource = fs.readFileSync(
@@ -72,11 +74,22 @@ test("release pipeline uses Tauri updater signatures and contains no VeloPack bu
   assert.equal((releaseSource.match(/gh release create/g) ?? []).length, 1);
 });
 
-test("normal Draft creation requires N-1 verification and every platform signing marker", () => {
+test("normal Draft retains N-1 and updater gates while Windows Authenticode is optional", t => {
   assert.match(releaseSource, /n_minus_one_verified/);
-  assert.match(releaseSource, /UNSIGNED-\*\.txt/);
-  for (const rid of ["win-x64", "osx-arm64", "osx-x64", "linux-x64"]) {
-    assert.match(releaseSource, new RegExp("SIGNED-.*" + rid + "|SIGNED-\\$rid"));
+  const gate = release.jobs.aggregate.steps.find(step => step.name === "Require human and platform signing gates before Draft");
+  assert.match(gate.run, /verify-platform-signing\.mjs artifacts\/assets/);
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "keeper-signing-gate-"));
+  t.after(() => { assert.equal(path.dirname(root), os.tmpdir()); fs.rmSync(root, { recursive: true, force: true }); });
+  for (const rid of ["osx-arm64", "osx-x64", "linux-x64"]) fs.writeFileSync(path.join(root, `SIGNED-${rid}.txt`), "verified");
+  assert.throws(() => verifyPlatformSigning(root), /Windows/);
+  fs.writeFileSync(path.join(root, "UNSIGNED-win-x64.txt"), "not configured");
+  assert.doesNotThrow(() => verifyPlatformSigning(root));
+  for (const rid of ["osx-arm64", "osx-x64", "linux-x64"]) {
+    const marker = path.join(root, `UNSIGNED-${rid}.txt`);
+    fs.writeFileSync(marker, "not signed"); assert.throws(() => verifyPlatformSigning(root), new RegExp(rid)); fs.unlinkSync(marker);
+    fs.writeFileSync(path.join(root, `SIGNED-${rid}.txt`), "");
+    assert.throws(() => verifyPlatformSigning(root), new RegExp(rid));
+    fs.writeFileSync(path.join(root, `SIGNED-${rid}.txt`), "verified");
   }
   assert.match(releaseSource, /xcrun stapler validate/);
   assert.match(releaseSource, /Get-AuthenticodeSignature/);

@@ -36,6 +36,7 @@ try
             throw new Exception("Helper executable protection missing");
         PreflightTests.Run();
         RuntimeInventoryTests.Run();
+        RuntimeAclTests.Run();
         Console.WriteLine("{\"event\":\"selftest-passed\",\"wfpModified\":false,\"productionReady\":false}");
         return 0;
     }
@@ -68,6 +69,10 @@ try
     {
         Console.WriteLine(JsonSerializer.Serialize(RuntimeInventory.ReadProgram(programFile), RuntimeJson.Default.ProgramObservation)); return 0;
     }
+    if (args is ["acl-report", var aclDirectory])
+    {
+        Console.WriteLine(JsonSerializer.Serialize(RuntimeAcl.Read(aclDirectory), AclJson.Default.RuntimeAclObservation)); return 0;
+    }
     if (args is ["ports-report"])
     {
         Console.WriteLine(JsonSerializer.Serialize(PortPreflight.ReadReport(), RuntimeJson.Default.PortObservation)); return 0;
@@ -79,7 +84,7 @@ try
     }
     if (args.Length < 2 || args[0] is not ("validate" or "preflight" or "inspect" or "run" or "cleanup"))
     {
-        Console.Error.WriteLine("LAB ONLY: selftest | ports/ports-report | program-report <file> | encode-wfp <resources.json> | manifest/runtime-manifest/runtime-report <chrome-directory> | runtime-verify <directory> <manifest.json> | runtime-space <existing-directory> | validate/preflight/inspect <policy.json> | run <policy.json> --isolated-lab | cleanup <policy.json> --isolated-lab --processes-stopped");
+        Console.Error.WriteLine("LAB ONLY: selftest | ports/ports-report | acl-report <directory> | program-report <file> | encode-wfp <resources.json> | manifest/runtime-manifest/runtime-report <chrome-directory> | runtime-verify <directory> <manifest.json> | runtime-space <existing-directory> | validate/preflight/inspect <policy.json> | run <policy.json> --isolated-lab | cleanup <policy.json> --isolated-lab --processes-stopped");
         return 2;
     }
     var command = args[0];

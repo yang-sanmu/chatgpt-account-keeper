@@ -32,6 +32,8 @@ v4 目录检查使用 `runtime-manifest <Chrome目录>`（全文件清单、文�
 
 报告仅作离线观测，不证明来源、时效、启动许可或端口预留。`node --test test/runtimeInventory.integration.test.js` 覆盖文件变更、链接拒绝及实际占用端口阳性对照；端口用例临时监听本机回环，不连接公网或启动浏览器/代理。需先发布本工具。
 
+`acl-report <程序目录>` 读取整棵目录和祖先的所有者/DACL，标出需复核的写入、替换及权限修改授权；输出原始描述符，不设置 ACL，不要求 exe 已签名。状态为 `review_required` 或 `no_obvious_write_grants`，不表示用户有效访问已验证或允许启动。命令独立运行，尚未接入 WFP 编译器和生产流程。用 `node --test test/runtimeAcl.integration.test.js` 验证；权限阳性对照只修改临时测试夹具。范围与解释见[权限报告说明](../../docs/RUNTIME_ACL_REPORT.md)。
+
 `encode-wfp <resources.json>` 接收 `compileWfpResourcePlan()` 的离线输出，在内存中编码应用 ID、用户安全描述符、地址掩码及过滤器，再回读成 JSON 报告。它只读取输入及程序路径信息，不打开 WFP engine、不安装规则。报告含本机路径与 SID，仅供本地检查，始终 `productionReady: false`。运行 `node --test test/wfpResourceEncoding.integration.test.js` 验证真实 Windows API 编码，需先重新发布当前工具；测试仅创建临时合成文件，不执行它们。规则被 BFE 接受及实际网络行为仍须专用环境验证。
 
 ## 隔离测试机上的操作

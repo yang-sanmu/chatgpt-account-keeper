@@ -26,6 +26,11 @@ on:
         required: true
         default: false
         type: boolean
+      publish_unsigned_v0_2_12:
+        description: One-time public v0.2.12 release without platform code signing or local installation/update verification
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   actions: read
@@ -79,6 +84,21 @@ jobs:
           fi
           if [[ -z "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" ]]; then
             echo 'TAURI_SIGNING_PRIVATE_KEY_PASSWORD is required for the encrypted updater key.' >&2
+            exit 1
+          fi
+
+      - name: Validate the one-time unsigned v0.2.12 request
+        if: inputs.publish_unsigned_v0_2_12 == true
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if [[ "$VERSION" != '0.2.12' ]]; then
+            echo 'The unsigned public-release exception is permanently restricted to v0.2.12.' >&2
+            exit 1
+          fi
+          if [[ '${{ inputs.publish_draft }}' == true || '${{ inputs.n_minus_one_verified }}' == true || '${{ inputs.publish_unsigned_v0_2_11 }}' == true ]]; then
+            echo 'The v0.2.12 exception must not be combined with other publication modes or installed-update attestations.' >&2
             exit 1
           fi
 
@@ -205,6 +225,11 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force artifacts | Out-Null
+          if ('${{ inputs.publish_unsigned_v0_2_12 }}' -eq 'true') {
+            '{}' | Set-Content artifacts/platform-signing.conf.json -Encoding utf8
+            'signed=false' >> $env:GITHUB_OUTPUT
+            exit 0
+          }
           $hasCertificate = -not [string]::IsNullOrWhiteSpace($env:WINDOWS_SIGNING_CERTIFICATE_BASE64)
           $hasPassword = -not [string]::IsNullOrWhiteSpace($env:WINDOWS_SIGNING_CERTIFICATE_PASSWORD)
           if ($hasCertificate -xor $hasPassword) {
@@ -244,6 +269,13 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_DEVELOPER_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
+          if [[ '${{ inputs.publish_unsigned_v0_2_12 }}' == true ]]; then
+            mkdir -p artifacts
+            printf '{"bundle":{"macOS":{"signingIdentity":"-"}}}\n' > artifacts/platform-signing.conf.json
+            echo 'APPLE_SIGNING_IDENTITY=-' >> "$GITHUB_ENV"
+            echo 'signed=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           values=("$MACOS_APP_CERTIFICATE_BASE64" "$MACOS_P12_PASSWORD" "$MACOS_APP_IDENTITY" "$APPLE_ACCOUNT_ID" "$APPLE_APP_SPECIFIC_PASSWORD" "$APPLE_DEVELOPER_TEAM_ID")
           configured=0
           for value in "${values[@]}"; do
@@ -361,6 +393,11 @@ jobs:
         id: linux_signing
         shell: bash
         run: |
+          if [[ '${{ inputs.publish_unsigned_v0_2_12 }}' == true ]]; then
+            printf 'Platform signing skipped for the authorized v0.2.12 release.\n' > artifacts/release-assets/UNSIGNED-linux-x64.txt
+            echo 'signed=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           values=("$LINUX_MINISIGN_SECRET_KEY_BASE64" "$LINUX_MINISIGN_PASSWORD" "$LINUX_MINISIGN_PUBLIC_KEY")
           configured=0
           for value in "${values[@]}"; do
@@ -450,7 +487,7 @@ jobs:
         shell: bash
         run: |
           node scripts/write-release-notes.mjs artifacts/release-notes.md
-          if [[ '${{ inputs.publish_unsigned_v0_2_11 }}' == true ]]; then
+          if [[ '${{ inputs.publish_unsigned_v0_2_11 }}' == true || '${{ inputs.publish_unsigned_v0_2_12 }}' == true ]]; then
             printf '\n> **平台代码签名提示：** 此版本保留 Tauri updater 签名，但未进行 Windows Authenticode、Apple Developer ID/公证或 Linux Minisign 签名；操作系统可能显示未知发布者或安全警告。\n' >> artifacts/release-notes.md
           elif [[ -s artifacts/assets/UNSIGNED-win-x64.txt ]]; then
             printf '\n> Windows 安装包未做 Authenticode 代码签名，可能显示未知发布者提示；Tauri 更新包签名仍保留。\n' >> artifacts/release-notes.md
@@ -474,7 +511,7 @@ jobs:
           retention-days: 14
 
       - name: Require human and platform signing gates before Draft
-        if: inputs.publish_draft == true && inputs.publish_unsigned_v0_2_11 != true
+        if: inputs.publish_draft == true && inputs.publish_unsigned_v0_2_11 != true && inputs.publish_unsigned_v0_2_12 != true
         shell: bash
         run: |
           if [[ '${{ inputs.n_minus_one_verified }}' != true ]]; then
@@ -492,19 +529,28 @@ jobs:
             test -s "artifacts/assets/UNSIGNED-$rid.txt"
           done
 
+      - name: Require explicit unsigned markers for the one-time v0.2.12 release
+        if: inputs.publish_unsigned_v0_2_12 == true
+        shell: bash
+        run: |
+          test "$VERSION" = '0.2.12'
+          for rid in win-x64 osx-arm64 osx-x64 linux-x64; do
+            test -s "artifacts/assets/UNSIGNED-$rid.txt"
+          done
+
       - name: Create the single GitHub Draft or one-time public Release
-        if: inputs.publish_draft == true || inputs.publish_unsigned_v0_2_11 == true
+        if: inputs.publish_draft == true || inputs.publish_unsigned_v0_2_11 == true || inputs.publish_unsigned_v0_2_12 == true
         shell: bash
         run: |
           mapfile -d '' assets < <(
             find artifacts/assets -maxdepth 1 -type f ! -name 'SIGNED-*.txt' ! -name 'UNSIGNED-*.txt' -print0 | sort -z
           )
           release_visibility=(--draft)
-          if [[ '${{ inputs.publish_unsigned_v0_2_11 }}' == true ]]; then
+          if [[ '${{ inputs.publish_unsigned_v0_2_11 }}' == true || '${{ inputs.publish_unsigned_v0_2_12 }}' == true ]]; then
             release_visibility=(--latest)
           fi
           gh release create "v$VERSION" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "ChatGPT Account Keeper $VERSION" --notes-file artifacts/release-notes.md "${release_visibility[@]}"
 
       - name: Report candidate-only result
-        if: inputs.publish_draft != true && inputs.publish_unsigned_v0_2_11 != true
+        if: inputs.publish_draft != true && inputs.publish_unsigned_v0_2_11 != true && inputs.publish_unsigned_v0_2_12 != true
         run: echo 'Candidate retained as a workflow artifact; no tag or GitHub Release was created.'

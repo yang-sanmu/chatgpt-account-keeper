@@ -59,6 +59,16 @@ latest。脚本和工作流都拒绝把这个开关用于其他版本，也拒�
 
 ## 每次发布
 
+### `v0.2.12` 本次直接发布
+
+用户明确要求 0.2.12 不做平台代码签名、不下载到本地验收，并确认保留 Actions 自动生成的 Tauri updater 签名。使用版本限定的开关：
+
+~~~powershell
+.\scripts\publish-windows-release.ps1 -Version 0.2.12 -Mode Release -PublishUnsignedV0212 -ReleaseNotesFile .\docs\release-notes\v0.2.12.md
+~~~
+
+该路径只跟踪 Actions，不下载产物；即使平台签名 Secrets 已配置也跳过 Authenticode、Developer ID/公证和 Minisign。四平台构建、staged Agent 烟测、安装包/SBOM/校验和、原 updater 密钥及每个平台 `.sig` 继续检查。成功后公开并标记 latest，不填写未执行的 N-1 或 updater 人工验收证明。此开关仅适用于 0.2.12，普通 Candidate/Draft 流程保持原门禁。
+
 以下以 0.2.5 为例。
 
 ### 1. 同步版本并推送
@@ -163,5 +173,5 @@ Draft 还不会被 GitHub releases/latest 返回，因此不能把“Draft 已�
 6. 从各 bundle 目录只收集唯一的本次产物，生成 latest.json、源码归档和总校验和。
 7. Candidate 只上传 workflow artifact；正常 Release 模式创建 Draft。
 
-除写死为 `v0.2.11` 的本次发布开关外，不保留“允许无平台签名并跳过人工验收”的直接
-公开路径。
+直接公开例外分别限定为已获用户授权的 `v0.2.11` 和 `v0.2.12`，不能用于其它版本。
+其它版本继续按正常 Candidate/Draft 和人工验收流程发布。

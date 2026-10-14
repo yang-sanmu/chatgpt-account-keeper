@@ -143,6 +143,47 @@ test("unsigned release rejects other versions and conflicting attestations befor
   }
 });
 
+test("v0.2.12 explicitly skips platform signing and local verification while retaining updater gates", () => {
+  const requestGate = release.jobs.gate.steps.find(step => step.name === "Validate the one-time unsigned v0.2.12 request");
+  assert.equal(release.on.workflow_dispatch.inputs.publish_unsigned_v0_2_12.default, false);
+  assert.match(requestGate.run, /VERSION" != '0\.2\.12'/);
+  assert.match(requestGate.run, /publish_draft/);
+  assert.match(requestGate.run, /n_minus_one_verified/);
+  assert.match(requestGate.run, /publish_unsigned_v0_2_11/);
+  const updaterGate = release.jobs.gate.steps.find(step => step.name === "Validate release notes and updater signing configuration");
+  assert.equal(updaterGate.if, undefined);
+  assert.match(updaterGate.run, /TAURI_SIGNING_PRIVATE_KEY_PASSWORD is required/);
+  for (const name of ["Configure Windows Authenticode signing", "Configure Apple signing and notarization", "Detect and apply Linux Minisign"]) {
+    const signing = release.jobs.build.steps.find(step => step.name === name);
+    assert.match(signing.run, /publish_unsigned_v0_2_12/);
+    assert.ok(signing.run.indexOf('exit 0') < signing.run.indexOf(name.includes("Windows") ? '$hasCertificate' : 'values=('));
+  }
+  const markers = release.jobs.aggregate.steps.find(step => step.name === "Require explicit unsigned markers for the one-time v0.2.12 release");
+  assert.match(markers.run, /test "\$VERSION" = '0\.2\.12'/);
+  assert.match(markers.run, /UNSIGNED-\$rid\.txt/);
+  const create = release.jobs.aggregate.steps.find(step => step.name === "Create the single GitHub Draft or one-time public Release");
+  assert.match(create.if, /publish_unsigned_v0_2_12/);
+  assert.match(create.run, /release_visibility=\(--latest\)/);
+  assert.match(publishScript, /publish_unsigned_v0_2_12=/);
+});
+
+test("v0.2.12 direct publication rejects invalid versions and mode combinations before dispatch", {
+  skip: process.platform !== "win32",
+}, () => {
+  const psBin = spawnSync("where.exe", ["pwsh"]).status === 0 ? "pwsh" : "powershell";
+  for (const [args, expected] of [
+    [["-Version", "0.2.11", "-Mode", "Release"], /restricted to version 0\.2\.12/],
+    [["-Version", "0.2.13", "-Mode", "Release"], /restricted to version 0\.2\.12/],
+    [["-Version", "0.2.12", "-Mode", "Candidate"], /only valid with -Mode Release/],
+    [["-Version", "0.2.12", "-Mode", "Release", "-NMinusOneVerified"], /cannot be combined/],
+  ]) {
+    const result = spawnSync(psBin, ["-NoProfile", "-NonInteractive", "-File",
+      path.join(repositoryRoot, "scripts", "publish-windows-release.ps1"), "-PublishUnsignedV0212", ...args,
+    ], { encoding: "utf8", timeout: 30_000 });
+    assert.equal(result.error, undefined); assert.notEqual(result.status, 0); assert.match(result.stderr, expected);
+  }
+});
+
 test("Linux only installs the pinned Minisign tool when signing is configured", () => {
   const steps = release.jobs.build.steps;
   const prerequisites = steps.find((step) => step.name === "Install Linux Tauri bundler prerequisites");

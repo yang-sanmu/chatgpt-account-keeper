@@ -10,6 +10,7 @@ Compatibility rules:
 - A different protocol major version is incompatible.
 - Minor versions may only add optional fields, methods, events or capabilities.
 - v1.4 adds `environments.get/update/reset` and `network.getCapabilities`. Existing DTOs and events are unchanged. Desktop and Agent ship together: old clients may connect to the new Agent; a 1.4 Desktop refuses an older Agent and requests a paired upgrade. Strict network capabilities remain unavailable pending M1 acceptance; the remaining v3 network interfaces are not yet implemented.
+- v1.5 adds `network.getConfig/updateConfig` and an optional `proxies.network` snapshot for ordinary direct, system-proxy, and relay modes. The paired Desktop requires Agent 1.5; strict network isolation remains unavailable. Database schema 8 persists the network configuration and backs up older databases before upgrade.
 - Mutating requests carry a UUID `commandId` and are idempotent.
 - The first request on every connection is `system.hello`.
 - A changed `instanceId` or a gap in event `seq` requires `system.bootstrap`.

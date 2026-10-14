@@ -96,7 +96,7 @@ export function GroupDialog({ state, onClose }: GroupDialogProps) {
 
           <div className="space-y-2">
             <Label htmlFor="group-proxy">绑定代理节点</Label>
-            <SearchableSelect id="group-proxy" label="代理节点" value={proxyId} onValueChange={setProxyId} options={[{ value: "none", label: "未绑定 (直连或系统代理)" }, ...proxies.nodes.map((node) => ({ value: node.id, label: node.name }))]} />
+            <SearchableSelect id="group-proxy" label="代理节点" value={proxyId} onValueChange={setProxyId} options={[{ value: "none", label: "系统代理（跟随网络配置）" }, ...proxies.nodes.map((node) => ({ value: node.id, label: node.name }))]} />
           </div>
 
           <div className="grid grid-cols-2 gap-4">

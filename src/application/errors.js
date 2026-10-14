@@ -48,6 +48,9 @@ export function normalizeApplicationError(error) {
   if (error?.code === "FRAME_TOO_LARGE") {
     return new ApplicationError(ERROR_CODES.FRAME_TOO_LARGE, message, { cause: error });
   }
+  if (error?.code === ERROR_CODES.PROXY_UNAVAILABLE) {
+    return new ApplicationError(ERROR_CODES.PROXY_UNAVAILABLE, message, { cause: error });
+  }
   if (
     error?.code === "INVALID_JSON" ||
     error?.code === "INVALID_FRAME" ||

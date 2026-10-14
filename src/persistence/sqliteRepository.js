@@ -471,13 +471,16 @@ export class KeeperRepository {
     const proxySettings = this.db.prepare("SELECT * FROM proxy_settings").all();
     if (proxySettings.length !== 1) return false;
     const [proxy] = proxySettings;
+    const network = parseJson(proxy.network_config_json, {});
     return (
       proxy.singleton_id === 1 &&
       proxy.subscription_url === null &&
       proxy.subscription_updated_at === null &&
       proxy.mihomo_path === null &&
       proxy.clash_verge_dir === null &&
-      proxy.legacy_extra_json === null
+      proxy.legacy_extra_json === null &&
+      network.mode === "system" && network.relayProxyId === null &&
+      network.systemProxyUrl === null && network.outboundInterface === null
     );
   }
 
@@ -1243,6 +1246,7 @@ export class KeeperRepository {
           },
       mihomoPath: includeSecrets ? settings.mihomo_path : null,
       clashVergeDir: settings.clash_verge_dir,
+      network: parseJson(settings.network_config_json, {}),
       nodes: rows.map((row) => {
         const raw = parseJson(row.raw_json, {});
         return {
@@ -1268,13 +1272,14 @@ export class KeeperRepository {
     this.db
       .prepare(
         `UPDATE proxy_settings SET subscription_url=?, subscription_updated_at=?,
-         mihomo_path=?, clash_verge_dir=? WHERE singleton_id=1`
+         mihomo_path=?, clash_verge_dir=?, network_config_json=? WHERE singleton_id=1`
       )
       .run(
         subscription?.url ?? null,
         subscription?.updatedAt ?? null,
         mihomoPath ?? null,
-        clashVergeDir ?? null
+        clashVergeDir ?? null,
+        JSON.stringify(patch.network ?? current.network)
       );
     return this.getProxyState();
   }
@@ -1288,6 +1293,7 @@ export class KeeperRepository {
       }
       ids.add(node.id);
     }
+    const network = this.getProxyState().network;
     this.transaction(() => {
       const upsert = this.db.prepare(
         `INSERT INTO proxy_nodes(id, sort_order, name, raw_json, enabled, missing, legacy_extra_json)
@@ -1314,7 +1320,7 @@ export class KeeperRepository {
       const remove = this.db.prepare("DELETE FROM proxy_nodes WHERE id=?");
       for (const row of existing) {
         if (ids.has(row.id)) continue;
-        if (references.get(row.id).count > 0) markMissing.run(row.id);
+        if (references.get(row.id).count > 0 || (network.mode === "relay" && network.relayProxyId === row.id)) markMissing.run(row.id);
         else remove.run(row.id);
       }
     });

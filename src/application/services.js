@@ -63,11 +63,11 @@ import { environmentSnapshot, environmentPending, validateFixedEnvironment } fro
 import { getBrowserEnvironmentSnapshots } from "../browser.js";
 import { getStrictNetworkCapabilities } from "../network/strictConfig.js";
 
-// minor 4 adds environment queries/edits and an explicit unavailable network capability.
-// Desktop and Agent ship together; existing DTOs and event streams are unchanged.
-export const PROTOCOL_VERSION = Object.freeze({ major: 1, minor: 4 });
+// Minor 5 adds ordinary network connection settings. Strict capabilities remain gated.
+export const PROTOCOL_VERSION = Object.freeze({ major: 1, minor: 5 });
 
 export const MUTATING_METHODS = new Set([
+  "network.updateConfig",
   "environments.update",
   "environments.reset",
   "system.prepareUpdate",
@@ -543,6 +543,8 @@ export class ApplicationServices {
     add("environments.update", this._environmentsUpdate);
     add("environments.reset", this._environmentsReset);
     add("network.getCapabilities", getStrictNetworkCapabilities);
+    add("network.getConfig", () => this.runtime.proxies.getNetworkConfig());
+    add("network.updateConfig", this._networkUpdateConfig);
     add("system.bootstrap", this._bootstrap);
     add("system.getActivity", this._getActivity);
     add("system.prepareUpdate", this._prepareUpdate);
@@ -1264,7 +1266,30 @@ export class ApplicationServices {
       status: this.runtime.proxies.status(),
       subscription: this.runtime.proxies.getSubscriptionInfo?.() ?? null,
       runtime: this.runtime.proxies.getMihomoInfo?.() ?? null,
+      ...(this.runtime.proxies.getNetworkConfig ? { network: this.runtime.proxies.getNetworkConfig() } : {}),
     };
+  }
+
+  async _networkUpdateConfig(params) {
+    const assertIdle = () => {
+      assertInput(!this.draining, "Agent 正在退出或更新，请稍后保存");
+      if (this._getActivity().blockers.length || this.runtime.browserRuns?.listActive?.().length) {
+        fail(ERROR_CODES.RESOURCE_BUSY, "请先关闭账号浏览器并等待运行任务结束，再保存网络配置", { retryable: true });
+      }
+    };
+    let result;
+    try {
+      result = await this.runtime.proxies.setNetworkConfig(params, { assertIdle });
+    } catch (error) {
+      // The manager has restored its saved setting. Replace any candidate
+      // snapshot published by concurrent proxy work, preserving the save error.
+      try { this.events.publish("proxyState.changed", this._proxiesGetState()); } catch { /* Keep the original error. */ }
+      throw error;
+    }
+    this.runtime.clearRegionCache();
+    this.runtime.bumpConfigEpoch?.();
+    this.events.publish("proxyState.changed", this._proxiesGetState());
+    return result;
   }
 
   _proxyOperation(kind, resourceId, action, options = {}) {

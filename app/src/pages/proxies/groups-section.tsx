@@ -51,8 +51,8 @@ export function GroupsSection() {
                 <CardContent className="flex flex-col gap-2 pb-3 text-sm">
                   <div className="flex justify-between items-center">
                     <span className="text-muted">绑定节点</span>
-                    <span className="text-primary truncate" title={proxyNode?.name || "未绑定"}>
-                      {group.proxyId ? (proxyNode?.name || group.proxyId) : "—"}
+                    <span className="text-primary truncate" title={proxyNode?.name || "跟随网络配置"}>
+                      {group.proxyId ? (proxyNode?.name || group.proxyId) : "跟随网络配置"}
                     </span>
                   </div>
                   <div className="flex justify-between items-center">

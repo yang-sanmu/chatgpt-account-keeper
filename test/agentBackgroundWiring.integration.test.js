@@ -163,7 +163,7 @@ function spawnAgent(dataRoot, tempRoot, endpoint) {
 }
 
 test(
-  "真实 Agent：minor 3 客户端兼容 minor 4 Agent、队列与 BrowserRun 可用、broker 恒为 1，shutdown 干净退出",
+  "真实 Agent：minor 3 客户端兼容 minor 5 Agent、队列与 BrowserRun 可用、broker 恒为 1，shutdown 干净退出",
   { timeout: 90_000 },
   async (t) => {
     if (process.platform === "win32" && !resolveBrokerExecutable()) {
@@ -193,7 +193,7 @@ test(
       clientVersion: "wiring-test",
       capabilities: ["events"],
     });
-    assert.equal(hello.protocol.maxMinor, 4, output());
+    assert.equal(hello.protocol.maxMinor, 5, output());
 
     // 新方法必须真的接在服务上，而不只是写进契约。
     const snapshot = await client.call("queue.getSnapshot");
@@ -209,6 +209,23 @@ test(
     assert.deepEqual(runs.active, []);
     assert.equal(runs.chromeOccupancy, 0);
     assert.deepEqual(runs.quarantined, []);
+
+    const network = await client.call("network.getConfig");
+    assert.equal(network.config.mode, "system");
+    const directParams = { ...network.config, mode: "direct" };
+    const networkCommandId = randomUUID();
+    const direct = await client.call("network.updateConfig", directParams, networkCommandId);
+    assert.equal(direct.config.mode, "direct");
+    assert.deepEqual(await client.call("network.updateConfig", directParams, networkCommandId), direct);
+    const bootstrap = await client.call("system.bootstrap");
+    assert.equal(bootstrap.proxies.network.config.mode, "direct");
+    assert.equal((await client.call("network.getCapabilities")).available, false);
+    // Invalid settings reject without overwriting the saved direct route.
+    await assert.rejects(
+      () => client.call("network.updateConfig", { ...network.config, mode: "relay", relayProxyId: "missing" }, randomUUID()),
+      (error) => error.code === "PROXY_UNAVAILABLE"
+    );
+    assert.equal((await client.call("network.getConfig")).config.mode, "direct");
 
     // 未知 BrowserRun 必须是 NOT_FOUND，而不是静默成功——browserRuns.close 的语义是
     // 「精确重试关闭 / 复验」，不是从列表里删掉。

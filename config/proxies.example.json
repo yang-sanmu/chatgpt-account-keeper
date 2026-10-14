@@ -5,6 +5,12 @@
     "updatedAt": "2026-01-01T00:00:00.000Z"
   },
   "mihomoPath": null,
+  "network": {
+    "mode": "system",
+    "relayProxyId": null,
+    "systemProxyUrl": null,
+    "outboundInterface": null
+  },
   "clashVergeDir": "C:\\Program Files\\Clash Verge",
   "nodes": [
     {

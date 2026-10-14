@@ -104,6 +104,7 @@ export type NavKey =
   | "operations"
   | "history"
   | "proxies"
+  | "network"
   | "conversations"
   | "profiles"
   | "settings";

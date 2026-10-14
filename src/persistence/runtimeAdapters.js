@@ -160,17 +160,21 @@ export function createSqliteRuntimeAdapters(repository) {
         nodes: state.nodes,
         mihomoPath: state.mihomoPath,
         clashVergeDir: state.clashVergeDir,
+        network: state.network,
       };
     },
     writeProxyStore(value) {
-      repository.updateProxySettings({
-        subscription: value.subscription ?? null,
-        mihomoPath: value.mihomoPath ?? null,
-        clashVergeDir: value.clashVergeDir ?? null,
+      repository.transaction(() => {
+        repository.updateProxySettings({
+          subscription: value.subscription ?? null,
+          mihomoPath: value.mihomoPath ?? null,
+          clashVergeDir: value.clashVergeDir ?? null,
+          network: value.network,
+        });
+        // The manager's array order defines local proxy ports. Refreshing a
+        // subscription can move retained custom nodes, so discard stale positions.
+        repository.replaceProxyNodes((value.nodes ?? []).map((node, sortOrder) => ({ ...node, sortOrder })));
       });
-      // The manager's array order defines local proxy ports. Refreshing a
-      // subscription can move retained custom nodes, so discard stale positions.
-      repository.replaceProxyNodes((value.nodes ?? []).map((node, sortOrder) => ({ ...node, sortOrder })));
       return value;
     },
   };

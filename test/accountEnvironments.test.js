@@ -6,7 +6,7 @@ import path from "node:path";
 import Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
 import { openKeeperRepository } from "../src/persistence/sqliteRepository.js";
-import { MIGRATIONS, MIGRATION_LEDGER_SQL } from "../src/persistence/schema.js";
+import { MIGRATIONS, MIGRATION_LEDGER_SQL, SCHEMA_VERSION } from "../src/persistence/schema.js";
 import { createSqliteRuntimeAdapters } from "../src/persistence/runtimeAdapters.js";
 import { ApplicationServices } from "../src/application/services.js";
 import { assertMethodResultContract } from "../src/agent/contractValidator.js";
@@ -127,7 +127,7 @@ test("v6 upgrade creates a consistent v6 backup before the new environment table
     assert.equal(restored.pragma("integrity_check", { simple: true }), "ok");
     assert.equal(restored.prepare("SELECT COUNT(*) AS n FROM accounts").get().n, 1);
     assert.equal(restored.prepare("SELECT name FROM sqlite_master WHERE name='account_environments'").get(), undefined);
-    assert.equal(preserved.pragma("user_version", { simple: true }), 7);
+    assert.equal(preserved.pragma("user_version", { simple: true }), SCHEMA_VERSION);
     assert.equal(preserved.prepare("SELECT COUNT(*) AS n FROM accounts").get().n, 2);
     assert.equal(preserved.prepare("SELECT locale FROM account_environments WHERE account_id='old'").get().locale, "de-DE");
     assert.equal(fs.readFileSync(profileFile, "utf8"), "keep-session");

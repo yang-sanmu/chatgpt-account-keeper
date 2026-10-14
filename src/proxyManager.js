@@ -22,6 +22,8 @@ import {
   validateMihomoExecutable,
 } from "./mihomoLocator.js";
 import * as log from "./logger.js";
+import { normalizeNetworkConfig, resolveSystemProxy, compileConnectionRoutes } from "./network/connectionMode.js";
+import { waitMihomoConfigApplied } from "./network/mihomoReadiness.js";
 
 /**
  * 定向代理：让每个分组可以走指定的代理节点（VPN 节点），
@@ -92,6 +94,7 @@ function readStore() {
       nodes: Array.isArray(data.nodes) ? data.nodes : [],
       mihomoPath: data.mihomoPath ?? null,
       clashVergeDir: data.clashVergeDir ?? DEFAULT_CLASH_VERGE_DIR,
+      network: data.network,
     };
   } catch {
     return {
@@ -109,6 +112,33 @@ function writeStore(data) {
   }
   ensureDir(fromRoot("config"));
   fs.writeFileSync(PROXIES_FILE, JSON.stringify(data, null, 2), "utf8");
+}
+
+export function getNetworkConfig() {
+  const config = normalizeNetworkConfig(readStore().network);
+  return { config, systemProxy: resolveSystemProxy(config) };
+}
+
+export function setNetworkConfig(input, { assertIdle = () => {} } = {}) {
+  const next = normalizeNetworkConfig(input);
+  return runLifecycleTransition(async () => {
+    assertIdle();
+    const previous = readStore();
+    // Validate the chain before writing settings or stopping the current runtime.
+    compileConnectionRoutes({ nodes: previous.nodes, proxyIds: getGroups().map((group) => group.proxyId).filter(Boolean),
+      network: next, systemProxy: resolveSystemProxy(next) });
+    writeStore({ ...previous, network: next });
+    try { await ensureRunningUnlocked(); }
+    catch (error) {
+      // Restore only the setting we changed; unrelated imports may have completed
+      // while the candidate process was starting.
+      writeStore({ ...readStore(), network: normalizeNetworkConfig(previous.network) });
+      try { await ensureRunningUnlocked(); } catch { /* The original failure remains actionable. */ }
+      throw error;
+    }
+    nodeLatency.clear();
+    return getNetworkConfig();
+  });
 }
 
 export function withClashVergeDirectory(store, directory) {
@@ -290,11 +320,7 @@ export async function importSubscription(url) {
   const prev = readStore();
   // 仍被分组引用的节点即使从订阅里消失也要留着（标 missing），
   // 否则分组的代理配置会突然变空、组内账号悄悄改走系统网络。
-  const referencedIds = new Set(
-    getGroups()
-      .map((group) => group.proxyId)
-      .filter(Boolean)
-  );
+  const referencedIds = referencedProxyIds();
   const nodes = mergeProxyNodes(list, prev.nodes, referencedIds);
   const count = nodes.filter((node) => !node.missing && !node.id.startsWith("custom_")).length;
   if (!count) {
@@ -302,6 +328,7 @@ export async function importSubscription(url) {
   }
 
   writeStore({
+    ...prev,
     subscription: { url: target, updatedAt: new Date().toISOString() },
     nodes,
     mihomoPath: prev.mihomoPath,
@@ -401,7 +428,7 @@ export async function renameCustom(id, value) {
 export async function removeCustom(id) {
   const store = readStore();
   requireCustomNode(store, id);
-  if (referencedProxyIds().has(id)) throw badRequest("该节点正被分组使用，请先修改分组的代理出口再删除");
+  if (referencedProxyIds().has(id)) throw badRequest("该节点正被分组使用或已选为网络中转，请先修改分组或网络配置再删除");
   portMapFrom(store.nodes);
   const portOrder = portOrderAfterRemoval ?? store.nodes.map((node) => node.id);
   writeStore({ ...store, nodes: store.nodes.filter((node) => node.id !== id) });
@@ -413,6 +440,7 @@ export async function removeCustom(id) {
 export async function clearNodes() {
   const previous = readStore();
   writeStore({
+    ...previous,
     subscription: null,
     nodes: [],
     mihomoPath: previous.mihomoPath,
@@ -459,11 +487,13 @@ async function resolveFreeBasePort() {
   for (let attempt = 0; attempt < 12; attempt++) {
     const base = preferred + attempt * 1000;
     if (apiPortFor(base) > 65535) break;
-    // 按候选段重算一次配置，只检查真正会被监听的端口加控制端口。
-    const candidate = buildConfig(base);
+    // 先给现有程序让位，再验证最终链路。系统代理本身可能占着首选端口，
+    // 此时提前生成配置会把外部代理误判成本工具的循环入口。
+    const { nodes } = readStore();
+    const ports = portMapFrom(nodes, base);
     const candidates = [
       apiPortFor(base),
-      ...candidate.listeners.map((listener) => listener.port),
+      ...selectRuntimeProxyNodes(nodes, referencedProxyIds()).map((node) => ports.get(node.id)),
     ];
     if ((await findOccupiedPorts(candidates)).length === 0) return base;
   }
@@ -491,11 +521,14 @@ function portOf(id) {
 }
 
 function referencedProxyIds() {
-  return new Set(
+  const ids = new Set(
     getGroups()
       .map((group) => group.proxyId)
       .filter(Boolean)
   );
+  const network = normalizeNetworkConfig(readStore().network);
+  if (network.mode === "relay") ids.add(network.relayProxyId);
+  return ids;
 }
 
 /**
@@ -503,8 +536,9 @@ function referencedProxyIds() {
  * 未分组、或分组没绑节点则返回 null（走系统默认网络）。
  */
 export function proxyForAccount(account) {
-  const proxyId = effectiveProxyId(account);
-  if (!proxyId) return null;
+  const { config, systemProxy } = getNetworkConfig();
+  const proxyId = effectiveProxyId(account) || (config.mode === "relay" ? config.relayProxyId : null);
+  if (!proxyId) return config.mode === "system" && systemProxy.server ? { server: systemProxy.server } : null;
   const port = portOf(proxyId);
   if (!port) return null;
   return { server: `http://127.0.0.1:${port}` };
@@ -528,11 +562,27 @@ function runLifecycleTransition(fn) {
   return run;
 }
 
-function buildConfig(basePort = currentBasePort()) {
-  const { nodes } = readStore();
-  const active = selectRuntimeProxyNodes(nodes, referencedProxyIds());
+export function waitForNetworkTransition() {
+  return lifecycleTail;
+}
+
+export function buildConfig(basePort = currentBasePort()) {
+  const { nodes, network } = readStore();
+  const config = normalizeNetworkConfig(network);
+  const { adapters, targets: active } = compileConnectionRoutes({ nodes, proxyIds: referencedProxyIds(), network: config,
+    systemProxy: config.mode === "system" ? resolveSystemProxy(config) : undefined });
   // 仍按完整订阅中的顺序分配端口，分组引用增减不会改变其它节点的端口。
   const ports = portMapFrom(nodes, basePort);
+  if (config.mode === "system") {
+    const server = resolveSystemProxy(config).server;
+    if (server) {
+      const url = new URL(server);
+      if (["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) &&
+          [...active.map((node) => ports.get(node.id)), apiPortFor(basePort), TEST_API_PORT].includes(Number(url.port))) {
+        throw badRequest("系统代理入口不能指向本工具的代理或控制端口，否则会产生循环转发");
+      }
+    }
+  }
 
   const listeners = active
     .filter((n) => ports.has(n.id))
@@ -541,7 +591,7 @@ function buildConfig(basePort = currentBasePort()) {
       type: "http",
       listen: "127.0.0.1",
       port: ports.get(n.id),
-      proxy: n.raw.name,
+      proxy: `out-${n.id}`,
     }));
 
   return {
@@ -558,7 +608,7 @@ function buildConfig(basePort = currentBasePort()) {
       "enhanced-mode": "redir-host",
       nameserver: ["223.5.5.5", "1.1.1.1"],
     },
-    proxies: active.map((n) => n.raw),
+    proxies: adapters,
     listeners,
     rules: ["MATCH,DIRECT"],
   };
@@ -594,12 +644,14 @@ async function ensureRunningUnlocked() {
   // 复用判定必须基于**正在运行**的那个端口段（activeBasePort），而不是配置里的
   // 首选段。否则一旦发生过让路，每次调用都会认为配置变了而重启边车 —— 每个账号
   // 开浏览器都会掐断其它账号正在进行的请求。
-  const reuseFingerprint = JSON.stringify({
-    config: buildConfig(currentBasePort()),
-    executable: executableKey,
-  });
-  if (child && !child.killed && currentFingerprint === reuseFingerprint) {
-    return { running: true, nodes: routedNodeCount, reused: true };
+  if (child && !child.killed) {
+    const reuseFingerprint = JSON.stringify({
+      config: buildConfig(currentBasePort()),
+      executable: executableKey,
+    });
+    if (currentFingerprint === reuseFingerprint) {
+      return { running: true, nodes: routedNodeCount, reused: true };
+    }
   }
 
   // 先等旧进程真正退出，再起新的：否则旧进程还占着端口，
@@ -684,6 +736,13 @@ async function ensureRunningUnlocked() {
     );
   }
 
+  const applied = await waitMihomoConfigApplied(apiPortFor(basePort), cfg, {
+    shouldStop: () => !!spawnError || proc.exitCode !== null || proc.signalCode !== null,
+  });
+  if (!applied.ok) {
+    await stopAndWait();
+    throw new Error("mihomo 配置未完成应用，代理转发尚未就绪，请检查内核和控制端口");
+  }
   currentFingerprint = fingerprint;
   const firstPort = cfg.listeners[0].port;
   log.info(`代理边车已启动：${cfg.listeners.length} 个节点全部就绪，端口 ${firstPort}+`);
@@ -859,7 +918,7 @@ function waitPort(port, timeoutMs, shouldStop = () => false) {
 
 async function measureTestNode(node) {
   const url = `http://127.0.0.1:${TEST_API_PORT}/proxies/${encodeURIComponent(
-    node.raw.name
+    `out-${node.id}`
   )}/delay?timeout=8000&url=${encodeURIComponent("https://www.gstatic.com/generate_204")}`;
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
@@ -886,6 +945,10 @@ function runTestLifecycle(fn) {
 }
 
 function buildTestConfig(nodes) {
+  const store = readStore();
+  const network = normalizeNetworkConfig(store.network);
+  const { adapters } = compileConnectionRoutes({ nodes: store.nodes, proxyIds: nodes.map((node) => node.id), network,
+    systemProxy: network.mode === "system" ? resolveSystemProxy(network) : undefined });
   return {
     // 延迟检测直接调用控制接口，不需要额外开放入站代理端口。
     "mixed-port": 0,
@@ -901,7 +964,7 @@ function buildTestConfig(nodes) {
       "enhanced-mode": "redir-host",
       nameserver: ["223.5.5.5", "1.1.1.1"],
     },
-    proxies: nodes.map((node) => node.raw),
+    proxies: adapters,
     rules: ["MATCH,DIRECT"],
   };
 }
@@ -944,10 +1007,14 @@ async function withTestSidecarUnlocked(nodes, fn) {
     );
   }
 
+  await stopTestAndWait();
+  if (!(await isPortAvailable(TEST_API_PORT))) {
+    throw badRequest(`测速控制端口 ${TEST_API_PORT} 已被其它程序占用，请释放该端口后重试`);
+  }
+  const cfg = buildTestConfig(nodes);
   ensureDir(TEST_RUNTIME_DIR);
   const cfgPath = path.join(TEST_RUNTIME_DIR, "config.yaml");
-  fs.writeFileSync(cfgPath, YAML.stringify(buildTestConfig(nodes)), "utf8");
-  await stopTestAndWait();
+  fs.writeFileSync(cfgPath, YAML.stringify(cfg), "utf8");
 
   const proc = spawn(bin, ["-d", TEST_RUNTIME_DIR, "-f", cfgPath], {
     stdio: ["ignore", "pipe", "pipe"],
@@ -974,7 +1041,7 @@ async function withTestSidecarUnlocked(nodes, fn) {
   });
 
   try {
-    const ok = await waitPort(TEST_API_PORT, 12000, () => !!spawnError);
+    const ok = await waitPort(TEST_API_PORT, 12000, () => !!spawnError || proc.exitCode !== null || proc.signalCode !== null);
     if (!ok) {
       throw new Error(
         spawnError
@@ -982,6 +1049,10 @@ async function withTestSidecarUnlocked(nodes, fn) {
           : "mihomo 测速进程启动后控制端口未就绪"
       );
     }
+    const applied = await waitMihomoConfigApplied(TEST_API_PORT, cfg, {
+      timeoutMs: 12000, shouldStop: () => !!spawnError || proc.exitCode !== null || proc.signalCode !== null,
+    });
+    if (!applied.ok) throw new Error("mihomo 测速配置未完成应用");
     return await fn();
   } finally {
     await stopTestAndWait();

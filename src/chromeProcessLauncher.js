@@ -216,6 +216,7 @@ export function buildLaunchArgs({ userDataDir, launchArgs, headless, debugPort =
       arg.startsWith("--disk-cache-size=")
       || arg.startsWith("--media-cache-size=")
       || arg === STRICT_RESOLVER_ARGUMENT
+      || arg === "--no-proxy-server"
     ) {
       if (!args.includes(arg)) args.push(arg);
     }

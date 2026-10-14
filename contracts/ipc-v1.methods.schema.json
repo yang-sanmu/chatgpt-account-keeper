@@ -3,6 +3,91 @@
   "$id": "https://github.com/yang-sanmu/chatgpt-account-keeper/contracts/ipc-v1.methods.schema.json",
   "title": "GptAccount Keeper IPC v1 method DTOs",
   "$defs": {
+    "networkConfigParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "relayProxyId",
+        "systemProxyUrl",
+        "outboundInterface"
+      ],
+      "properties": {
+        "mode": {
+          "enum": [
+            "direct",
+            "system",
+            "relay"
+          ]
+        },
+        "relayProxyId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "systemProxyUrl": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 500
+        },
+        "outboundInterface": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 200
+        }
+      }
+    },
+    "networkConfigResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "config",
+        "systemProxy"
+      ],
+      "properties": {
+        "config": {
+          "$ref": "#/$defs/networkConfigParams"
+        },
+        "systemProxy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "server",
+            "source",
+            "detail"
+          ],
+          "properties": {
+            "server": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "source": {
+              "enum": [
+                "manual",
+                "windows",
+                "environment",
+                "pac",
+              "unavailable",
+                "none"
+              ]
+            },
+            "detail": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
     "environmentUpdateParams": {
       "type": "object", "additionalProperties": false,
       "required": ["accountId", "expectedVersion", "locale", "timezone"],
@@ -360,6 +445,7 @@
       "additionalProperties": false,
       "required": ["nodes", "status", "subscription", "runtime"],
       "properties": {
+        "network": { "$ref": "#/$defs/networkConfigResult" },
         "nodes": {
           "type": "array",
           "items": {

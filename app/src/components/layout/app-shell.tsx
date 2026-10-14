@@ -50,6 +50,7 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
     label: "配置",
     items: [
       { id: "proxies", label: "分组与代理", icon: Network },
+      { id: "network", label: "网络配置", icon: Wifi },
       { id: "conversations", label: "会话策略", icon: MessageSquare },
       { id: "profiles", label: "Profile", icon: Box },
       { id: "settings", label: "设置", icon: Settings },
@@ -66,7 +67,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const accountCount = useKeeperStore((s) => s.accountIds.length);
   const syncBootstrap = useKeeperStore((s) => s.syncBootstrap);
 
-  // Ctrl+1..8 切换页面。
+  // Ctrl+1..9 切换页面。
   //
   // 用 e.code 而不是 e.key：中文输入法激活时 e.key 可能不是数字字符，而 code 始终是
   // 物理键位（Digit1 / Numpad1）。
@@ -76,7 +77,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     const onKeyDown = (event: KeyboardEvent) => {
       if (!event.ctrlKey || event.altKey || event.shiftKey || event.metaKey) return;
 
-      const match = /^(?:Digit|Numpad)([1-8])$/.exec(event.code);
+      const match = /^(?:Digit|Numpad)([1-9])$/.exec(event.code);
       if (!match?.[1]) return;
 
       const target = NAV_ORDER[Number(match[1]) - 1];

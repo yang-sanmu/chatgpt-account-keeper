@@ -14,6 +14,7 @@ import { ProxiesPage } from "@/pages/proxies/proxies-page";
 import { ConversationsPage } from "@/pages/conversations/conversations-page";
 import { ProfilesPage } from "@/pages/profiles/profiles-page";
 import { SettingsPage } from "@/pages/settings/settings-page";
+import { NetworkPage } from "@/pages/network/network-page";
 import { FirstRunWizard } from "@/pages/first-run/first-run-wizard";
 import { Loader2 } from "lucide-react";
 
@@ -55,6 +56,8 @@ function AppContent() {
         <HistoryPage />
       ) : nav === "proxies" ? (
         <ProxiesPage />
+      ) : nav === "network" ? (
+        <NetworkPage />
       ) : nav === "conversations" ? (
         <ConversationsPage />
       ) : nav === "profiles" ? (

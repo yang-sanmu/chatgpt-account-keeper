@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 
 const SCHEMA_V1 = String.raw`
 CREATE TABLE IF NOT EXISTS command_receipts (
@@ -391,6 +391,11 @@ CREATE TABLE account_environments (
 );
 `;
 
+const SCHEMA_V8 = String.raw`
+ALTER TABLE proxy_settings ADD COLUMN network_config_json TEXT NOT NULL
+  DEFAULT '{"mode":"system","relayProxyId":null,"systemProxyUrl":null,"outboundInterface":null}';
+`;
+
 export const MIGRATIONS = Object.freeze([
   Object.freeze({
     version: 1,
@@ -419,6 +424,7 @@ export const MIGRATIONS = Object.freeze([
   Object.freeze({ version: 5, name: "opt-in-automation", sql: SCHEMA_V5, checksum: createHash("sha256").update(SCHEMA_V5).digest("hex") }),
   Object.freeze({ version: 6, name: "scheduled-promo-check", sql: SCHEMA_V6, checksum: createHash("sha256").update(SCHEMA_V6).digest("hex") }),
   Object.freeze({ version: 7, name: "account-environments", sql: SCHEMA_V7, checksum: createHash("sha256").update(SCHEMA_V7).digest("hex") }),
+  Object.freeze({ version: 8, name: "network-connection-modes", sql: SCHEMA_V8, checksum: createHash("sha256").update(SCHEMA_V8).digest("hex") }),
 ]);
 
 export const MIGRATION_LEDGER_SQL = String.raw`

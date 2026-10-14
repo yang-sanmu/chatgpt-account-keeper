@@ -9,6 +9,8 @@ export const METHOD_CONTRACTS = Object.freeze({
   "environments.update": ["environmentUpdateParams", "environmentStateResult"],
   "environments.reset": ["environmentResetParams", "environmentStateResult"],
   "network.getCapabilities": ["emptyParams", "networkCapabilitiesResult"],
+  "network.getConfig": ["emptyParams", "networkConfigResult"],
+  "network.updateConfig": ["networkConfigParams", "networkConfigResult"],
   "system.hello": ["helloParams", "helloResult"],
   "system.bootstrap": ["emptyParams", "bootstrapResult"],
   "system.getActivity": ["emptyParams", "activityResult"],

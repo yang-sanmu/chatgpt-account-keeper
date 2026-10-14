@@ -62,6 +62,8 @@ export type Method =
   | "environments.update"
   | "environments.reset"
   | "network.getCapabilities"
+  | "network.getConfig"
+  | "network.updateConfig"
   | "system.hello"
   | "system.bootstrap"
   | "system.getActivity"
@@ -248,6 +250,8 @@ export type Event =
     });
 
 export interface KeeperIPCV1GeneratedSchema {
+  networkConfigParams?: NetworkConfigParams;
+  networkConfigResult?: NetworkConfigResult;
   environmentUpdateParams?: EnvironmentUpdateParams;
   environmentResetParams?: EnvironmentResetParams;
   environmentConfiguration?: EnvironmentConfiguration;
@@ -329,6 +333,28 @@ export interface KeeperIPCV1GeneratedSchema {
   schedulerAccountChangedPayload?: SchedulerAccountChangedPayload;
   event?: Event;
   operation?: Operation;
+}
+/**
+ * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
+ * via the `definition` "networkConfigParams".
+ */
+export interface NetworkConfigParams {
+  mode: "direct" | "system" | "relay";
+  relayProxyId: string | null;
+  systemProxyUrl: string | null;
+  outboundInterface: string | null;
+}
+/**
+ * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
+ * via the `definition` "networkConfigResult".
+ */
+export interface NetworkConfigResult {
+  config: NetworkConfigParams;
+  systemProxy: {
+    server: string | null;
+    source: "manual" | "windows" | "environment" | "pac" | "unavailable" | "none";
+    detail: string;
+  };
 }
 /**
  * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
@@ -616,6 +642,7 @@ export interface HistoryAccountResult {
  * via the `definition` "proxyStateResult".
  */
 export interface ProxyStateResult {
+  network?: NetworkConfigResult;
   nodes: {
     id: string;
     name: string;
@@ -1240,6 +1267,8 @@ export interface IpcMethodContracts {
   "environments.update": { params: EnvironmentUpdateParams; result: EnvironmentStateResult };
   "environments.reset": { params: EnvironmentResetParams; result: EnvironmentStateResult };
   "network.getCapabilities": { params: Record<string, never>; result: NetworkCapabilitiesResult };
+  "network.getConfig": { params: Record<string, never>; result: NetworkConfigResult };
+  "network.updateConfig": { params: NetworkConfigParams; result: NetworkConfigResult };
   "system.hello": { params: HelloParams; result: HelloResult };
   "system.bootstrap": { params: Record<string, never>; result: BootstrapResult };
   "system.getActivity": { params: Record<string, never>; result: ActivityResult };

@@ -6,7 +6,7 @@ import net from "node:net";
 import path from "node:path";
 import WebSocket from "ws";
 import { fromRoot, ensureDir } from "./paths.js";
-import { proxyForAccount, ensureRunning } from "./proxyManager.js";
+import { proxyForAccount, ensureRunning, getNetworkConfig, waitForNetworkTransition } from "./proxyManager.js";
 import { getAccount, effectiveProxyId, getAccountEnvironment, getGroup } from "./store.js";
 import { resolveRegionForAccount } from "./geo.js";
 import { DEFAULT_BROWSER_LOCALE, environmentSnapshot } from "./environmentConfig.js";
@@ -1061,7 +1061,8 @@ export function buildInteractiveChromeArgs({
     if (
       arg.startsWith("--disk-cache-size=") ||
       arg.startsWith("--media-cache-size=") ||
-      arg === STRICT_RESOLVER_ARGUMENT
+      arg === STRICT_RESOLVER_ARGUMENT ||
+      arg === "--no-proxy-server"
     ) {
       if (!args.includes(arg)) args.push(arg);
     }
@@ -1417,6 +1418,7 @@ export function getChromeLauncher() {
 }
 
 export async function launchForAccount(account, opts = {}) {
+  await waitForNetworkTransition();
   if (browserShutdownRequested) throw new Error("Agent 正在退出，已取消启动 Chrome");
 
   // 调用可能在账号锁后排队很久（例如用户一直开着“打开网页”窗口）。
@@ -1429,8 +1431,9 @@ export async function launchForAccount(account, opts = {}) {
   const environment = getAccountEnvironment(liveAccount.id);
   let headlessIdentity = null;
 
-  // 定向代理：账号所属分组绑了节点就走该节点的本地端口，否则走系统默认网络。
-  if (effectiveProxyId(liveAccount)) {
+  // 分组节点由网络模式编译前置链路；未绑定节点时使用网络模式的默认出口。
+  const networkConfig = getNetworkConfig().config;
+  if (effectiveProxyId(liveAccount) || networkConfig.mode === "relay") {
     // 边车必须先就绪，否则 Chromium 会连到一个还没监听的端口。
     await ensureRunning();
     const p = proxyForAccount(liveAccount);
@@ -1444,6 +1447,10 @@ export async function launchForAccount(account, opts = {}) {
         `账号所属分组绑定的代理节点不可用（可能已停用或不在订阅中），请到分组管理里重新选择节点`
       );
     }
+  } else {
+    const p = proxyForAccount(liveAccount);
+    if (p) launchArgs.proxy = applyProxyBypass(p, opts.proxyBypass);
+    else if (networkConfig.mode === "direct") launchArgs.args.push("--no-proxy-server");
   }
 
   // A fixed account environment survives group/output changes. Inheritance keeps

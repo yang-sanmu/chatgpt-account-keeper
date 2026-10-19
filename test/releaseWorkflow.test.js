@@ -14,6 +14,22 @@ const releaseSource = fs.readFileSync(
   "utf8",
 );
 const release = YAML.parse(releaseSource);
+
+test('v0.2.13 direct publication is version scoped, skips Windows signing and retains updater validation', () => {
+  assert.equal(release.on.workflow_dispatch.inputs.publish_v0_2_13.default, false);
+  const request = release.jobs.gate.steps.find(step => step.name === 'Validate the authorized v0.2.13 publication');
+  assert.match(request.run, /test "\$VERSION" = '0\.2\.13'/);
+  assert.match(request.run, /n_minus_one_verified/);
+  const windows = release.jobs.build.steps.find(step => step.name === 'Configure Windows Authenticode signing');
+  assert.match(windows.run, /publish_v0_2_13/);
+  const updater = release.jobs.gate.steps.find(step => step.name === 'Validate release notes and updater signing configuration');
+  assert.equal(updater.if, undefined);
+  assert.match(updater.run, /TAURI_SIGNING_PRIVATE_KEY is required/);
+  const create = release.jobs.aggregate.steps.find(step => step.name === 'Create the single GitHub Draft or one-time public Release');
+  assert.match(create.if, /publish_v0_2_13/);
+  assert.match(create.run, /publish_v0_2_13.*then\n\s+release_visibility=\(--latest\)/);
+  assert.ok(release.jobs.aggregate.steps.some(step => step.name === 'Confirm unsigned Windows asset for v0.2.13'));
+});
 const ci = YAML.parse(fs.readFileSync(path.join(repositoryRoot, ".github", "workflows", "ci.yml"), "utf8"));
 const publishScript = fs.readFileSync(
   path.join(repositoryRoot, "scripts", "publish-windows-release.ps1"),

@@ -31,6 +31,11 @@ on:
         required: true
         default: false
         type: boolean
+      publish_v0_2_13:
+        description: Publish v0.2.13 without Windows code signing or local installation verification
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   actions: read
@@ -99,6 +104,18 @@ jobs:
           fi
           if [[ '${{ inputs.publish_draft }}' == true || '${{ inputs.n_minus_one_verified }}' == true || '${{ inputs.publish_unsigned_v0_2_11 }}' == true ]]; then
             echo 'The v0.2.12 exception must not be combined with other publication modes or installed-update attestations.' >&2
+            exit 1
+          fi
+
+      - name: Validate the authorized v0.2.13 publication
+        if: inputs.publish_v0_2_13 == true
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          test "$VERSION" = '0.2.13'
+          if [[ '${{ inputs.publish_draft }}' == true || '${{ inputs.n_minus_one_verified }}' == true || '${{ inputs.publish_unsigned_v0_2_11 }}' == true || '${{ inputs.publish_unsigned_v0_2_12 }}' == true ]]; then
+            echo 'The v0.2.13 direct publication must not be combined with other publication modes or installed-update attestations.' >&2
             exit 1
           fi
 
@@ -225,7 +242,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force artifacts | Out-Null
-          if ('${{ inputs.publish_unsigned_v0_2_12 }}' -eq 'true') {
+          if ('${{ inputs.publish_unsigned_v0_2_12 }}' -eq 'true' -or '${{ inputs.publish_v0_2_13 }}' -eq 'true') {
             '{}' | Set-Content artifacts/platform-signing.conf.json -Encoding utf8
             'signed=false' >> $env:GITHUB_OUTPUT
             exit 0
@@ -511,7 +528,7 @@ jobs:
           retention-days: 14
 
       - name: Require human and platform signing gates before Draft
-        if: inputs.publish_draft == true && inputs.publish_unsigned_v0_2_11 != true && inputs.publish_unsigned_v0_2_12 != true
+        if: inputs.publish_draft == true && inputs.publish_unsigned_v0_2_11 != true && inputs.publish_unsigned_v0_2_12 != true && inputs.publish_v0_2_13 != true
         shell: bash
         run: |
           if [[ '${{ inputs.n_minus_one_verified }}' != true ]]; then
@@ -538,19 +555,26 @@ jobs:
             test -s "artifacts/assets/UNSIGNED-$rid.txt"
           done
 
+      - name: Confirm unsigned Windows asset for v0.2.13
+        if: inputs.publish_v0_2_13 == true
+        shell: bash
+        run: |
+          test "$VERSION" = '0.2.13'
+          test -s artifacts/assets/UNSIGNED-win-x64.txt
+
       - name: Create the single GitHub Draft or one-time public Release
-        if: inputs.publish_draft == true || inputs.publish_unsigned_v0_2_11 == true || inputs.publish_unsigned_v0_2_12 == true
+        if: inputs.publish_draft == true || inputs.publish_unsigned_v0_2_11 == true || inputs.publish_unsigned_v0_2_12 == true || inputs.publish_v0_2_13 == true
         shell: bash
         run: |
           mapfile -d '' assets < <(
             find artifacts/assets -maxdepth 1 -type f ! -name 'SIGNED-*.txt' ! -name 'UNSIGNED-*.txt' -print0 | sort -z
           )
           release_visibility=(--draft)
-          if [[ '${{ inputs.publish_unsigned_v0_2_11 }}' == true || '${{ inputs.publish_unsigned_v0_2_12 }}' == true ]]; then
+          if [[ '${{ inputs.publish_unsigned_v0_2_11 }}' == true || '${{ inputs.publish_unsigned_v0_2_12 }}' == true || '${{ inputs.publish_v0_2_13 }}' == true ]]; then
             release_visibility=(--latest)
           fi
           gh release create "v$VERSION" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "ChatGPT Account Keeper $VERSION" --notes-file artifacts/release-notes.md "${release_visibility[@]}"
 
       - name: Report candidate-only result
-        if: inputs.publish_draft != true && inputs.publish_unsigned_v0_2_11 != true && inputs.publish_unsigned_v0_2_12 != true
+        if: inputs.publish_draft != true && inputs.publish_unsigned_v0_2_11 != true && inputs.publish_unsigned_v0_2_12 != true && inputs.publish_v0_2_13 != true
         run: echo 'Candidate retained as a workflow artifact; no tag or GitHub Release was created.'

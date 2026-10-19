@@ -138,6 +138,7 @@ test("手动关窗后立即清除打开状态并释放账号占用", async (t) =
   assert.equal(result.ok, true);
   assert.deepEqual(launchOptions, {
     headless: false,
+    manual: true,
     proxyBypass: OPEN_PAGE_PROXY_BYPASS,
   });
   assert.equal(isPageOpen(account.id), true);

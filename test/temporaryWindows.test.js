@@ -79,6 +79,7 @@ test("open uses the selected node, detected region and homepage; closing preserv
   assert.equal(launched[0].url, config.homepage);
   assert.equal(launched[0].request.purpose, "temporary-window");
   assert.equal(launched[0].request.launchOptions.temporaryWindow.timezone, "Asia/Tokyo");
+  assert.equal(launched[0].request.launchOptions.manual, true);
   assert.equal(launched[0].request.launchOptions.temporaryWindow.proxyId, config.proxyId);
   assert.equal(launched[0].request.account.profileDir, path.join("temporary-windows", value.id));
   for (const action of ["open", "detect", "clearData", "remove"]) assert.throws(() => manager[action](value.id), { code: "RESOURCE_BUSY" });

@@ -5,6 +5,7 @@ import { spawn } from "node:child_process";
 import net from "node:net";
 import path from "node:path";
 import WebSocket from "ws";
+import { connectManualBrowser } from "./manualBrowser.js";
 import { fromRoot, ensureDir } from "./paths.js";
 import { proxyForAccount, proxyForNode, ensureRunning, getNetworkConfig, waitForNetworkTransition } from "./proxyManager.js";
 import { getAccount, effectiveProxyId, getAccountEnvironment, getGroup } from "./store.js";
@@ -441,7 +442,7 @@ export class RawCdpConnection {
     this.closeHandlers.add(handler);
   }
 
-  async send(method, params = {}, sessionId = null) {
+  async send(method, params = {}, sessionId = null, { timeoutMs = CDP_COMMAND_TIMEOUT_MS } = {}) {
     if (this.closed || this.socket.readyState !== WebSocket.OPEN) {
       throw new Error("Chrome CDP WebSocket 当前不可用");
     }
@@ -454,7 +455,7 @@ export class RawCdpConnection {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`Chrome CDP 命令超时：${method}`));
-      }, CDP_COMMAND_TIMEOUT_MS);
+      }, timeoutMs);
       this.pending.set(id, { resolve, reject, timer });
       this.socket.send(JSON.stringify(payload), (error) => {
         if (!error) return;
@@ -1157,7 +1158,7 @@ function childHasExited(child) {
 
 async function stopChromeChild(
   child,
-  { timeoutMs = INTERACTIVE_PROCESS_EXIT_TIMEOUT_MS } = {}
+  { timeoutMs = INTERACTIVE_PROCESS_EXIT_TIMEOUT_MS, gracefulTimeoutMs = 0 } = {}
 ) {
   if (childHasExited(child)) return;
 
@@ -1170,6 +1171,17 @@ async function stopChromeChild(
     });
   }
 
+  // Browser.close acknowledges before Chrome finishes flushing its Profile.
+  // Killing it immediately here can lose persistent cookies on the legacy path.
+  if (exited && gracefulTimeoutMs > 0) {
+    let timer;
+    await Promise.race([exited, new Promise(resolve => { timer = setTimeout(resolve, gracefulTimeoutMs); })]);
+    clearTimeout(timer);
+    if (childHasExited(child)) {
+      child.off?.("exit", onExit);
+      return;
+    }
+  }
   if (!child.killed) child.kill();
   if (!exited) return;
 
@@ -1194,7 +1206,7 @@ export function installInteractiveContextClose(context, browser, child) {
     if (!closing) {
       closing = Promise.resolve()
         .then(() => browser.close())
-        .finally(() => stopChromeChild(child));
+        .finally(() => stopChromeChild(child, { gracefulTimeoutMs: INTERACTIVE_PROCESS_EXIT_TIMEOUT_MS }));
     }
     return closing;
   };
@@ -1258,7 +1270,9 @@ export async function launchInteractivePersistentContext(
   const spawnProcess = dependencies.spawnProcess ?? spawn;
   const connectOverCDP =
     dependencies.connectOverCDP ??
-    ((endpoint) => chromium.connectOverCDP(endpoint));
+    (dependencies.manual
+      ? (endpoint) => connectManualBrowser(endpoint, { connect: RawCdpConnection.connect })
+      : (endpoint, options) => chromium.connectOverCDP(endpoint, options));
   const child = spawnProcess(
     executable,
     buildInteractiveChromeArgs({ userDataDir, launchArgs, debugPort: port }),
@@ -1280,7 +1294,9 @@ export async function launchInteractivePersistentContext(
       child,
       () => spawnError
     );
-    browser = await connectOverCDP(`http://127.0.0.1:${port}`);
+    // Preserve Chrome's native focus, media preferences and download handling.
+    // A minimal command line alone does not prevent Playwright's CDP defaults.
+    browser = await connectOverCDP(`http://127.0.0.1:${port}`, { noDefaults: true });
     const context = browser.contexts()[0];
     if (!context) throw new Error("交互式 Chrome 没有默认浏览器上下文");
     installInteractiveContextClose(context, browser, child);
@@ -1477,6 +1493,7 @@ export async function launchForAccount(account, opts = {}) {
   if (browserShutdownRequested) throw new Error("Agent 正在退出，已取消启动 Chrome");
 
   let context;
+  if (!headless && opts.manual === true) log.info(`账号 ${liveAccount.id} 使用手动浏览控制（不连接 Playwright）`);
   let interactiveLaunch = null;
   const debugPortNotBefore = Date.now();
 
@@ -1498,6 +1515,7 @@ export async function launchForAccount(account, opts = {}) {
       headless,
       accountId: liveAccount.id,
       headlessIdentity,
+      manual: opts.manual === true,
       environmentMode: environment.mode,
       runToken,
       signal: opts.signal ?? null,
@@ -1525,7 +1543,8 @@ export async function launchForAccount(account, opts = {}) {
     } else {
       interactiveLaunch = await launchInteractivePersistentContext(
         userDataDir,
-        launchArgs
+        launchArgs,
+        { manual: opts.manual === true }
       );
       context = interactiveLaunch.context;
     }

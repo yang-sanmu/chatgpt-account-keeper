@@ -218,10 +218,11 @@ export async function openPageForAccount(account, url, runtime = {}) {
               account: liveAccount,
               purpose: "open-page",
               headless: false,
-              launchOptions: { proxyBypass: OPEN_PAGE_PROXY_BYPASS },
+              launchOptions: { proxyBypass: OPEN_PAGE_PROXY_BYPASS, manual: true },
             })
           : await launch(liveAccount, {
               headless: false,
+              manual: true,
               proxyBypass: OPEN_PAGE_PROXY_BYPASS,
             });
         // 关闭必须与获取配对：BrowserRun 路径下 context.close() 不会 dispose Job。

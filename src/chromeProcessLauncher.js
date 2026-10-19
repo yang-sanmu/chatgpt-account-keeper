@@ -8,7 +8,9 @@ import {
   reserveLocalDebugPort,
   waitForDevToolsEndpoint,
   waitForInteractiveCdp,
+  RawCdpConnection,
 } from "./browser.js";
+import { connectManualBrowser } from "./manualBrowser.js";
 import * as defaultLog from "./logger.js";
 import { throwIfCancelled } from "./cancellation.js";
 import { STRICT_RESOLVER_ARGUMENT } from "./network/strictConfig.js";
@@ -43,7 +45,8 @@ export class ChromeProcessLauncher {
   constructor(options = {}) {
     this._broker = options.broker ?? null;
     this._log = options.log ?? defaultLog;
-    this._connectOverCDP = options.connectOverCDP ?? ((endpoint) => chromium.connectOverCDP(endpoint));
+    this._connectOverCDP = options.connectOverCDP ?? ((endpoint, connectOptions) => chromium.connectOverCDP(endpoint, connectOptions));
+    this._connectManual = options.connectManualBrowser ?? (endpoint => connectManualBrowser(endpoint, { connect: RawCdpConnection.connect }));
     this._waitForDevTools = options.waitForDevToolsEndpoint ?? waitForDevToolsEndpoint;
     this._reserveDebugPort = options.reserveLocalDebugPort ?? reserveLocalDebugPort;
     this._waitForInteractiveCdp =
@@ -80,6 +83,7 @@ export class ChromeProcessLauncher {
     headless,
     accountId,
     headlessIdentity = null,
+    manual = false,
     environmentMode = "inherit",
     runToken,
     signal = null,
@@ -139,7 +143,11 @@ export class ChromeProcessLauncher {
 
       // 4) 现在才接管。
       const httpEndpoint = headless ? toHttpEndpoint(endpoint) : endpoint;
-      browser = await this._connectOverCDP(httpEndpoint);
+      // Interactive windows retain Chrome's native focus, media preferences and
+      // downloads. Keep Playwright's defaults for background automation only.
+      browser = manual && !headless
+        ? await this._connectManual(httpEndpoint)
+        : await this._connectOverCDP(httpEndpoint, { noDefaults: !headless });
       throwIfCancelled(signal);
       const context = browser.contexts()[0];
       if (!context) throw new Error("Chrome 没有默认浏览器上下文");

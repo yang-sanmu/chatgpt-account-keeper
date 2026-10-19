@@ -154,7 +154,7 @@ export class TemporaryWindowManager {
         session.launched = await this.acquireChrome({ accountId: id, operationId,
           account: { id, profileDir: path.join("temporary-windows", id) },
           purpose: "temporary-window", headless: false, signal: controller.signal,
-          launchOptions: { temporaryWindow: value } });
+          launchOptions: { temporaryWindow: value, manual: true } });
         session.launched.context.once("close", () => {
           // Avoid re-entering the registry's graceful-close callback synchronously.
           setImmediate(() => {

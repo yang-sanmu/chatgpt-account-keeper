@@ -28,10 +28,11 @@ test("account launch preserves inherited defaults and only forwards an explicit 
   assert.equal(Object.hasOwn(captured[0].launchArgs, "timezoneId"), false);
   assert.equal(captured[0].environmentMode, "inherit");
   environment = { mode: "fixed", version: 1, locale: "de-DE", timezone: "Europe/Berlin" };
-  await assert.rejects(launchForAccount(account, { headless: false, runToken: "fixed" }), error => error === stop);
+  await assert.rejects(launchForAccount(account, { headless: false, manual: true, runToken: "fixed" }), error => error === stop);
   assert.equal(captured[1].launchArgs.locale, "de-DE");
   assert.equal(captured[1].launchArgs.timezoneId, "Europe/Berlin");
   assert.equal(captured[1].environmentMode, "fixed");
+  assert.equal(captured[1].manual, true);
 });
 
 // Exercise the real polling loop and filesystem. Only elapsed time is accelerated;
@@ -148,6 +149,7 @@ test("headless readiness rejects an already-cancelled launch even when a fresh f
 
 function launcherFixture(overrides = {}) {
   const events = [];
+  const connections = [];
   const page = { url: () => "about:blank" };
   const context = { pages: () => [page] };
   const broker = {
@@ -168,8 +170,9 @@ function launcherFixture(overrides = {}) {
       events.push("barrier");
       return { close: () => events.push("barrier-close") };
     },
-    connectOverCDP: async () => {
+    connectOverCDP: async (...args) => {
       events.push("connect");
+      connections.push(args);
       return { contexts: () => [context], close: async () => events.push("browser-close") };
     },
     ...overrides,
@@ -183,7 +186,7 @@ function launcherFixture(overrides = {}) {
     runToken: "test-token",
     ...options,
   });
-  return { events, launch };
+  return { events, connections, launch };
 }
 
 test("launcher cancellation before launch does not create a broker-owned process", async () => {
@@ -223,24 +226,37 @@ test("launcher cancellation during real endpoint waiting never attaches or claim
 });
 
 test("launcher preserves the identity barrier before Playwright attach", async () => {
-  const { events, launch } = launcherFixture({
+  const { events, connections, launch } = launcherFixture({
     waitForDevToolsEndpoint: async () => "ws://127.0.0.1:32123/devtools/browser/ready",
   });
   const result = await launch();
   assert.deepEqual(events, ["launch", "barrier", "connect"]);
   assert.equal(result.rootPid, 123);
   assert.equal(result.endpoint, "http://127.0.0.1:32123");
+  assert.deepEqual(connections, [[result.endpoint, { noDefaults: false }]]);
+});
+
+test("manual headed windows retain their environment barrier without connecting Playwright", async () => {
+  const context = { pages: () => [{ url: () => "about:blank" }] };
+  const fixture = launcherFixture({ reserveLocalDebugPort: async () => 32123, waitForInteractiveCdp: async () => {},
+    connectManualBrowser: async () => { fixture.events.push("manual-connect"); return { contexts: () => [context] }; },
+    connectOverCDP: () => assert.fail("manual window must not connect Playwright") });
+  const result = await fixture.launch({ headless: false, manual: true, headlessIdentity: null,
+    environmentMode: "fixed", launchArgs: { locale: "de-DE", timezoneId: "Europe/Berlin" } });
+  assert.equal(result.context, context);
+  assert.deepEqual(fixture.events, ["launch", "barrier", "manual-connect"]);
 });
 
 test("inherited headed windows keep language arguments without a fatal environment barrier", async () => {
   for (const launchArgs of [{ locale: "zh-CN" }, { locale: "de-DE", timezoneId: "Europe/Berlin" }]) {
-    const { events, launch } = launcherFixture({
+    const { events, connections, launch } = launcherFixture({
       reserveLocalDebugPort: async () => 32123,
       waitForInteractiveCdp: async () => {},
       installIdentityBarrier: async () => { throw new Error("inherited headed window must not install this barrier"); },
     });
     await launch({ headless: false, headlessIdentity: null, launchArgs });
     assert.deepEqual(events, ["launch", "connect"]);
+    assert.deepEqual(connections, [["http://127.0.0.1:32123", { noDefaults: true }]]);
   }
 });
 
@@ -250,6 +266,7 @@ test("fixed headed environments install before attach and reject initialization 
   const fixture = launcherFixture({ reserveLocalDebugPort: async () => 32123, waitForInteractiveCdp: async () => {} });
   await fixture.launch(options);
   assert.deepEqual(fixture.events, ["launch", "barrier", "connect"]);
+  assert.deepEqual(fixture.connections, [["http://127.0.0.1:32123", { noDefaults: true }]]);
   const failed = launcherFixture({ reserveLocalDebugPort: async () => 32123, waitForInteractiveCdp: async () => {},
     installIdentityBarrier: async () => { throw new Error("locale initialization failed"); } });
   await assert.rejects(failed.launch(options), /locale initialization failed/);

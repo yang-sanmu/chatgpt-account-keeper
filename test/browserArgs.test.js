@@ -262,6 +262,22 @@ test("交互式 Context 的 close 等待原生 Chrome 进程退出", async (t) =
   assert.equal(child.kill.mock.callCount(), 1);
 });
 
+test("正常关闭 Chrome 会等待 Profile 落盘退出，不立即强杀进程", async t => {
+  const child = new EventEmitter();
+  child.exitCode = null;
+  child.signalCode = null;
+  child.kill = t.mock.fn(() => assert.fail("must allow Chrome to finish its graceful exit"));
+  const browser = { close: async () => {
+    setTimeout(() => { child.exitCode = 0; child.emit("exit", 0, null); }, 10);
+  } };
+  const context = {};
+  installInteractiveContextClose(context, browser, child);
+  await context.close();
+  assert.equal(child.exitCode, 0);
+  assert.equal(child.kill.mock.callCount(), 0);
+  assert.equal(child.listenerCount("exit"), 0);
+});
+
 test("原生交互启动返回既有 API 形状并保留关闭约定", async (t) => {
   const page = { url: () => "about:blank" };
   const context = {
@@ -283,6 +299,7 @@ test("原生交互启动返回既有 API 形状并保留关闭约定", async (t)
   };
   const spawnProcess = t.mock.fn(() => child);
   const applyTimezone = t.mock.fn(async () => {});
+  const connectOverCDP = t.mock.fn(async () => browser);
 
   const launched = await launchInteractivePersistentContext(
     "profiles/a1",
@@ -292,7 +309,7 @@ test("原生交互启动返回既有 API 形状并保留关闭约定", async (t)
       port: 32123,
       spawnProcess,
       waitForCdp: async () => {},
-      connectOverCDP: async () => browser,
+      connectOverCDP,
       applyTimezone,
     }
   );
@@ -300,6 +317,9 @@ test("原生交互启动返回既有 API 形状并保留关闭约定", async (t)
   assert.equal(launched.page, page);
   assert.equal(spawnProcess.mock.callCount(), 1);
   assert.equal(applyTimezone.mock.callCount(), 1);
+  assert.deepEqual(connectOverCDP.mock.calls[0].arguments, [
+    "http://127.0.0.1:32123", { noDefaults: true },
+  ]);
   assert.equal(
     context.addInitScript.mock.callCount(),
     0,

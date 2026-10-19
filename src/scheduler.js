@@ -16,6 +16,7 @@ import {
   validateSelectorConfig,
 } from "./selectorCheck.js";
 import * as log from "./logger.js";
+import { isCancellation, raceSignal, throwIfCancelled } from "./cancellation.js";
 
 function secureRandom() {
   try {
@@ -46,6 +47,7 @@ export async function runWithBrowserLifecycle(
     context = launched.context;
     return await operation(launched);
   } catch (error) {
+    if (isCancellation(error)) throw error;
     return {
       ok: false,
       reason: String(error?.message || error),
@@ -85,17 +87,25 @@ export async function runOnce(account, opts = {}) {
   const name = displayName(account);
 
   const runWithPage = async ({ page, set, setName }) => {
-        await page.goto(selectors.url, { waitUntil: "domcontentloaded" });
+        throwIfCancelled(opts.signal);
+        await raceSignal(page.goto(selectors.newChatUrl || selectors.url, { waitUntil: "domcontentloaded" }), opts.signal);
         // 会话健康检查：只看 email 会把“令牌已失效”的账号误判为已登录，
         // 结果白跑一轮浏览器最后死在“找不到输入框”。这里直接快速失败并说清原因。
-        const health = await checkSession(page);
+        const health = await raceSignal(checkSession(page), opts.signal);
+        // checkSession 把页面关闭也归为 unknown；这种情况已不可能继续发消息，
+        // 不能再用“仍尝试继续”掩盖窗口被关闭的真正原因。
+        throwIfCancelled(opts.signal);
+        if (page.isClosed?.()) {
+          return { ok: false, code: "PAGE_CLOSED", reason: "对话页面已关闭，本次运行已结束" };
+        }
         let promo;
         if (opts.checkPromo === true) {
           if (health.state === SESSION_OK) {
             try {
               const inspectPromo = opts.checkPromoEligibility ?? checkPromoEligibility;
-              promo = await inspectPromo(page);
+              promo = await raceSignal(inspectPromo(page), opts.signal);
             } catch (error) {
+              if (isCancellation(error)) throw error;
               // 优惠接口失败不影响本轮对话；保留上次可信资格并标为待复核。
               promo = {
                 ok: false,
@@ -125,7 +135,8 @@ export async function runOnce(account, opts = {}) {
           return { ok: false, reason: "未登录，请先登录该账号" };
         }
         log.info(`「${name}」开始 agent 对话，主题「${set.topic}」(${setName})`);
-        const result = await runAgent(page, selectors, set);
+        const result = await runAgent(page, selectors, set, { signal: opts.signal, newChatReady: true, accountId: account.id });
+        throwIfCancelled(opts.signal);
         if (result.needReauth) {
           setCachedStatus(account.id, SESSION_REAUTH, health.email, result.reason);
         }
@@ -163,6 +174,7 @@ export async function runOnce(account, opts = {}) {
         launchForAccount(fresh, {
           headless: opts.headless ?? true,
           runToken: opts.runToken,
+          signal: opts.signal,
         }),
       ({ page }) => runWithPage({ page, set: picked.set, setName: picked.setName }),
       { label: `「${name}」浏览器` }
@@ -262,6 +274,7 @@ export class SchedulerService {
   constructor(runtime = {}) {
     this.running = false;
     this._stopRequested = false;
+    this._generation = 0;
     this._runOnce = runtime.runOnce ?? runOnce;
     this._getAccount = runtime.getAccount ?? getAccount;
     this._getAccounts = runtime.getAccounts ?? getAccounts;
@@ -276,6 +289,7 @@ export class SchedulerService {
     this._onSchedulerEpoch = null;
     // 每账号一条独立循环：accountId -> { nextAt, lastAt, busy, promise }
     this._accountLoops = new Map();
+    this._busyAccounts = new Set();
     this.lastResults = {}; // accountId -> { ok, reason, time }
     this._observers = new Set();
   }
@@ -378,7 +392,7 @@ export class SchedulerService {
       kind: "account",
       accountId,
       ...snapshot,
-      busy: !!state.busy,
+      busy: this._busyAccounts.has(accountId) || !!state.busy,
     });
   }
 
@@ -389,6 +403,20 @@ export class SchedulerService {
    */
   nextAtFromNow(now = Date.now()) {
     return now + this._nextDelayMs();
+  }
+
+  /** Queue activity is live state, never restored as busy after a crash. */
+  noteBusy(accountId, busy) {
+    if (this._busyAccounts.has(accountId) === !!busy) return;
+    if (busy) this._busyAccounts.add(accountId);
+    else this._busyAccounts.delete(accountId);
+    const snapshot = this.status();
+    const lastResult = snapshot.lastResults[accountId] ?? null;
+    this._notify({
+      kind: "account", accountId, ...snapshot.accounts[accountId], busy: !!busy,
+      lastResult,
+      lastResultState: lastResult == null ? null : lastResult.ok ? "succeeded" : "failed",
+    });
   }
 
   /**
@@ -429,7 +457,7 @@ export class SchedulerService {
       };
     }
     this._persistAccount(accountId, {
-      nextAt: nextAt ?? (persisted?.nextAt ? Date.parse(persisted.nextAt) || null : null),
+      nextAt: nextAt !== undefined ? nextAt : (persisted?.nextAt ? Date.parse(persisted.nextAt) || null : null),
       lastAt: lastAt ?? Date.now(),
       busy: false,
     });
@@ -472,6 +500,9 @@ export class SchedulerService {
         busy: !!st.busy,
       };
     }
+    for (const id of this._busyAccounts) {
+      accounts[id] = { nextAt: null, lastAt: null, ...accounts[id], busy: true };
+    }
     return {
       running: this.running,
       enabled: persisted.enabled === true,
@@ -482,9 +513,10 @@ export class SchedulerService {
 
   start() {
     if (this.running) return { running: true, message: "调度器已在运行" };
+    const s = this._getSettings();
+    const generation = ++this._generation;
     this._stopRequested = false;
     this._setRunning(true);
-    const s = this._getSettings();
     this._log.info(
       `调度器启动（每账号独立定时）：每 ~${s.intervalMinutes ?? 180} 分钟(±${
         s.jitterMinutes ?? 30
@@ -492,16 +524,23 @@ export class SchedulerService {
     );
     // 接入统一队列后计时只剩 ScheduleClock 一套；绝不能同时再拉起账号循环。
     if (this._clock) {
-      this._clock.start();
       // 排队条目按入队时的 schedulerEpoch 快照运行：不 bump 的话 stop 之后再 start
       // 期间入队的 scheduled 条目无法被区分与复验。
-      this._onSchedulerEpoch?.();
+      try {
+        this._onSchedulerEpoch?.();
+        this._clock.start();
+      } catch (error) {
+        this._clock.stop?.();
+        this._stopRequested = true;
+        this._setRunning(false);
+        throw error;
+      }
       return { running: true, message: "调度器已启动" };
     }
     // 管理循环：定期检查启用账号，为新账号拉起独立循环
     // 后台 manager 也必须有最终拒绝处理；否则配置文件被外部改坏或未来
     // 依赖抛错时，会留下 running=true 的假状态并触发 unhandled rejection。
-    const managed = this._runManager().catch((error) => {
+    const managed = this._runManager(generation).catch((error) => {
       try {
         this._log.error(
           `调度管理循环异常退出：${String(error?.message || error)}`
@@ -524,6 +563,7 @@ export class SchedulerService {
       return { running: false, message: "调度器未运行" };
     }
     this._stopRequested = true;
+    this._generation++;
     this._setRunning(false);
     this._log.info("已请求停止调度，各账号本次对话结束后停止…");
     // 时钟只停止后续触发；已排队的 scheduled 条目由 epoch 复验负责取消。
@@ -581,8 +621,8 @@ export class SchedulerService {
   }
 
   // 管理循环：每 15 秒扫描一次启用账号，为尚无循环的账号启动独立定时循环。
-  async _runManager() {
-    while (!this._stopRequested) {
+  async _runManager(generation = this._generation) {
+    while (!this._stopRequested && generation === this._generation) {
       const active = this._getAccounts().filter((a) => a.enabled);
       const activeIds = new Set(active.map((a) => a.id));
 
@@ -592,7 +632,7 @@ export class SchedulerService {
           this._accountLoops.set(account.id, state);
           // _runAccountLoop 自身会兜住错误；这里再加最后一道 rejection handler，
           // 避免未来改动意外让后台 Promise 变成未处理拒绝。
-          state.promise = this._runAccountLoop(account.id).catch((error) => {
+          state.promise = this._runAccountLoop(account.id, generation).catch((error) => {
             try {
               this._log.error(
                 `账号 ${account.id} 调度循环异常退出：${String(
@@ -614,18 +654,19 @@ export class SchedulerService {
       }
 
       const until = Date.now() + 15000;
-      while (Date.now() < until && !this._stopRequested) await this._sleep(3000);
+      while (Date.now() < until && !this._stopRequested && generation === this._generation) await this._sleep(3000);
     }
 
     // stop() 已经把 running/enabled 一起落下；这里只在管理循环自行退出
     // （例如全部账号被停用）时补齐状态并通知一次。
-    this._setRunning(false);
-    this._stopRequested = false;
-    this._log.info("调度器已停止");
+    if (generation === this._generation) {
+      this._setRunning(false);
+      this._log.info("调度器已停止");
+    }
   }
 
   // 单账号独立循环：首次随机延迟错开起跑，之后各自 interval±jitter。
-  async _runAccountLoop(accountId) {
+  async _runAccountLoop(accountId, generation = this._generation) {
     const state = this._accountLoops.get(accountId);
     if (!state) return;
     try {
@@ -655,18 +696,21 @@ export class SchedulerService {
 
       while (
         !this._stopRequested &&
+        generation === this._generation &&
         this._accountLoops.get(accountId) === state
       ) {
         // 等到本账号的下次时间（分段睡眠以便响应停止/停用）
         while (
           Date.now() < state.nextAt &&
           !this._stopRequested &&
+          generation === this._generation &&
           this._accountLoops.get(accountId) === state
         ) {
           await this._sleep(3000);
         }
         if (
           this._stopRequested ||
+          generation !== this._generation ||
           this._accountLoops.get(accountId) !== state
         ) {
           break;

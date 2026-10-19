@@ -10,6 +10,7 @@ import { publicAccount, publicStatus } from "../application/services.js";
 import { ScheduleClock, planOverdueRecovery } from "../scheduleClock.js";
 import { STAGES } from "../application/backgroundQueue.js";
 import { isQuarantined, release as releaseAccountLock } from "../locks.js";
+import { isCancellation, raceSignal, throwIfCancelled } from "../cancellation.js";
 
 /**
  * Agent 组合根（计划 §2）。
@@ -164,6 +165,8 @@ export async function composeBackground({
     let closeOutcome = null;
     try {
       await slots.awaitLaunchPermit(signal);
+      throwIfCancelled(signal);
+      context.revalidate?.();
       setStage(STAGES.launching, "正在启动 Chrome");
       run = browserRuns.register({
         accountId: entry.accountId,
@@ -216,7 +219,8 @@ export async function composeBackground({
       // context 交给 BrowserRun：关闭序列的优雅退出阶段要用它，业务体不得自行关闭。
       browserRuns.markRunning(run.browserRunId, launched?.context ?? null);
       setStage(STAGES.running, "正在执行");
-      value = await body({ run, signal, page: launched.page, account });
+      throwIfCancelled(signal);
+      value = await raceSignal(body({ run, signal, page: launched.page, account }), signal);
       // 不在这里 return：close 的结论要合进结果，而 finally 在 return 之后才跑。
     } finally {
       if (run) {
@@ -336,22 +340,44 @@ export async function composeBackground({
   // 三个 handler 只跑业务 + 原服务层后处理：page 由 withBrowserRun 提供，账号锁与
   // 关闭都不归它们。
   queue.registerHandler(WORK_KINDS.accountRun, async (context) => {
-    const result = await withBrowserRun(context, async ({ signal, page, account }) => {
-      const checkPromo = context.entry.effectiveSource === SOURCES.scheduled &&
-        store.getSettings().scheduledPromoCheckEnabled === true;
-      const value = await runOnce(account, { page, signal, checkPromo });
-      // 原 operations.create 回调里的两件事，迁到队列后必须跟着走，否则历史不落盘、
-      // 账号视图也不刷新。
-      recordConversation?.(account.id, value);
-      const latest = store.getAccount(account.id) ?? account;
+    scheduler.noteBusy?.(context.accountId, true);
+    let result;
+    try {
+      result = await withBrowserRun(context, async ({ signal, page, account }) => {
+        const checkPromo = context.entry.effectiveSource === SOURCES.scheduled &&
+          store.getSettings().scheduledPromoCheckEnabled === true;
+        const value = await runOnce(account, { page, signal, checkPromo });
+        return value && typeof value.ok === "boolean"
+          ? value : { ok: false, reason: "运行未返回有效结果", code: "INVALID_RUN_RESULT" };
+      });
+    } catch (error) {
+      if (isCancellation(error)) throw error;
+      result = { ok: false, reason: String(error?.message || error),
+        ...(error?.code ? { code: error.code } : {}),
+        ...(context.entry.closeOutcome ? { close: context.entry.closeOutcome } : {}) };
+    }
+    if (result.close?.ok === false && result.ok) {
+      result = { ...result, ok: false, reason: `Chrome 未能确认回收：${result.close.reason ?? "unknown"}` };
+    }
+    // History includes launch failures and the final close outcome. Persistence or
+    // UI notification failures must not turn a completed conversation into a retry.
+    try {
+      context.entry.historyAttempted = true;
+      recordConversation?.(context.accountId, result);
+    } catch (error) {
+      log.warn(`写入对话历史失败：${String(error?.message || error)}`);
+    }
+    try {
+      const latest = store.getAccount(context.accountId);
       // publicAccount 需要完整的服务 runtime（分组、节点、调度状态）。它在组合时还不
        // 存在，所以按需取；取不到就不发半个 payload——缺字段的账号视图比不发更糟。
       const viewRuntime = accountViewRuntime?.();
-      if (viewRuntime) {
+      if (viewRuntime && latest) {
         events?.publish("account.changed", publicAccount(latest, viewRuntime));
       }
-      return value;
-    });
+    } catch (error) {
+      log.warn(`通知账号结果失败：${String(error?.message || error)}`);
+    }
     return failIfNotOk(result, "自动对话执行失败");
   });
 
@@ -397,6 +423,18 @@ export async function composeBackground({
 
   const clock = new ScheduleClock({
     log,
+    onStart: () => {
+      const accounts = store.getAccounts().filter((account) => account.enabled !== false);
+      clock.retainOnly(accounts.map((account) => account.id));
+      const persisted = scheduler.status?.().accounts ?? {};
+      for (const account of accounts) {
+        if (pendingDue.has(account.id) || clock.dueAt(account.id) !== null) continue;
+        const saved = Date.parse(persisted[account.id]?.nextAt);
+        const nextAt = Number.isFinite(saved) ? Math.max(Date.now(), saved) : scheduler.nextAtFromNow();
+        clock.schedule(account.id, nextAt);
+        scheduler.noteScheduled(account.id, { nextAt });
+      }
+    },
     onDue: (accountId) => {
       // 先标记再 submit：submit 会同步 pump，健康校验失败时终态回调在 submit 内部
       // 就已经跑完，标记晚一步就永远等不到重排。
@@ -419,11 +457,12 @@ export async function composeBackground({
   /**
    * 到期任务收口：恰好重排一次。
    *
-   * 调度已停 / 账号已停用或删除时不重排——那是生命周期，不是"这一轮跑完了"。
+   * 停止期间不触发新任务，但已执行任务仍结算并保留下次时刻。账号停用或删除则撤期。
    */
   const settleDue = (accountId, completion) => {
     if (!pendingDue.delete(accountId)) return;
-    if (scheduler.running === false) return;
+    // stop prevents firing, not accounting: an already running conversation may
+    // finish after stop. Save its result and retain its next time for restart.
     const account = store.getAccount(accountId);
     if (!account || account.enabled === false) return;
     const nextAt = scheduler.nextAtFromNow(Date.now());
@@ -442,6 +481,17 @@ export async function composeBackground({
   // 只看到「什么都没发生」。生命周期取消（stop / 停用 / 退出）不带 settlesRun。
   queue.onSettled((entry, outcome) => {
     if (entry.workKind !== WORK_KINDS.accountRun) return;
+    scheduler.noteBusy?.(entry.accountId, false);
+    if (outcome.settlesRun === true && !entry.historyAttempted) {
+      entry.historyAttempted = true;
+      try {
+        recordConversation?.(entry.accountId, {
+          ok: outcome.ok, reason: outcome.reason, code: "RUN_PRECHECK_FAILED", totalRounds: 0,
+        });
+      } catch (error) {
+        log.warn(`写入对话历史失败：${String(error?.message || error)}`);
+      }
+    }
     if (!pendingDue.has(entry.accountId)) return;
     // 生命周期取消（stop / 停用 / Agent 退出）：不重排、不写结果，只丢掉这次意图。
     // 必须先于 manual 合并分支判断，否则退出时被合并的手动任务仍会错误重排。

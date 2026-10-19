@@ -145,6 +145,7 @@ describe("全量快照与增量事件的闭环", () => {
     expect(store().accounts["acc-1"]?.effective.nextRunAt).toBe("2026-09-01T10:00:00Z");
     expect(store().accounts["acc-1"]?.effective.lastRunOk).toBe(true);
     expect(store().scheduler.accounts["acc-1"]?.busy).toBe(true);
+    expect(store().accounts["acc-1"]?.effective.running).toBe(true);
 
     // lastResult 显式为 null 表示清空。
     tauri.emitAgentEvent("scheduler.accountChanged", {
@@ -152,6 +153,11 @@ describe("全量快照与增量事件的闭环", () => {
       lastResult: null,
     });
     expect(store().accounts["acc-1"]?.effective.lastRunOk).toBeNull();
+    expect(store().accounts["acc-1"]?.effective.running).toBe(true);
+
+    tauri.emitAgentEvent("scheduler.accountChanged", { accountId: "acc-1", busy: false });
+    expect(store().accounts["acc-1"]?.effective.running).toBe(false);
+    expect(store().scheduler.accounts["acc-1"]?.busy).toBe(false);
   });
 
   it("scheduler.changed 之后同步托盘状态", () => {
@@ -168,6 +174,23 @@ describe("全量快照与增量事件的闭环", () => {
         (call) => call.command === "set_scheduler_tray_state" && call.args?.running === true
       )
     ).toBe(true);
+  });
+
+  it("完整调度快照也校正卡片占用，停止调度时保留仍在执行的账号", () => {
+    tauri.emitBootstrap(makeBootstrap({ accounts: [
+      makeAccount({ id: "finished", running: true }),
+      makeAccount({ id: "active", running: true }),
+    ] }));
+    tauri.emitAgentEvent("scheduler.changed", {
+      running: false, enabled: false,
+      accounts: {
+        finished: { busy: false, nextAt: null, lastAt: null },
+        active: { busy: true, nextAt: null, lastAt: null },
+      },
+      lastResults: {},
+    });
+    expect(store().accounts.finished?.effective.running).toBe(false);
+    expect(store().accounts.active?.effective.running).toBe(true);
   });
 
   it("scheduler.accountChanged 显式清空结果时同步清掉调度视图中的旧错误", () => {

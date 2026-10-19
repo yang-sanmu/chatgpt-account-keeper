@@ -430,3 +430,70 @@ test("订阅者抛错不会影响调度自身", async () => {
   await service.stop();
   assert.equal(service.running, false);
 });
+
+test('rapid legacy stop/start does not revive the previous manager', async () => {
+  const sleepers = [];
+  const service = new SchedulerService({
+    getAccounts: () => [], getSettings: () => ({}),
+    sleep: () => new Promise(resolve => sleepers.push(resolve)),
+    log: { info() {}, warn() {}, error() {} },
+  });
+  service.start(); const oldManager = service._manager;
+  await service.stop(); service.start(); const newManager = service._manager;
+  sleepers[0](); await oldManager;
+  assert.equal(service.running, true, 'old manager must not stop the new generation');
+  assert.equal(sleepers.length, 2, 'old manager must not loop again');
+  await service.stop(); sleepers[1](); await newManager;
+});
+
+test('clock start failure resets both running and persisted enabled', () => {
+  const enabled = [];
+  const service = new SchedulerService({ getSettings: () => ({}),
+    persistence: { setEnabled: value => enabled.push(value) }, log: { info() {}, warn() {}, error() {} },
+  });
+  service.configureClock({ start() { throw new Error('clock failed'); }, stop() {} });
+  assert.throws(() => service.start(), /clock failed/);
+  assert.equal(service.running, false); assert.deepEqual(enabled, [true, false]);
+});
+
+test('noteCompleted can explicitly clear nextAt', () => {
+  let saved;
+  const service = new SchedulerService({ persistence: {
+    load: () => ({ accounts: { a: { nextAt: '2030-01-01T00:00:00.000Z' } } }),
+    saveAccount: (_id, state) => { saved = state; },
+  } });
+  service.noteCompleted('a', { result: { ok: true }, nextAt: null });
+  assert.equal(saved.nextAt, null);
+});
+
+test('queue busy state is observable without persisting a stale busy flag', () => {
+  const changes = [];
+  const service = new SchedulerService({ persistence: {
+    load: () => ({ accounts: { a: { nextAt: '2030-01-01T00:00:00.000Z', lastResult: { ok: true } } } }),
+    saveAccount: () => assert.fail('live busy state must not write schedule history'),
+  } });
+  service.subscribe(change => changes.push(change));
+  service.noteBusy('a', true);
+  assert.equal(service.status().accounts.a.busy, true);
+  assert.equal(changes.at(-1).lastResult.ok, true);
+  service.noteBusy('a', false);
+  assert.equal(service.status().accounts.a.busy, false);
+  assert.equal(changes.at(-1).busy, false);
+});
+
+test('rescheduling an active account preserves busy in its event as well as its snapshot', () => {
+  const changes = [];
+  const saved = [];
+  const service = new SchedulerService({ persistence: {
+    load: () => ({ accounts: {} }),
+    saveAccount: (_id, value) => saved.push(value),
+  } });
+  service.subscribe(change => changes.push(change));
+  service.noteBusy('a', true);
+  service.noteScheduled('a', { nextAt: Date.now() + 60_000 });
+  assert.equal(service.status().accounts.a.busy, true);
+  assert.equal(changes.at(-1).busy, true, 'changing a schedule must not falsely clear a running account card');
+  assert.equal(Object.hasOwn(saved.at(-1), 'busy'), false, 'busy remains live-only');
+  service.noteBusy('a', false);
+  assert.equal(changes.at(-1).busy, false);
+});

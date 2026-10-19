@@ -97,12 +97,13 @@ async function composeFake(overrides = {}) {
     runOnce: overrides.runOnce ?? (async () => ({ ok: true })),
     checkSelectors: overrides.checkSelectors ?? (async () => ({ ok: true })),
     refreshAccount: overrides.refreshAccount ?? (async () => ({ state: "ok" })),
+    recordConversation: overrides.recordConversation,
     statusMonitor: null,
     scheduler: overrides.scheduler ?? fakeScheduler(),
     getProxyNodes: overrides.getProxyNodes ?? healthyNodes,
     requireBroker: true,
     brokerFactory: () => broker,
-    launchChrome: async (account, opts) => {
+    launchChrome: overrides.launchChrome ?? (async (account, opts) => {
       launches.push({ accountId: account.id, runToken: opts.runToken, headless: opts.headless });
       const context = {
         closed: false,
@@ -118,7 +119,7 @@ async function composeFake(overrides = {}) {
         rootStartTime: 1700000000,
         runToken: opts.runToken,
       };
-    },
+    }),
   });
 
   return { background, broker, launches, operations, events, closedContexts };
@@ -461,7 +462,7 @@ test("调度任务终态把 lastAt / lastResult 写回并通知，成功与失�
 
     assert.equal(launches.length, 1, "调度到期必须启动一次");
     // §6.5：跑完只写一次，result / lastAt / nextAt 一起落盘，不留中间态。
-    assert.equal(saved.length, 1, `应恰好落盘一次，实际 ${saved.length}`);
+    assert.equal(saved.filter((state) => state.lastAt).length, 1, "终态应恰好落盘一次（启动补齐排期不算终态）");
     const last = saved.at(-1);
     assert.ok(last.lastAt, "终态必须写下 lastAt");
     assert.ok(Date.parse(last.nextAt) > Date.now(), "终态必须同时写下未来的 nextAt");
@@ -720,4 +721,99 @@ test("选择器摘要在关闭 Chrome 后仍是 Operation 的最终消息", asyn
   });
   for (let i = 0; i < 60 && background.queue.activeCount() > 0; i++) await settle();
   assert.equal(operations.get(operation.id).message, "全部选择器可用");
+});
+
+test('queued work is recovered after stop/start without restarting the Agent', async () => {
+  const { SchedulerService } = await import('../src/scheduler.js');
+  const table = {};
+  const scheduler = new SchedulerService({
+    getSettings: () => ({ intervalMinutes: 180, jitterMinutes: 0 }),
+    log: { info() {}, warn() {}, error() {} },
+    persistence: { load: () => ({ accounts: table }), setEnabled() {}, saveAccount(id, state) { table[id] = state; } },
+  });
+  const { background, launches } = await composeFake({ scheduler });
+  scheduler.configureClock(background.clock, () => background.queue.bumpSchedulerEpoch());
+  background.slots.pauseAdmission();
+  const nextAt = Date.now() - 1;
+  scheduler.noteScheduled('acc-1', { nextAt }); background.clock.schedule('acc-1', nextAt);
+  scheduler.start();
+  for (let i = 0; i < 120 && background.queue.snapshot().queuedTotal === 0; i++) await settle();
+  assert.equal(background.queue.snapshot().queuedTotal, 1);
+  await scheduler.stop();
+  assert.equal(background.queue.snapshot().queuedTotal, 0);
+  assert.equal(table['acc-1'].lastAt, null);
+  background.slots.resumeAdmission(); scheduler.start();
+  for (let i = 0; i < 120 && !table['acc-1'].lastAt; i++) await settle();
+  await scheduler.stop(); await background.dispose();
+  assert.equal(launches.length, 1);
+  assert.equal(table['acc-1'].lastResult.ok, true);
+});
+
+test('a running conversation finishing after stop still persists its result and next time', async () => {
+  const completed = []; let release; let started = false;
+  const gate = new Promise(resolve => { release = resolve; });
+  const scheduler = fakeScheduler({ noteCompleted: (id, state) => completed.push({ id, ...state }) });
+  const { background } = await composeFake({ scheduler, runOnce: async () => { started = true; await gate; return { ok: true }; } });
+  background.clock.schedule('acc-1', Date.now() - 1); background.clock.start();
+  for (let i = 0; i < 120 && !started; i++) await settle();
+  scheduler.running = false; background.clock.stop(); background.queue.bumpSchedulerEpoch();
+  release(); await drainQueue(background);
+  assert.equal(completed.length, 1); assert.equal(completed[0].result.ok, true);
+  assert.ok(background.clock.dueAt('acc-1') > Date.now());
+  await background.dispose();
+});
+
+test('stop cancels work still waiting for a Chrome slot before it can launch', async () => {
+  const scheduler = fakeScheduler();
+  const { background, launches, operations } = await composeFake({ scheduler });
+  const holders = [];
+  for (let i = 0; i < background.slots.chromeLimit; i++) holders.push(await background.slots.acquireChromeSlot());
+  const op = background.queue.submit({ accountId: 'acc-1', workKind: 'account-run', source: 'scheduled' });
+  assert.equal(background.queue.activeCount(), 1);
+  scheduler.running = false; background.queue.bumpSchedulerEpoch();
+  await drainQueue(background);
+  holders.forEach(holder => holder.release());
+  assert.equal(launches.length, 0); assert.equal(operations.get(op.id).state, 'cancelled');
+  assert.equal(background.slots.snapshot().workSlots.used, 0);
+  await background.dispose();
+});
+
+test('launch failures and precheck failures each leave one conversation history record', async () => {
+  for (const precheck of [false, true]) {
+    const history = [];
+    const { background, operations } = await composeFake({
+      getProxyNodes: precheck ? () => [] : healthyNodes,
+      launchChrome: async () => { throw new Error('test launch failure'); },
+      recordConversation: (id, result) => history.push({ id, result }),
+    });
+    const op = background.enqueue({ accountId: 'acc-1', workKind: 'account-run' });
+    await drainQueue(background);
+    assert.equal(history.length, 1);
+    assert.equal(history[0].result.ok, false);
+    assert.match(history[0].result.reason, precheck ? /代理节点/ : /test launch failure/);
+    assert.notEqual(operations.get(op.id).state, 'succeeded');
+    await background.dispose();
+  }
+});
+
+test('history persistence failure does not change a successful conversation into failure', async () => {
+  const { background, operations } = await composeFake({ recordConversation: () => { throw new Error('disk full'); } });
+  const op = background.enqueue({ accountId: 'acc-1', workKind: 'account-run' });
+  await drainQueue(background);
+  assert.equal(operations.get(op.id).state, 'succeeded');
+  await background.dispose();
+});
+
+test('cancellation reaches closing even when the business operation is stuck', async () => {
+  let started = false;
+  const { background, operations, closedContexts } = await composeFake({
+    runOnce: async () => { started = true; return new Promise(() => {}); },
+  });
+  const op = background.enqueue({ accountId: 'acc-1', workKind: 'account-run' });
+  for (let i = 0; i < 120 && !started; i++) await settle();
+  background.queue.signalAllActive('test cancellation');
+  await drainQueue(background);
+  assert.equal(operations.get(op.id).state, 'cancelled');
+  assert.equal(closedContexts.length, 1);
+  await background.dispose();
 });

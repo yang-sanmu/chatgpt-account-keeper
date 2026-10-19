@@ -28,6 +28,36 @@ beforeEach(async () => {
   tauri.emitBootstrap(makeBootstrap({ accounts: [account] }));
 });
 
+it.each(["succeeded", "failed", "cancelled"] as const)("任务 %s 后解除占用，卡片恢复下次运行区域", (state) => {
+  const operation = makeOperation({ id: "run", kind: "account-run", resourceId: "acc-1", state: "running" });
+  tauri.emitAgentEvent("scheduler.accountChanged", { accountId: "acc-1", busy: true });
+  tauri.emitAgentEvent("operation.changed", operation);
+  renderCard();
+  expect(screen.queryByText("下次运行")).not.toBeInTheDocument();
+
+  act(() => {
+    // 真实收尾顺序：account.changed 发生在队列 onSettled 之前。
+    tauri.emitAgentEvent("account.changed", { ...account, running: true });
+    tauri.emitAgentEvent("operation.changed", { ...operation, state });
+  });
+  expect(screen.getByText("调度已占用此账号")).toBeInTheDocument();
+
+  act(() => {
+    tauri.emitAgentEvent("scheduler.accountChanged", { accountId: "acc-1", busy: false });
+  });
+  expect(screen.queryByText("调度已占用此账号")).not.toBeInTheDocument();
+  expect(screen.getByText("下次运行")).toBeInTheDocument();
+});
+
+it("无进度文案的手动排队任务不显示调度占用", () => {
+  tauri.emitAgentEvent("operation.changed", makeOperation({
+    kind: "account-open-page", resourceId: "acc-1", state: "queued", stage: null, message: null,
+  }));
+  renderCard();
+  expect(screen.getByText("等待执行")).toBeInTheDocument();
+  expect(screen.queryByText("调度已占用此账号")).not.toBeInTheDocument();
+});
+
 describe("账号卡片的最近运行结果", () => {
   it("手动运行成功后不再显示更早的调度错误，也不改写自动调度记录", () => {
     renderCard();

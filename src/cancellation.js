@@ -59,7 +59,11 @@ export function cancellableSleep(ms, signal) {
  */
 export function raceSignal(promise, signal) {
   if (!signal) return promise;
-  if (signal.aborted) return Promise.reject(new CancelledError(reasonOf(signal)));
+  if (signal.aborted) {
+    // The caller may already have started the underlying operation.
+    Promise.resolve(promise).catch(() => {});
+    return Promise.reject(new CancelledError(reasonOf(signal)));
+  }
   return new Promise((resolve, reject) => {
     let settled = false;
     const onAbort = () => {

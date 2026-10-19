@@ -770,9 +770,15 @@ export const useKeeperStore = create<KeeperStore>()((set, get) => {
 
       case "scheduler.changed": {
         const scheduler = normalizeScheduler(envelope.payload);
-        set({
-          scheduler,
-          ...(scheduler.running ? { schedulerStartDialogOpen: false } : {}),
+        set((state) => {
+          let accounts = state.accounts;
+          for (const [accountId, status] of Object.entries(scheduler.accounts)) {
+            accounts = applyAccountStatus(accounts, accountId, { running: status.busy === true });
+          }
+          return {
+            scheduler, accounts,
+            ...(scheduler.running ? { schedulerStartDialogOpen: false } : {}),
+          };
         });
         // 让托盘菜单与真实状态一致。
         void setSchedulerTrayState(scheduler.running);
@@ -785,6 +791,9 @@ export const useKeeperStore = create<KeeperStore>()((set, get) => {
         if (!accountId) break;
 
         const patch: AccountStatusPatch = {};
+        // 账号卡片使用 effective.running；只更新 scheduler.accounts.busy 会让
+        // account.changed 在收尾阶段留下的 running:true 永远停在卡片上。
+        if (payload.busy !== undefined) patch.running = payload.busy;
         if (payload.nextAt !== undefined) patch.nextRunAt = payload.nextAt;
         if (payload.lastAt !== undefined) patch.lastRunAt = payload.lastAt;
         if (payload.lastResult !== undefined) {

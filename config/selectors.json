@@ -4,24 +4,41 @@
   "newChatUrl": "https://chatgpt.com/",
   "loginIndicators": [
     "#prompt-textarea",
+    "form[data-chatgpt-composer] [contenteditable='true'][role='textbox']",
     "div[contenteditable='true']"
   ],
   "composer": [
     "#prompt-textarea",
+    "form[data-chatgpt-composer] [contenteditable='true'][role='textbox']",
     "div[contenteditable='true'][data-virtualkeyboard='true']",
     "div[contenteditable='true']"
   ],
   "sendButton": [
     "button[data-testid='send-button']",
+    "button[data-testid='composer-send-button']",
+    "form[data-chatgpt-composer] button[type='submit']",
     "button[aria-label*='Send']",
     "button[aria-label*='发送']"
   ],
   "stopButton": [
     "button[data-testid='stop-button']",
-    "button[aria-label*='Stop']",
-    "button[aria-label*='停止']"
+    "button[data-testid='composer-stop-button']",
+    "form button[aria-label*='Stop' i]:not([aria-label*='voice' i], [aria-label*='dictat' i], [aria-label*='read' i])",
+    "form button[aria-label*='停止']:not([aria-label*='语音'], [aria-label*='听写'], [aria-label*='朗读'])"
   ],
   "assistantMessage": [
-    "div[data-message-author-role='assistant']"
+    "[data-message-author-role='assistant']",
+    "[data-turn='assistant']",
+    "[data-content-search-unit-key$=':assistant']",
+    "[data-chatgpt-search-unit-key$=':assistant']",
+    "[data-content-search-unit-key]:has([data-conversation-role='assistant'])",
+    "[data-chatgpt-search-unit-key]:has([data-conversation-role='assistant'])"
+  ],
+  "userMessage": [
+    "[data-message-author-role='user']",
+    "[data-turn='user']",
+    "[data-content-search-unit-key$=':user']",
+    "[data-chatgpt-search-unit-key$=':user']",
+    "[data-user-message-bubble]"
   ]
 }

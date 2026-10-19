@@ -1,4 +1,5 @@
-import { preSendPauseMs, typingDelayMs } from "./humanize.js";
+import { preSendPauseMs } from "./humanize.js";
+import { raceSignal, throwIfCancelled } from "./cancellation.js";
 import * as log from "./logger.js";
 
 function selectorList(value) {
@@ -24,6 +25,7 @@ async function hasVisible(page, selector) {
 async function throwIfLoginRequired(page) {
   if (await hasVisible(page, LOGGED_OUT_SELECTOR)) {
     const error = new Error("ChatGPT 页面已要求登录，请在账号页点击“重新登录”");
+    error.code = "LOGIN_REQUIRED";
     error.needReauth = true;
     throw error;
   }
@@ -43,18 +45,18 @@ async function dismissMemoryNux(page) {
 /**
  * 在一组候选选择器里返回第一个可见的元素句柄。
  */
-export async function firstVisible(page, selectorList, timeout = 8000) {
-  const selectors = Array.isArray(selectorList) ? selectorList : [selectorList];
-  const perTry = Math.max(1000, Math.floor(timeout / selectors.length));
+export async function firstVisible(page, candidates, timeout = 8000) {
+  const selectors = selectorList(candidates);
+  if (!selectors.length) throw chatError("INVALID_SELECTORS", "没有配置可用的元素选择器");
+  // Wait once for any visible candidate. An absent legacy selector must not
+  // consume seconds before we inspect an already-ready modern composer.
+  await page.locator(combinedSelector(selectors)).filter({ visible: true }).first()
+    .waitFor({ state: "visible", timeout });
+  // Keep configured preference when several candidates are present. These are
+  // immediate queries, with no separate timeout for each missing selector.
   for (const sel of selectors) {
-    try {
-      const el = await page.waitForSelector(sel, {
-        timeout: perTry,
-        state: "visible",
-      });
-      if (el) return el;
-    } catch {
-      // 试下一个候选
+    for (const el of await page.$$(sel)) {
+      if (await el.isVisible()) return el;
     }
   }
   throw new Error(`未找到可见元素，候选: ${selectors.join(" | ")}`);
@@ -73,125 +75,336 @@ export async function ensureLoggedIn(page, selectors) {
   }
 }
 
-/**
- * 发送一条 prompt 并等待回复完成，返回回复文本。
- * 完成判定：发送后 stop 按钮出现（生成中）→ 消失（生成结束）。
- * 拿不到 stop 按钮时退化为轮询回复文本稳定。
- */
-export async function sendPrompt(page, selectors, prompt) {
-  await dismissMemoryNux(page);
-  await throwIfLoginRequired(page);
-  const composer = await firstVisible(page, selectors.composer, 15000);
+/** A single DOM snapshot avoids mixing nodes from different React renders. */
+export async function readConversationState(page, selectors, options = {}) {
+  const { signal, timeoutMs = 10_000, latestOnly = false } = options;
+  throwIfCancelled(signal);
+  if (page.isClosed?.()) throw chatError("PAGE_CLOSED", "对话页面已关闭，无法继续读取回复");
+  if (!(timeoutMs > 0) || !Number.isFinite(timeoutMs)) throw new TypeError("DOM read timeout must be finite and positive");
+  const reading = page.evaluate(({ assistant, user, stop, composer, login, latestOnly }) => {
+    // Cache only within this synchronous snapshot, never across React renders.
+    const styles = new Map();
+    const visibility = new Map();
+    const styleOf = (node) => {
+      if (!styles.has(node)) styles.set(node, getComputedStyle(node));
+      return styles.get(node);
+    };
+    const hasBox = (rects) => [...rects].some((rect) => rect.width > 0 && rect.height > 0);
+    const textVisible = (node) => {
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      return hasBox(range.getClientRects());
+    };
+    const visible = (node) => {
+      if (visibility.has(node)) return visibility.get(node);
+      if (!node?.isConnected) return false;
+      const style = styleOf(node);
+      if (style.visibility !== "visible" || style.display === "none") return false;
+      // display:contents has no box of its own. Its visible children still form
+      // a message; filtering solely on the wrapper's rects discards every turn.
+      const result = hasBox(node.getClientRects()) || (style.display === "contents" && [...node.childNodes].some((child) =>
+        child.nodeType === Node.TEXT_NODE ? textVisible(child)
+          : child.nodeType === Node.ELEMENT_NODE && visible(child)));
+      visibility.set(node, result);
+      return result;
+    };
+    const renderedText = (node) => {
+      // innerText on a layoutless wrapper falls back to textContent, including
+      // hidden drafts. Read visible descendants while retaining block breaks.
+      if (styleOf(node).display !== "contents") return node.innerText ?? "";
+      return [...node.childNodes].map((child) => {
+        if (child.nodeType === Node.TEXT_NODE) return textVisible(child) ? child.textContent : "";
+        if (child.nodeType !== Node.ELEMENT_NODE || !visible(child)) return "";
+        const text = renderedText(child);
+        const display = styleOf(child).display;
+        return display === "contents" || display.startsWith("inline") ? text : `\n${text}\n`;
+      }).join("");
+    };
+    const query = (selector) => selector ? [...document.querySelectorAll(selector)] : [];
+    const messages = (raw) => {
+      const nodes = raw.filter(visible);
+      // A fallback article and its role-marked child represent the same message.
+      return nodes.filter((node) => !nodes.some((child) => child !== node && node.contains(child)));
+    };
+    const unitSelector = "[data-content-search-unit-key], [data-chatgpt-search-unit-key]";
+    const identity = (node) => {
+      const owner = node.closest(`[data-message-id], [data-turn-id], [data-testid^='conversation-turn-'], ${unitSelector}, [data-turn-key]`);
+      return owner?.getAttribute("data-message-id") || owner?.getAttribute("data-turn-id") ||
+        owner?.getAttribute("data-testid") || owner?.getAttribute("data-content-search-unit-key") ||
+        owner?.getAttribute("data-chatgpt-search-unit-key") || owner?.getAttribute("data-turn-key") || null;
+    };
+    const rawUsers = query(user);
+    const rawReplies = query(assistant);
+    const users = messages(rawUsers);
+    const lastUser = users.at(-1);
+    const replyNodes = messages(rawReplies);
+    const streaming = (node) => node.matches("[data-is-streaming='true'], [aria-busy='true']") ||
+      !!node.querySelector("[data-is-streaming='true'], [aria-busy='true']");
+    // The pre-send baseline includes every old message. Polling only compares
+    // the newest pair, so do not re-extract all historical answer bodies at 2 Hz.
+    const replies = (latestOnly ? replyNodes.slice(-1) : replyNodes).map((node) => {
+      const bodySelector = ".markdown, [data-markdown-text-style='assistant-message']";
+      const markdown = [
+        ...(node.matches(bodySelector) ? [node] : []), ...node.querySelectorAll(bodySelector),
+      ].filter(visible);
+      const roots = markdown.filter((part) => !markdown.some((parent) => parent !== part && parent.contains(part)));
+      return {
+        id: identity(node),
+        // New role markers can be headings beside the answer. Never return the
+        // heading, activity panel or shared user+assistant turn as answer text.
+        text: (roots.length ? roots.map(renderedText).join("\n")
+          : node.closest(unitSelector) ? "" : renderedText(node)).trim(),
+        afterUser: !!lastUser && !!(lastUser.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING),
+        streaming: streaming(node),
+      };
+    });
+    const input = query(composer).find(visible);
+    const alerts = query("[role='alert'], [data-testid='conversation-turn-error']")
+      .filter(visible).map((node) => renderedText(node).trim());
+    const error = alerts.find((text) => /something went wrong|error (?:occurred|generating)|network error|too many requests|usage limit|达到.{0,12}上限|出了点问题|发生错误|网络错误|请求过多/i.test(text));
+    return {
+      replies,
+      users: (latestOnly ? users.slice(-1) : users).map((node) => ({ id: identity(node), text: renderedText(node).trim() })),
+      assistantCount: replyNodes.length,
+      userCount: users.length,
+      generating: query(stop).some(visible) || replyNodes.some(streaming),
+      composerText: input ? (input.value ?? input.innerText ?? "").trim() : null,
+      loginRequired: query(login).some(visible),
+      error: error?.slice(0, 300) ?? null,
+      // Structural evidence only: never log messages, cookies or the chat URL.
+      dom: {
+        rawAssistantCount: rawReplies.length,
+        rawUserCount: rawUsers.length,
+        layoutlessAssistantCount: rawReplies.filter((node) => styleOf(node).display === "contents").length,
+        layoutlessUserCount: rawUsers.filter((node) => styleOf(node).display === "contents").length,
+        turnCount: query("[data-testid^='conversation-turn-'], [data-turn-key]").length,
+        searchUnitCount: query(unitSelector).length,
+        markdownCount: query(".markdown, [data-markdown-text-style='assistant-message']").filter(visible).length,
+        frameCount: document.querySelectorAll("iframe").length,
+        readyState: document.readyState,
+        visibility: document.visibilityState,
+        pageKind: /^\/c\//.test(location.pathname) ? "conversation" : location.pathname === "/" ? "new-chat" : "other",
+      },
+    };
+  }, {
+    assistant: combinedSelector(selectors.assistantMessage),
+    user: combinedSelector(selectors.userMessage || [
+      "[data-message-author-role='user']", "[data-turn='user']",
+      "[data-content-search-unit-key$=':user']", "[data-chatgpt-search-unit-key$=':user']", "[data-user-message-bubble]",
+    ]),
+    stop: combinedSelector(selectors.stopButton),
+    composer: combinedSelector(selectors.composer),
+    login: LOGGED_OUT_SELECTOR,
+    latestOnly,
+  });
+  // evaluate has no Playwright action timeout. A frozen renderer must not keep
+  // the account locked indefinitely before the polling loop checks its budget.
+  let timer;
+  try {
+    return await raceSignal(Promise.race([
+      reading,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(chatError("PAGE_READ_TIMEOUT", "读取对话页面超时，浏览器页面未响应", {
+          stage: "reading-page", readTimeoutMs: timeoutMs,
+        })), timeoutMs);
+      }),
+    ]), signal);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
-  // ChatGPT 会虚拟化长会话：新增回复时可能同时移除旧节点，因此不能靠节点数
-  // 判断。直接记住最后一个回复节点，发送后确认页面末尾换成了新节点。
-  const assistantSel = combinedSelector(selectors.assistantMessage);
-  const beforeNodes = await page.$$(assistantSel);
-  const beforeLast = beforeNodes[beforeNodes.length - 1] ?? null;
+function chatError(code, message, diagnostics) {
+  return Object.assign(new Error(message), { code, diagnostics });
+}
 
-  await composer.click();
-  // contenteditable 需要用键盘输入，模拟真实打字。延迟每轮取一个区间内的值，
-  // 固定 25ms 是可测量的机器指纹。
-  await page.keyboard.type(prompt, { delay: typingDelayMs() });
-  // 输入完到点发送之间，真人总有一点间隔。
-  await page.waitForTimeout(preSendPauseMs());
+function isNewMessage(message, previous) {
+  if (!message) return false;
+  return message.id
+    ? !previous.some((old) => old.id === message.id)
+    : !previous.some((old) => old.text === message.text);
+}
 
-  // 优先点发送按钮，找不到就回车。
-  let sent = false;
-  for (const sel of selectorList(selectors.sendButton)) {
-    const btn = await page.$(sel);
-    if (btn && (await btn.isEnabled().catch(() => false))) {
-      await btn.click();
-      sent = true;
-      break;
+function replyTimeoutError(reply, diagnostics) {
+  if (!diagnostics.accepted) return chatError("MESSAGE_NOT_SUBMITTED", "发送未确认：未出现本轮用户消息或生成状态，未自动重发以避免重复提交", diagnostics);
+  if (!reply) return chatError("REPLY_NOT_FOUND", "消息已提交，但发送后未检测到新的回复（可能生成缓慢或回复选择器已变化）", diagnostics);
+  if (!reply.text && !diagnostics.generating) return chatError("REPLY_EMPTY", "新的回复内容为空", diagnostics);
+  return chatError("RESPONSE_TIMEOUT", "回复生成或稳定等待超时，未将未完成内容记为成功", diagnostics);
+}
+
+/** Only the reply belonging to this submission may satisfy completion. */
+export async function waitForReply(page, selectors, before, options = {}) {
+  const { signal, timeoutMs = 180_000, acknowledgementMs = 15_000, pollMs = 500,
+    stableMs = 3000, fallbackStableMs = 5000, readTimeoutMs = timeoutMs, timing = {} } = options;
+  const startedAt = Date.now();
+  let accepted = false;
+  let sawGenerating = false;
+  let lastText = "";
+  let wasIdle = false;
+  let idleSince = null;
+  let state = before;
+  let reply = null;
+  let diagnostics = { stage: "waiting-submit", accepted: false };
+  timing.firstReplyMs = null;
+  timing.domReadMs = 0;
+  timing.maxDomReadMs = 0;
+  timing.domReads = 0;
+  // The iteration bound also makes a stalled/fake clock unable to wait forever.
+  if (!(pollMs > 0) || !Number.isFinite(pollMs) || !(timeoutMs >= 0) || !Number.isFinite(timeoutMs)) {
+    throw new TypeError("reply timeout and polling interval must be finite and non-negative (polling > 0)");
+  }
+  for (let elapsed = 0; ; elapsed += pollMs) {
+    throwIfCancelled(signal);
+    const remainingMs = timeoutMs - Math.max(elapsed, Date.now() - startedAt);
+    if (remainingMs <= 0 && elapsed > 0) {
+      throw replyTimeoutError(reply, { ...diagnostics, elapsedMs: timeoutMs - remainingMs });
     }
+    const readStarted = Date.now();
+    let navigated = false;
+    try {
+      state = await readConversationState(page, selectors, {
+        signal, latestOnly: true,
+        timeoutMs: Math.max(1, Math.min(readTimeoutMs, remainingMs)),
+      });
+    } catch (error) {
+      // A read shortened by the reply budget is not evidence that the renderer
+      // exceeded its own read deadline. Preserve the last known response stage.
+      if (error.code === "PAGE_READ_TIMEOUT" && remainingMs <= readTimeoutMs) {
+        throw replyTimeoutError(reply, { ...diagnostics, elapsedMs: Math.max(timeoutMs, Date.now() - startedAt) });
+      }
+      if (/Execution context was destroyed|Cannot find context with specified id/.test(error.message)) {
+        // A submitted first message can navigate to its conversation URL.
+        // The rejected read is over; inspect the new document without resending.
+        navigated = true;
+        wasIdle = false;
+      } else {
+        throw error;
+      }
+    } finally {
+      const readMs = Date.now() - readStarted;
+      timing.domReads++;
+      timing.domReadMs += readMs;
+      timing.maxDomReadMs = Math.max(timing.maxDomReadMs, readMs);
+    }
+    if (navigated) {
+      await raceSignal(page.waitForTimeout(pollMs), signal);
+      continue;
+    }
+    const newUser = isNewMessage(state.users.at(-1), before.users);
+    const last = state.replies.at(-1);
+    const freshReply = last && (!newUser || last.afterUser) && (last.id
+      ? isNewMessage(last, before.replies)
+      : isNewMessage(last, before.replies) || (newUser && last.afterUser));
+    reply = freshReply ? last : null;
+    if (reply?.text && timing.firstReplyMs === null) timing.firstReplyMs = Date.now() - startedAt;
+    accepted ||= newUser || state.generating || !!reply;
+    sawGenerating ||= state.generating;
+    const waited = Math.max(elapsed, Date.now() - startedAt);
+    diagnostics = {
+      stage: accepted ? "waiting-reply" : "waiting-submit",
+      accepted, sawGenerating, generating: state.generating,
+      assistantCount: state.assistantCount ?? state.replies.length,
+      userCount: state.userCount ?? state.users.length, replyLength: reply?.text.length ?? 0,
+      composerHasText: !!state.composerText, elapsedMs: waited,
+      ...(state.dom ? { dom: state.dom } : {}),
+    };
+    if (state.loginRequired) {
+      throw Object.assign(chatError("LOGIN_REQUIRED", "ChatGPT 页面已要求登录，请在账号页点击“重新登录”", diagnostics), { needReauth: true });
+    }
+    if (state.error) throw chatError("CHAT_PAGE_ERROR", `ChatGPT 页面提示：${state.error}`, diagnostics);
+    if (reply?.text && !state.generating) {
+      if (!wasIdle || reply.text !== lastText) idleSince = waited;
+      // DOM reads and timer delays are part of the observed stable interval.
+      // Counting only pollMs stretches a 3 s check to 15+ s on a slow renderer.
+      if (waited - idleSince >= (sawGenerating ? stableMs : fallbackStableMs)) {
+        timing.completionWaitMs = waited - idleSince;
+        return reply.text;
+      }
+    }
+    lastText = reply?.text ?? "";
+    wasIdle = !!reply?.text && !state.generating;
+    if (!accepted && waited >= acknowledgementMs) {
+      throw chatError("MESSAGE_NOT_SUBMITTED", "发送未确认：未出现本轮用户消息或生成状态，未自动重发以避免重复提交", diagnostics);
+    }
+    if (waited >= timeoutMs) {
+      throw replyTimeoutError(reply, diagnostics);
+    }
+    await raceSignal(page.waitForTimeout(pollMs), signal);
+  }
+}
+
+/** Fill, submit exactly once, then wait for acknowledgement and this turn's reply. */
+export async function sendPrompt(page, selectors, prompt, options = {}) {
+  const { signal, timing = {} } = options;
+  const startedAt = Date.now();
+  timing.stage = "preparing";
+  throwIfCancelled(signal);
+  await raceSignal(dismissMemoryNux(page), signal);
+  await raceSignal(throwIfLoginRequired(page), signal);
+  const composer = await raceSignal(firstVisible(page, selectors.composer, 15000), signal);
+  const before = await readConversationState(page, selectors, { signal });
+  if (before.generating) throw chatError("CHAT_BUSY", "上一轮仍在生成，未发送新的问题");
+  timing.prepareMs = Date.now() - startedAt;
+  timing.stage = "submitting";
+  const submitStartedAt = Date.now();
+  // fill handles textarea/contenteditable and multiline prompts without Enter submitting
+  // half a prompt. It also replaces any draft left behind by a previous failed send.
+  await raceSignal(composer.fill(prompt), signal);
+  // Let the editor commit its input during the existing human pause. Checking
+  // synchronously after fill can observe a transient empty editor; checking
+  // afterwards also catches a draft that React reset before submission.
+  timing.preSendPauseMs = preSendPauseMs();
+  await raceSignal(page.waitForTimeout(timing.preSendPauseMs), signal);
+  const filled = await raceSignal(composer.evaluate((node) => node.value ?? node.innerText ?? ""), signal);
+  // contenteditable paragraphs may render a blank line as two or three newlines.
+  const normalize = (value) => value.replace(/\s+/g, " ").trim();
+  if (normalize(filled) !== normalize(prompt)) {
+    throw chatError("COMPOSER_INPUT_MISMATCH", "输入框内容与本轮问题不一致，未发送消息", {
+      stage: "checking-input", expectedLength: normalize(prompt).length, actualLength: normalize(filled).length,
+    });
+  }
+  let sent = false;
+  // React may need a moment after input before enabling send. Check every candidate,
+  // including visibility; a hidden enabled button must never consume the click timeout.
+  for (let attempt = 0; attempt < 20 && !sent; attempt++) {
+    throwIfCancelled(signal);
+    for (const sel of selectorList(selectors.sendButton)) {
+      const buttons = await raceSignal(page.$$(sel), signal);
+      for (const button of buttons) {
+        if (await button.isVisible() && await button.isEnabled()) {
+          // Our own reply loop confirms submission. Playwright's additional
+          // navigation wait can time out after the click already succeeded.
+          await raceSignal(button.click({ timeout: 5000, noWaitAfter: true }), signal);
+          sent = true;
+          break;
+        }
+      }
+      if (sent) break;
+    }
+    if (!sent) await raceSignal(page.waitForTimeout(250), signal);
   }
   if (!sent) {
-    await page.keyboard.press("Enter");
+    throwIfCancelled(signal);
+    await raceSignal(composer.press("Enter", { noWaitAfter: true }), signal);
   }
-
-  // 等最后一条 assistant 消息变成新节点（最多 20s），再等其生成完成。
+  timing.submitMs = Date.now() - submitStartedAt;
+  timing.stage = "waiting-reply";
+  const replyStartedAt = Date.now();
   try {
-    await page.waitForFunction(
-      ([sel, previous]) => {
-        const nodes = document.querySelectorAll(sel);
-        return nodes.length > 0 && nodes[nodes.length - 1] !== previous;
-      },
-      [assistantSel, beforeLast],
-      { timeout: 20000 }
-    );
-  } catch {
-    log.warn("未检测到新回复节点，继续按完成判定处理。");
-  }
-
-  await waitForResponseComplete(page, selectors);
-  const afterNodes = await page.$$(assistantSel);
-  const afterLast = afterNodes[afterNodes.length - 1] ?? null;
-  const sameNode = beforeLast && afterLast
-    ? await afterLast.evaluate((current, previous) => current === previous, beforeLast)
-    : false;
-  if (!afterLast || sameNode) {
-    // 等待超时后不能直接取“最后一条”：多轮对话里那会读到上一轮回复，把一次
-    // 实际发送失败伪装成成功，并继续沿着旧问题推进。
-    throw new Error("发送后未检测到新的回复");
-  }
-  const reply = (await afterLast.innerText()).trim();
-  if (!reply) throw new Error("新的回复内容为空");
-  return reply;
-}
-
-async function waitForResponseComplete(page, selectors) {
-  const stopSel = combinedSelector(selectors.stopButton);
-
-  // 等生成开始（stop 按钮出现），最多 15s。若没等到，可能回复极快或结构变了。
-  try {
-    await page.waitForSelector(stopSel, { timeout: 15000, state: "visible" });
-  } catch {
-    log.warn("未检测到停止按钮，退化为轮询文本稳定判定。");
-    return waitForTextStable(page, selectors);
-  }
-
-  // 等生成结束（stop 按钮消失），最多 3 分钟。
-  try {
-    await page.waitForSelector(stopSel, { timeout: 180000, state: "hidden" });
-  } catch {
-    log.warn("回复超过 3 分钟仍未结束，按当前内容返回。");
-  }
-  await page.waitForTimeout(500);
-}
-
-async function waitForTextStable(page, selectors) {
-  let last = "";
-  let stableCount = 0;
-  for (let i = 0; i < 60; i++) {
-    const text = await extractLastAssistant(page, selectors).catch(() => "");
-    if (text && text === last) {
-      stableCount++;
-      if (stableCount >= 3) return; // 连续 3 次不变视为完成
-    } else {
-      stableCount = 0;
-    }
-    last = text;
-    await page.waitForTimeout(1000);
+    const reply = await waitForReply(page, selectors, before, { ...options, timing });
+    timing.stage = "completed";
+    return reply;
+  } finally {
+    timing.replyWaitMs = Date.now() - replyStartedAt;
   }
 }
 
-async function extractLastAssistant(page, selectors) {
-  const sel = combinedSelector(selectors.assistantMessage);
-  const nodes = await page.$$(sel);
-  if (nodes.length === 0) return "";
-  const lastNode = nodes[nodes.length - 1];
-  return (await lastNode.innerText()).trim();
-}
-
-/**
- * 开启一个新的对话线程：导航到新对话页，等输入框就绪。
- */
-export async function startNewChat(page, selectors) {
-  const url = selectors.newChatUrl || selectors.url;
-  await page.goto(url, { waitUntil: "domcontentloaded" });
-  await firstVisible(page, selectors.composer, 15000);
-  await page.waitForTimeout(500);
+/** Navigate once to a new thread and wait for the composer. */
+export async function startNewChat(page, selectors, options = {}) {
+  const { signal } = options;
+  throwIfCancelled(signal);
+  await raceSignal(page.goto(selectors.newChatUrl || selectors.url, { waitUntil: "domcontentloaded" }), signal);
+  await raceSignal(firstVisible(page, selectors.composer, 15000), signal);
 }
 
 // 追问链条的问题长度上限。模型偶尔会把整段解释接在前缀后面，原样发出去既不像

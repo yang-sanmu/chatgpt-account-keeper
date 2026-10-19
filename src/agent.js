@@ -6,6 +6,7 @@ import {
   roundPauseMs,
 } from "./humanize.js";
 import * as log from "./logger.js";
+import { isCancellation, raceSignal, throwIfCancelled } from "./cancellation.js";
 
 // 计划轮数至少为 1：契约允许 minRounds/maxRounds 为 0，真按 0 轮跑等于开个新对话
 // 什么都不问，白起一次浏览器。上界不需要单独兜底——randomInt 自己会把 hi 抬到
@@ -43,7 +44,9 @@ export const REPLY_STORE_LIMIT = 20000;
  * @param set 会话集 { topic, minRounds, maxRounds }
  * @returns { ok, topic, rounds:[{q,a}], totalRounds, targetRounds, stopReason, reason? }
  */
-export async function runAgent(page, selectors, set) {
+export async function runAgent(page, selectors, set, options = {}) {
+  const { signal } = options;
+  throwIfCancelled(signal);
   const topic = (set.topic || "").trim();
   if (!topic) {
     return { ok: false, reason: "会话集未设置主题", stopReason: "no-topic" };
@@ -52,7 +55,7 @@ export async function runAgent(page, selectors, set) {
   const targetRounds = plannedRounds(set.minRounds ?? 2, set.maxRounds ?? 10);
   log.info(`Agent 主题「${topic}」，本对话计划 ${targetRounds} 轮`);
 
-  await startNewChat(page, selectors);
+  if (!options.newChatReady) await startNewChat(page, selectors, { signal });
   const rounds = [];
   let nextQuestion = null;
   // 跑满全部计划轮数时循环自然结束，此时结束原因就是 completed。
@@ -60,18 +63,25 @@ export async function runAgent(page, selectors, set) {
   let sendError = null;
 
   for (let i = 0; i < targetRounds; i++) {
+    throwIfCancelled(signal);
     const question = i === 0 ? topic : nextQuestion;
     const prompt =
       i === 0 ? buildFirstPrompt(topic) : buildFollowupPrompt(nextQuestion);
 
     let reply;
+    const roundStartedAt = Date.now();
+    const timing = {};
     try {
-      reply = await sendPrompt(page, selectors, prompt);
+      reply = await sendPrompt(page, selectors, prompt, { signal, timing });
     } catch (e) {
+      if (isCancellation(e)) throw e;
       log.warn(`第 ${i + 1} 轮发送失败: ${e.message}`);
+      if (e.diagnostics) log.warn(`对话诊断 ${e.code ?? "UNKNOWN"}：${JSON.stringify(e.diagnostics)}`);
       stopReason = "send-failed";
       sendError = e;
       break;
+    } finally {
+      log.info(`第 ${i + 1} 轮耗时（毫秒）：${JSON.stringify({ accountId: options.accountId, ...timing, totalMs: Date.now() - roundStartedAt })}`);
     }
 
     // 精简存储：只留问题与截断后的回复，不存完整 prompt 模板。
@@ -90,7 +100,9 @@ export async function runAgent(page, selectors, set) {
       break;
     }
     // 轮次间隔。带长尾的分布，不是一个整齐的矩形。
-    await page.waitForTimeout(roundPauseMs());
+    const pauseMs = roundPauseMs();
+    log.info(`第 ${i + 1} 轮后停顿 ${pauseMs} 毫秒${options.accountId ? `（账号 ${options.accountId}）` : ""}`);
+    await raceSignal(page.waitForTimeout(pauseMs), signal);
   }
 
   // 发送失败即使已经跑过几轮也要留下原始错误，否则历史里只剩一个轮数，
@@ -114,5 +126,7 @@ export async function runAgent(page, selectors, set) {
     stopReason,
     reason,
     needReauth: sendError?.needReauth === true,
+    ...(sendError?.code ? { code: sendError.code } : {}),
+    ...(sendError?.diagnostics ? { diagnostics: sendError.diagnostics } : {}),
   };
 }

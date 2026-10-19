@@ -280,3 +280,32 @@ test("队列快照报告阶段、槽位与来源分组", () => {
   assert.equal(snapshot.bySource.manual, 1);
   assert.equal(snapshot.admissionPaused, true);
 });
+
+test('shutdown rejects new submissions instead of leaving an orphaned queued operation', () => {
+  const { queue, operations } = harness();
+  queue.registerHandler(WORK_KINDS.accountRun, async () => ({ ok: true }));
+  queue.stopAdmission();
+  assert.throws(() => queue.submit({ accountId: 'a', workKind: WORK_KINDS.accountRun, source: SOURCES.manual }), e => e.code === 'CANCELLED');
+  assert.equal(operations.listActive().length, 0);
+});
+
+test('cancelling an account-lock waiter removes its release subscription', () => {
+  resetLocksForTest();
+  const { queue } = harness();
+  queue.registerHandler(WORK_KINDS.accountRun, async () => ({ ok: true }));
+  markHeld('blocked');
+  queue.submit({ accountId: 'blocked', workKind: WORK_KINDS.accountRun, source: SOURCES.scheduled });
+  assert.equal(queue._accountWaiters.size, 1);
+  queue.cancelAllQueued('test cancellation');
+  assert.equal(queue._accountWaiters.size, 0);
+  releaseHeld('blocked');
+});
+
+test('cancellation interrupts the global launch-spacing wait immediately', async () => {
+  const controller = new AbortController();
+  const slots = new SlotManager({ now: () => 1000, launchIntervalMs: 1000, sleep: () => new Promise(() => {}) });
+  await slots.awaitLaunchPermit();
+  const pending = slots.awaitLaunchPermit(controller.signal);
+  controller.abort('test cancellation');
+  await assert.rejects(pending, e => e.code === 'CANCELLED');
+});

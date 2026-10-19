@@ -330,7 +330,10 @@ export const AccountCard = React.memo(({ id, onDelete }: AccountCardProps) => {
               >
                 {runningOp?.stage
                   ? `阶段: ${runningOp.stage}`
-                  : (runningOp?.message ?? "调度已占用此账号")}
+                  : (runningOp?.message || (isQueued
+                    ? "等待执行"
+                    : isWaitingUser ? "等待人工操作"
+                    : runningOp ? "正在执行" : "调度已占用此账号"))}
               </div>
             </div>
           ) : (

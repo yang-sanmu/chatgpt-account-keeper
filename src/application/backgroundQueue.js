@@ -154,6 +154,7 @@ export class BackgroundQueue {
    * 不同 workKind 一律新建条目，不合并、不存在提升。
    */
   submit(request) {
+    if (this._draining) throw new CancelledError("队列正在退出，已停止接受新任务");
     const {
       accountId,
       workKind,
@@ -253,23 +254,33 @@ export class BackgroundQueue {
         this._cancelEntry(entry, verdict.reason, { settlesRun: verdict.settlesRun === true });
       }
     }
+    // A task waiting for Chrome has left _pendingQueue but has not launched yet.
+    for (const entry of this._entries.values()) {
+      if (entry.stage !== STAGES.waitingChrome) continue;
+      const verdict = this._checkEntry(entry);
+      if (!verdict.ok) {
+        entry.admissionFailure = verdict;
+        entry.abort.abort(verdict.reason);
+      }
+    }
   }
 
   _checkEntry(entry) {
-    const verdict = this._revalidate({
-      accountId: entry.accountId,
-      workKind: entry.workKind,
-      effectiveSource: entry.effectiveSource,
-    });
-    if (!verdict.ok) return verdict;
-    // 仅 effectiveSource === 'scheduled' 的条目受调度状态约束。被提升为 manual 的
-    // 条目不因 scheduler.stop 取消，即使它最初是自动入队的。
-    if (entry.effectiveSource === SOURCES.scheduled) {
-      if (entry.snapshot.schedulerEpoch !== this._schedulerEpoch || !this._schedulerRunning()) {
-        // 生命周期事件，不带 settlesRun：不能写成一条自动运行失败。
-        return { ok: false, reason: "调度已停止" };
-      }
+    if (entry.effectiveSource === SOURCES.scheduled &&
+        (entry.snapshot.schedulerEpoch !== this._schedulerEpoch || !this._schedulerRunning())) {
+      return { ok: false, reason: "调度已停止" };
     }
+    let verdict;
+    try {
+      verdict = this._revalidate({
+        accountId: entry.accountId,
+        workKind: entry.workKind,
+        effectiveSource: entry.effectiveSource,
+      });
+    } catch (error) {
+      return { ok: false, reason: `任务复验失败：${String(error?.message || error)}`, settlesRun: true };
+    }
+    if (!verdict.ok) return verdict;
     return { ok: true };
   }
 
@@ -338,6 +349,8 @@ export class BackgroundQueue {
   }
 
   _removeEntry(entry) {
+    this._accountWaiters.get(entry.operationId)?.();
+    this._accountWaiters.delete(entry.operationId);
     this._entries.delete(entry.operationId);
     if (this._byKey.get(entry.dedupeKey) === entry) this._byKey.delete(entry.dedupeKey);
     const index = this._pendingQueue.indexOf(entry);
@@ -443,6 +456,13 @@ export class BackgroundQueue {
         attachClose: (close) => {
           entry.closeOutcome = close;
         },
+        revalidate: () => {
+          const verdict = this._checkEntry(entry);
+          if (!verdict.ok) {
+            entry.admissionFailure = verdict;
+            throw new CancelledError(verdict.reason);
+          }
+        },
       });
     } catch (error) {
       failure = error;
@@ -469,7 +489,8 @@ export class BackgroundQueue {
       ? { close: entry.closeOutcome }
       : null;
     if (failure) {
-      const cancelled = failure instanceof CancelledError || failure?.code === "CANCELLED";
+      const cancelled = (failure instanceof CancelledError || failure?.code === "CANCELLED") &&
+        entry.admissionFailure?.settlesRun !== true;
       const details = failure?.details ?? null;
       this._operations.update(entry.operationId, {
         state: cancelled ? "cancelled" : "failed",

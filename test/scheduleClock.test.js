@@ -136,3 +136,34 @@ test("逾期恢复按原始 nextAt 从早到晚，且区分未来任务", () => 
   assert.deepEqual(plan.overdue.map((entry) => entry.accountId), ["a", "b", "c"]);
   assert.deepEqual(plan.future.map((entry) => entry.accountId), ["future"]);
 });
+
+test('failed admission retries instead of losing the account', () => {
+  const time = fakeClock();
+  let attempts = 0;
+  const clock = new ScheduleClock({ now: time.now, setTimeout: time.setTimeout, clearTimeout: time.clearTimeout,
+    log: { warn() {} }, onDue: () => { if (++attempts === 1) throw new Error('temporary database failure'); } });
+  clock.schedule('a', time.now()); clock.start(); time.advance(0);
+  assert.equal(attempts, 1);
+  assert.equal(clock.dueAt('a'), time.now() + 60_000);
+  time.advance(60_000);
+  assert.equal(attempts, 2);
+  assert.equal(clock.dueAt('a'), null);
+});
+
+test('stopping in an onDue callback preserves the remaining due accounts', () => {
+  const time = fakeClock(); const fired = [];
+  const clock = new ScheduleClock({ now: time.now, setTimeout: time.setTimeout, clearTimeout: time.clearTimeout,
+    onDue: id => { fired.push(id); clock.stop(); } });
+  clock.schedule('a', time.now()); clock.schedule('b', time.now());
+  clock.start(); time.advance(0);
+  assert.deepEqual(fired, ['a']); assert.equal(clock.dueAt('b'), time.now());
+  clock.start(); time.advance(0); assert.deepEqual(fired, ['a', 'b']);
+});
+
+test('invalid times fail immediately and long delays are bounded for Node timers', () => {
+  const delays = [];
+  const clock = new ScheduleClock({ now: () => 0, setTimeout: (_fn, delay) => { delays.push(delay); return 1; } });
+  assert.throws(() => clock.schedule('a', NaN), /finite/);
+  clock.schedule('a', 2 ** 32); clock.start();
+  assert.equal(delays[0], 2 ** 31 - 1);
+});

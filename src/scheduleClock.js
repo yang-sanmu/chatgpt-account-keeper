@@ -18,6 +18,7 @@ export class ScheduleClock {
     });
     this._clearTimeout = options.clearTimeout ?? clearTimeout;
     this._onDue = options.onDue ?? (() => {});
+    this._onStart = options.onStart ?? (() => {});
     this._log = options.log ?? console;
     this._due = new Map(); // accountId -> dueAt (ms)
     this._timer = null;
@@ -30,6 +31,8 @@ export class ScheduleClock {
   }
 
   start() {
+    if (this._running) return;
+    this._onStart();
     this._running = true;
     this._reschedule();
   }
@@ -45,6 +48,7 @@ export class ScheduleClock {
 
   /** 设置某账号的下次到期时间。 */
   schedule(accountId, dueAt) {
+    if (!Number.isFinite(dueAt)) throw new TypeError("dueAt must be a finite timestamp");
     this._due.set(accountId, dueAt);
     this._reschedule();
   }
@@ -97,7 +101,7 @@ export class ScheduleClock {
       return;
     }
     if (this._timer !== null) this._clearTimeout(this._timer);
-    const delay = Math.max(0, firesAt - this._now());
+    const delay = Math.min(2 ** 31 - 1, Math.max(0, firesAt - this._now()));
     this._timerFiresAt = firesAt;
     this._timer = this._setTimeout(() => {
       this._timer = null;
@@ -112,11 +116,15 @@ export class ScheduleClock {
     // 同一时刻到期的账号按 FIFO（到期时间升序）交给队列，由并发上限、Chrome 上限
     // 与 1 秒启动间隔自然消化积压，而不是集中塞进一个 5 分钟窗口。
     const due = this.orderedDue().filter(([, dueAt]) => dueAt <= now);
-    for (const [accountId] of due) {
+    for (const [accountId, dueAt] of due) {
+      if (!this._running) break;
+      if (this._due.get(accountId) !== dueAt) continue;
       this._due.delete(accountId);
       try {
         this._onDue(accountId);
       } catch (error) {
+        // Failed admission must not silently remove this account forever.
+        if (!this._due.has(accountId)) this._due.set(accountId, now + 60_000);
         try {
           this._log.warn?.(`账号 ${accountId} 到期处理失败：${String(error?.message || error)}`);
         } catch {

@@ -1,3 +1,5 @@
+import { raceSignal } from "../cancellation.js";
+
 /**
  * 三类资源的唯一持有者（计划 §3）。
  *
@@ -171,7 +173,7 @@ export class SlotManager {
         this._lastLaunchAt = now;
         return;
       }
-      await this._sleep(earliest - now);
+      await raceSignal(this._sleep(earliest - now), signal);
     }
   }
 

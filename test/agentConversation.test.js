@@ -25,6 +25,8 @@ class NotFound extends Error {}
 function createFakePage(replies, options = {}) {
   const state = {
     assistantMessages: [],
+    userMessages: [],
+    composerText: "",
     stopVisible: false,
     typed: [],
     typeDelays: [],
@@ -64,11 +66,13 @@ function createFakePage(replies, options = {}) {
     if (options.failSendAtRound === state.sends) {
       throw new Error(`第 ${state.sends} 轮网络中断`);
     }
+    state.userMessages.push({ id: `user-${state.sends}`, text: state.composerText });
+    state.composerText = "";
     if (options.noReplyAtRound === state.sends) {
       state.stopVisible = false;
       return;
     }
-    state.assistantMessages.push({ innerText: replyFor(state.sends - 1) });
+    state.assistantMessages.push({ id: `reply-${state.sends}`, innerText: replyFor(state.sends - 1) });
     if (options.memoryNuxAfterRound === state.sends) state.memoryNuxVisible = true;
     if (options.loggedOutAfterRound === state.sends) state.loggedOutVisible = true;
     const virtualizeLimit = Number(options.virtualizeAssistantLimit);
@@ -95,7 +99,9 @@ function createFakePage(replies, options = {}) {
         ? state.loggedOutVisible
         : true,
     innerText: async () => node?.innerText ?? state.assistantMessages.at(-1)?.innerText ?? "",
-    evaluate: async (fn, arg) => fn(node, arg?._node ?? arg),
+    evaluate: async (fn, arg) => fn(kind === "composer" ? { value: state.composerText } : node, arg?._node ?? arg),
+    fill: async (text) => { state.composerText = text; state.typed.push(text); },
+    press: async (key) => { if (key === "Enter") { state.pressedEnter++; commitSend(); } },
   });
 
   const page = {
@@ -103,8 +109,16 @@ function createFakePage(replies, options = {}) {
     async goto(url) {
       state.navigations.push(url);
     },
+    locator(sel) {
+      const locator = {
+        filter: () => locator,
+        first: () => locator,
+        waitFor: opts => page.waitForSelector(sel, opts),
+      };
+      return locator;
+    },
     async waitForSelector(sel, opts = {}) {
-      // firstVisible 会把候选逐个试过来，未命中的必须抛错。
+      // firstVisible 在同一个等待预算内查找所有候选。
       if (isComposer(sel)) return handle("composer");
       if (isSend(sel)) return handle("send");
       if (isStop(sel)) {
@@ -125,6 +139,8 @@ function createFakePage(replies, options = {}) {
       return null;
     },
     async $$(sel) {
+      if (isComposer(sel)) return [handle("composer")];
+      if (isSend(sel)) return sendButtonWorks ? [handle("send")] : [];
       if (isAssistant(sel)) {
         return state.assistantMessages.map((node) => handle("assistant", node));
       }
@@ -132,6 +148,13 @@ function createFakePage(replies, options = {}) {
         return [handle("logged-out")];
       }
       return [];
+    },
+    async evaluate() {
+      return {
+        replies: state.assistantMessages.map((node) => ({ id: node.id, text: node.innerText, afterUser: true })),
+        users: [...state.userMessages], generating: state.stopVisible,
+        composerText: state.composerText, loginRequired: options.loggedOutOnLoad === true, error: null,
+      };
     },
     async waitForFunction(fn, args) {
       // 真实实现用 document.querySelectorAll 数 assistant 节点，这里按同样方式
@@ -152,6 +175,7 @@ function createFakePage(replies, options = {}) {
     },
     async waitForTimeout(ms) {
       state.waits.push(ms);
+      if (state.sends) state.stopVisible = false;
     },
     keyboard: {
       async type(text, options) {

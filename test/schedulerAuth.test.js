@@ -5,6 +5,29 @@ import { configureStoreBackend } from "../src/store.js";
 import { configureStatusBackend } from "../src/statusCacheStore.js";
 import { getCachedStatus, deleteCachedStatus } from "../src/statusMonitor.js";
 
+test("a page closed during the health check cannot continue into sending", async () => {
+  const account = { id: "closed-during-health", rotation: { currentSet: "topic", windowsDone: 0, windowsTarget: 2 } };
+  const restoreStore = configureStoreBackend({
+    getAccount: () => account,
+    getSettings: () => ({}),
+    getConversations: () => ({ topic: { topic: "test", minRounds: 1, maxRounds: 1 } }),
+    updateAccount: () => assert.fail("closed page cannot advance rotation"),
+  });
+  try {
+    const result = await runOnce(account, { page: {
+      goto: async () => {},
+      evaluate: async () => { throw new Error("Target page, context or browser has been closed"); },
+      isClosed: () => true,
+      $: () => assert.fail("must not try sending after page closure"),
+    } });
+    assert.equal(result.ok, false);
+    assert.equal(result.code, "PAGE_CLOSED");
+  } finally {
+    deleteCachedStatus(account.id);
+    restoreStore();
+  }
+});
+
 test("a login prompt during a conversation updates account status even with polling disabled", async () => {
   const account = { id: "mid-conversation-auth", rotation: { currentSet: "topic", windowsDone: 0, windowsTarget: 2 } };
   const restoreStore = configureStoreBackend({

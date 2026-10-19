@@ -5,6 +5,13 @@
  * 复制第二张表。返回 operationResult 的方法会由生成器自动归入 OPERATION_METHODS。
  */
 export const METHOD_CONTRACTS = Object.freeze({
+  "temporaryWindows.list": ["emptyParams", "temporaryWindowArray"],
+  "temporaryWindows.save": ["temporaryWindowSaveParams", "temporaryWindowResult"],
+  "temporaryWindows.open": ["idParams", "operationResult"],
+  "temporaryWindows.close": ["idParams", "operationResult"],
+  "temporaryWindows.remove": ["idParams", "operationResult"],
+  "temporaryWindows.clearData": ["idParams", "operationResult"],
+  "temporaryWindows.detectRegion": ["idParams", "operationResult"],
   "environments.get": ["accountIdParams", "environmentStateResult"],
   "environments.update": ["environmentUpdateParams", "environmentStateResult"],
   "environments.reset": ["environmentResetParams", "environmentStateResult"],

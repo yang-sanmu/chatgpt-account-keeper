@@ -3,6 +3,138 @@
   "$id": "https://github.com/yang-sanmu/chatgpt-account-keeper/contracts/ipc-v1.methods.schema.json",
   "title": "GptAccount Keeper IPC v1 method DTOs",
   "$defs": {
+    "temporaryWindowSaveParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "proxyId"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "note": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "homepage": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "proxyId": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "temporaryWindowResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "note",
+        "homepage",
+        "proxyId",
+        "createdAt",
+        "updatedAt",
+        "timezone",
+        "locale",
+        "exitIp",
+        "detectedAt",
+        "proxyName",
+        "proxyUnavailable",
+        "state",
+        "openedAt"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "note": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "homepage": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "proxyId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "createdAt": {
+          "type": "string"
+        },
+        "updatedAt": {
+          "type": "string"
+        },
+        "timezone": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "locale": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "exitIp": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "detectedAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "proxyName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "proxyUnavailable": {
+          "type": "boolean"
+        },
+        "state": {
+          "enum": [
+            "closed",
+            "busy",
+            "open",
+            "close_failed"
+          ]
+        },
+        "openedAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "temporaryWindowArray": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/temporaryWindowResult"
+      }
+    },
     "networkConfigParams": {
       "type": "object",
       "additionalProperties": false,
@@ -675,7 +807,7 @@
         "browserRunId": { "type": "string", "minLength": 1 },
         "accountId": { "type": "string", "minLength": 1 },
         "operationId": { "type": ["string", "null"] },
-        "purpose": { "enum": ["login", "open-page", "manual-run", "scheduled-run", "status-check", "selector-check"] },
+        "purpose": { "enum": ["temporary-window", "login", "open-page", "manual-run", "scheduled-run", "status-check", "selector-check"] },
         "effectiveSource": { "type": ["string", "null"] },
         "profilePath": { "type": ["string", "null"] },
         "rootPid": { "type": ["integer", "null"] },
@@ -825,6 +957,7 @@
           }
         },
         "openPages": { "$ref": "#/$defs/openPageMap" },
+        "temporaryWindows": { "$ref": "#/$defs/temporaryWindowArray" },
         "groups": { "$ref": "#/$defs/groupArray" },
         "proxies": { "$ref": "#/$defs/proxyStateResult" },
         "conversations": { "$ref": "#/$defs/conversationMap" },

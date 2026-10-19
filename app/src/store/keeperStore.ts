@@ -99,6 +99,7 @@ import { normalizeProfileScan, normalizeScheduler } from "./normalize";
 import { applyAccountProfileRemoval, applyProfileOperation } from "./profileUpdates";
 
 export type NavKey =
+  | "temporaryWindows"
   | "overview"
   | "accounts"
   | "operations"
@@ -187,6 +188,7 @@ interface KeeperState {
   emailsRevealed: boolean;
 
   groups: Group[];
+  temporaryWindows: import("@/ipc/generated").TemporaryWindowResult[];
   proxies: ProxyState;
   conversations: Record<string, ConversationSet>;
   scheduler: SchedulerState;
@@ -304,6 +306,7 @@ const INITIAL_STATE: KeeperState = {
   emailsRevealed: false,
 
   groups: [],
+  temporaryWindows: [],
   proxies: DEFAULT_PROXY_STATE,
   conversations: {},
   scheduler: DEFAULT_SCHEDULER,
@@ -547,6 +550,7 @@ export const useKeeperStore = create<KeeperStore>()((set, get) => {
         accountIds: ids,
         selectedAccountIds: selected,
         groups: snapshot.groups ?? state.groups,
+        temporaryWindows: snapshot.temporaryWindows ?? [],
         proxies: snapshot.proxies ?? state.proxies,
         conversations: snapshot.conversations ?? state.conversations,
         scheduler,
@@ -672,6 +676,10 @@ export const useKeeperStore = create<KeeperStore>()((set, get) => {
         break;
       }
 
+      case "temporaryWindows.changed": {
+        set({ temporaryWindows: envelope.payload });
+        break;
+      }
       case "group.changed": {
         const payload = envelope.payload;
         if (!payload.id) break;

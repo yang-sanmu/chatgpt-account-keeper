@@ -428,7 +428,7 @@ export async function renameCustom(id, value) {
 export async function removeCustom(id) {
   const store = readStore();
   requireCustomNode(store, id);
-  if (referencedProxyIds().has(id)) throw badRequest("该节点正被分组使用或已选为网络中转，请先修改分组或网络配置再删除");
+  if (referencedProxyIds().has(id)) throw badRequest("该节点正被分组使用、被临时窗口引用或已选为网络中转，请先修改对应配置再删除");
   portMapFrom(store.nodes);
   const portOrder = portOrderAfterRemoval ?? store.nodes.map((node) => node.id);
   writeStore({ ...store, nodes: store.nodes.filter((node) => node.id !== id) });
@@ -520,6 +520,14 @@ function portOf(id) {
   return portMapFrom(nodes).get(id) ?? null;
 }
 
+let temporaryProxyIds = () => [];
+
+export function configureTemporaryProxyIds(provider) {
+  const previous = temporaryProxyIds;
+  temporaryProxyIds = provider;
+  return () => { temporaryProxyIds = previous; };
+}
+
 function referencedProxyIds() {
   const ids = new Set(
     getGroups()
@@ -527,6 +535,7 @@ function referencedProxyIds() {
       .filter(Boolean)
   );
   const network = normalizeNetworkConfig(readStore().network);
+  for (const id of temporaryProxyIds()) if (id) ids.add(id);
   if (network.mode === "relay") ids.add(network.relayProxyId);
   return ids;
 }
@@ -536,8 +545,13 @@ function referencedProxyIds() {
  * 未分组、或分组没绑节点则返回 null（走系统默认网络）。
  */
 export function proxyForAccount(account) {
+  return proxyForNode(effectiveProxyId(account));
+}
+
+// Direct node binding for independent browser windows; no synthetic group/account.
+export function proxyForNode(selectedProxyId) {
   const { config, systemProxy } = getNetworkConfig();
-  const proxyId = effectiveProxyId(account) || (config.mode === "relay" ? config.relayProxyId : null);
+  const proxyId = selectedProxyId || (config.mode === "relay" ? config.relayProxyId : null);
   if (!proxyId) return config.mode === "system" && systemProxy.server ? { server: systemProxy.server } : null;
   const port = portOf(proxyId);
   if (!port) return null;

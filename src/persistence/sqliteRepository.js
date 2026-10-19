@@ -433,6 +433,7 @@ export class KeeperRepository {
     // through IPC records a shutdown receipt even though the user has not created
     // any durable data. Everything else must still match a genuinely pristine DB.
     const tables = [
+      "temporary_windows",
       "accounts",
       "groups",
       "proxy_nodes",
@@ -1313,14 +1314,14 @@ export class KeeperRepository {
         )
       );
       const existing = this.db.prepare("SELECT id FROM proxy_nodes").all();
-      const references = this.db.prepare("SELECT COUNT(*) AS count FROM groups WHERE proxy_id = ?");
+      const references = this.db.prepare("SELECT (SELECT COUNT(*) FROM groups WHERE proxy_id = @id) + (SELECT COUNT(*) FROM temporary_windows WHERE proxy_id = @id) AS count");
       const markMissing = this.db.prepare(
         "UPDATE proxy_nodes SET enabled=0, missing=1, raw_json='{}' WHERE id=?"
       );
       const remove = this.db.prepare("DELETE FROM proxy_nodes WHERE id=?");
       for (const row of existing) {
         if (ids.has(row.id)) continue;
-        if (references.get(row.id).count > 0 || (network.mode === "relay" && network.relayProxyId === row.id)) markMissing.run(row.id);
+        if (references.get({ id: row.id }).count > 0 || (network.mode === "relay" && network.relayProxyId === row.id)) markMissing.run(row.id);
         else remove.run(row.id);
       }
     });

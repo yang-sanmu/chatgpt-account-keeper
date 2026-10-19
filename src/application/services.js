@@ -63,10 +63,12 @@ import { environmentSnapshot, environmentPending, validateFixedEnvironment } fro
 import { getBrowserEnvironmentSnapshots } from "../browser.js";
 import { getStrictNetworkCapabilities } from "../network/strictConfig.js";
 
-// Minor 5 adds ordinary network connection settings. Strict capabilities remain gated.
-export const PROTOCOL_VERSION = Object.freeze({ major: 1, minor: 5 });
+// Minor 6 adds independent temporary browser windows.
+export const PROTOCOL_VERSION = Object.freeze({ major: 1, minor: 6 });
 
 export const MUTATING_METHODS = new Set([
+  "temporaryWindows.save", "temporaryWindows.remove", "temporaryWindows.open",
+  "temporaryWindows.close", "temporaryWindows.detectRegion", "temporaryWindows.clearData",
   "network.updateConfig",
   "environments.update",
   "environments.reset",
@@ -108,6 +110,7 @@ export const MUTATING_METHODS = new Set([
 ]);
 
 const DRAIN_ALLOWED_MUTATIONS = new Set([
+  "temporaryWindows.close",
   "system.prepareUpdate",
   "system.shutdown",
   "browser.closePage",
@@ -537,6 +540,20 @@ export class ApplicationServices {
   _buildMethods() {
     const methods = new Map();
     const add = (name, fn) => methods.set(name, fn.bind(this));
+    const windows = () => {
+      if (!this.runtime.temporaryWindows) fail(ERROR_CODES.INTERNAL, "临时窗口服务尚未就绪");
+      return this.runtime.temporaryWindows;
+    };
+    add("temporaryWindows.list", () => windows().list());
+    add("temporaryWindows.save", (params) => windows().save(params));
+    for (const [method, action] of [["open", "open"], ["close", "close"], ["remove", "remove"], ["clearData", "clearData"], ["detectRegion", "detect"]]) {
+      add(`temporaryWindows.${method}`, (params) => {
+        const id = requireId(params);
+        windows().require(id);
+        return this.operations.create(`temporary-window-${method}`, ({ operationId }) => windows()[action](id, { operationId }),
+          { resourceId: id, blocksUpdate: true });
+      });
+    }
 
     add("system.hello", this._hello);
     add("environments.get", this._environmentsGet);
@@ -698,6 +715,7 @@ export class ApplicationServices {
         .map((account) => publicAccount(account, this.runtime, context)),
       statuses: this.runtime.getAllCachedStatus(),
       openPages: this.runtime.getOpenPages(),
+      temporaryWindows: this.runtime.temporaryWindows?.list() ?? [],
       groups: this._groupsList(),
       proxies: this._proxiesGetState(),
       conversations: this.runtime.store.getConversations(),
@@ -733,6 +751,8 @@ export class ApplicationServices {
       openPages,
       operations,
       blockers: [
+        ...(this.runtime.temporaryWindows?.list() ?? []).filter(window => window.state !== "closed")
+          .map(window => ({ kind: "temporary-window", resourceId: window.id, detail: { name: window.name, state: window.state } })),
         ...Object.entries(openPages).map(([accountId, page]) => ({
           kind: "open-page",
           resourceId: accountId,
@@ -1274,7 +1294,7 @@ export class ApplicationServices {
     const assertIdle = () => {
       assertInput(!this.draining, "Agent 正在退出或更新，请稍后保存");
       if (this._getActivity().blockers.length || this.runtime.browserRuns?.listActive?.().length) {
-        fail(ERROR_CODES.RESOURCE_BUSY, "请先关闭账号浏览器并等待运行任务结束，再保存网络配置", { retryable: true });
+        fail(ERROR_CODES.RESOURCE_BUSY, "请先关闭账号浏览器和临时窗口，并等待运行任务结束，再保存网络配置", { retryable: true });
       }
     };
     let result;

@@ -149,8 +149,8 @@ const LOCALE_BY_TIMEZONE_PREFIX = [
  * 标准 HTTP 代理端口，对明文 http 目标只要把绝对 URL 放进请求行即可，
  * 不需要额外依赖。
  */
-function lookupThroughProxy(server) {
-  const target = "http://ip-api.com/json/?fields=status,countryCode,timezone";
+export function lookupThroughProxy(server, { signal } = {}) {
+  const target = "http://ip-api.com/json/?fields=status,query,countryCode,timezone";
   let proxyUrl;
   try {
     proxyUrl = new URL(server);
@@ -167,6 +167,7 @@ function lookupThroughProxy(server) {
         path: target, // 走代理时请求行要用绝对 URL
         headers: { Host: "ip-api.com", Connection: "close" },
         timeout: 12000,
+        signal,
       },
       (res) => {
         if (res.statusCode !== 200) {
@@ -175,14 +176,20 @@ function lookupThroughProxy(server) {
         }
         let body = "";
         res.setEncoding("utf8");
-        res.on("data", (c) => (body += c));
+        res.on("error", () => resolve(null));
+        res.on("data", (c) => {
+          body += c;
+          if (body.length > 16384) { res.destroy(); resolve(null); }
+        });
         res.on("end", () => {
           try {
             const data = JSON.parse(body);
             if (data.status !== "success" || !data.timezone) return resolve(null);
+            new Intl.DateTimeFormat("en", { timeZone: data.timezone });
             resolve({
               timezone: data.timezone,
               locale: localeForCountry(data.countryCode),
+              ip: typeof data.query === "string" ? data.query : null,
             });
           } catch {
             resolve(null);
@@ -190,7 +197,9 @@ function lookupThroughProxy(server) {
         });
       }
     );
-    req.on("timeout", () => req.destroy());
+    const deadline = setTimeout(() => { req.destroy(); resolve(null); }, 12000);
+    req.on("close", () => clearTimeout(deadline));
+    req.on("timeout", () => { req.destroy(); resolve(null); });
     req.on("error", () => resolve(null));
     req.end();
   });

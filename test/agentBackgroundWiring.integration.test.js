@@ -163,7 +163,7 @@ function spawnAgent(dataRoot, tempRoot, endpoint) {
 }
 
 test(
-  "真实 Agent：minor 3 客户端兼容 minor 5 Agent、队列与 BrowserRun 可用、broker 恒为 1，shutdown 干净退出",
+  "真实 Agent：minor 3 客户端兼容 minor 6 Agent、队列与 BrowserRun 可用、broker 恒为 1，shutdown 干净退出",
   { timeout: 90_000 },
   async (t) => {
     if (process.platform === "win32" && !resolveBrokerExecutable()) {
@@ -193,7 +193,7 @@ test(
       clientVersion: "wiring-test",
       capabilities: ["events"],
     });
-    assert.equal(hello.protocol.maxMinor, 5, output());
+    assert.equal(hello.protocol.maxMinor, 6, output());
 
     // 新方法必须真的接在服务上，而不只是写进契约。
     const snapshot = await client.call("queue.getSnapshot");
@@ -218,6 +218,30 @@ test(
     assert.equal(direct.config.mode, "direct");
     assert.deepEqual(await client.call("network.updateConfig", directParams, networkCommandId), direct);
     const bootstrap = await client.call("system.bootstrap");
+    assert.deepEqual(bootstrap.temporaryWindows, []);
+    assert.deepEqual(await client.call("temporaryWindows.list"), []);
+    const imported = await client.call("proxies.importCustom", { input: "http://127.0.0.1:31001" }, randomUUID());
+    let importedResult = imported;
+    for (let attempt = 0; attempt < 100 && ["queued", "running"].includes(importedResult.state); attempt++) {
+      await new Promise(resolve => setTimeout(resolve, 20));
+      importedResult = await client.call("operations.get", { id: imported.id });
+    }
+    assert.equal(importedResult.state, "succeeded");
+    const nodeId = (await client.call("proxies.getState")).nodes[0].id;
+    const tempCommand = randomUUID();
+    const tempParams = { name: "IPC 临时窗口", note: "保存后保持独立", proxyId: nodeId, homepage: "https://example.com/" };
+    const temporary = await client.call("temporaryWindows.save", tempParams, tempCommand);
+    assert.deepEqual(await client.call("temporaryWindows.save", tempParams, tempCommand), temporary);
+    assert.equal((await client.call("system.bootstrap")).temporaryWindows[0].name, tempParams.name);
+    assert.equal(client.events.some(event => event.event === "temporaryWindows.changed"), true);
+    const clear = await client.call("temporaryWindows.clearData", { id: temporary.id }, randomUUID());
+    let clearResult = clear;
+    for (let attempt = 0; attempt < 100 && ["queued", "running"].includes(clearResult.state); attempt++) {
+      await new Promise(resolve => setTimeout(resolve, 20));
+      clearResult = await client.call("operations.get", { id: clear.id });
+    }
+    assert.equal(clearResult.state, "succeeded");
+    assert.equal((await client.call("temporaryWindows.list")).length, 1);
     assert.equal(bootstrap.proxies.network.config.mode, "direct");
     assert.equal((await client.call("network.getCapabilities")).available, false);
     // Invalid settings reject without overwriting the saved direct route.

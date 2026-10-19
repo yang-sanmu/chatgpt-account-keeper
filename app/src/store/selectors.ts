@@ -254,17 +254,20 @@ export function useAccountLabeler(): (id: string | null | undefined) => {
 } {
   const records = useKeeperStore((state) => state.accounts);
   const revealed = useKeeperStore((state) => state.emailsRevealed);
+  const temporaryWindows = useKeeperStore((state) => state.temporaryWindows);
 
   return useCallback(
     (id) => {
       if (!id) return { label: "—", known: false };
+      const temporary = temporaryWindows.find(window => window.id === id);
+      if (temporary) return { label: temporary.name, known: true };
       const account = records[id]?.effective;
       if (!account) return { label: shortId(id), known: false };
       if (account.email) return { label: displayEmail(account.email, revealed), known: true };
       if (account.note.trim().length > 0) return { label: account.note, known: true };
       return { label: shortId(id), known: true };
     },
-    [records, revealed]
+    [records, revealed, temporaryWindows]
   );
 }
 

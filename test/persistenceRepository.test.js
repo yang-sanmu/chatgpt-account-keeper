@@ -4,8 +4,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
-import { openKeeperRepository } from "../src/persistence/sqliteRepository.js";
-import { SCHEMA_VERSION } from "../src/persistence/schema.js";
+import { KeeperRepository, openKeeperRepository } from "../src/persistence/sqliteRepository.js";
+import { MIGRATIONS, MIGRATION_LEDGER_SQL, SCHEMA_VERSION } from "../src/persistence/schema.js";
 import { createSqliteRuntimeAdapters } from "../src/persistence/runtimeAdapters.js";
 import { OperationRegistry } from "../src/application/operations.js";
 import { parseCustomProxies, appendCustomProxies } from "../src/customProxy.js";
@@ -20,6 +20,50 @@ try {
   // The source module deliberately supports driver injection. Packaging adds
   // this RID/ABI-specific native dependency; pure migration tests still run.
 }
+
+test("existing v8/v9/v10 databases upgrade without replacing historical migrations or user data", { skip: !Database }, async t => {
+  assert.equal(MIGRATIONS.find(migration => migration.version === 9)?.checksum,
+    "eb3b6db509cffa2c661acff13d1e6caa0507471ffc13f033cd7f0760ee283758");
+  assert.equal(MIGRATIONS.find(migration => migration.version === 10)?.checksum,
+    "f01f3380bbc6ca6d9090843cd8ee04c3ba7ff5e1d8d9fc45865fad6341c55b16");
+  for (const version of [8, 9, 10]) {
+    await t.test(`version ${version}`, async subtest => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "keeper-existing-schema-"));
+      const filePath = path.join(root, "keeper.db");
+      let repository;
+      subtest.after(() => {
+        repository?.close();
+        assert.equal(path.dirname(root), os.tmpdir());
+        fs.rmSync(root, { recursive: true, force: true });
+      });
+      const database = new Database(filePath);
+      database.exec(MIGRATION_LEDGER_SQL);
+      const record = database.prepare("INSERT INTO schema_migrations VALUES (?, ?, ?, ?, ?)");
+      for (const migration of MIGRATIONS.filter(migration => migration.version <= version)) {
+        database.exec(migration.sql);
+        record.run(migration.version, migration.name, migration.checksum, "2026-10-17T00:00:00Z", "previous");
+      }
+      database.pragma(`user_version = ${version}`);
+      new KeeperRepository(database).createAccount({ id: "existing-account", profileName: "existing-account", note: "keep me" });
+      if (version >= 9) database.prepare("INSERT INTO tool_records VALUES (?, ?, ?, ?)").run("fixture", "existing", '{"keep":true}', "2026-10-17");
+      if (version >= 10) database.prepare("INSERT INTO flow_pools VALUES (?, ?, ?, ?, ?)").run("existing-pool", "keep", "sealed-fixture", "2026-10-17", "2026-10-17");
+      const ledger = database.prepare("SELECT * FROM schema_migrations ORDER BY version").all();
+      database.close();
+
+      repository = await openKeeperRepository({ filePath });
+      assert.equal(repository.getSchemaVersion(), 11);
+      assert.deepEqual(repository.db.prepare("SELECT * FROM schema_migrations WHERE version <= ? ORDER BY version").all(version), ledger);
+      assert.equal(repository.getAccount("existing-account").note, "keep me");
+      if (version >= 9) assert.equal(repository.db.prepare("SELECT payload FROM tool_records WHERE id='existing'").get().payload, '{"keep":true}');
+      if (version >= 10) assert.equal(repository.db.prepare("SELECT sealed FROM flow_pools WHERE id='existing-pool'").get().sealed, "sealed-fixture");
+      assert.deepEqual(repository.db.prepare("SELECT * FROM temporary_windows").all(), []);
+      const backupPath = path.join(root, "backups", fs.readdirSync(path.join(root, "backups"))[0]);
+      const backup = new Database(backupPath, { readonly: true });
+      assert.equal(backup.pragma("user_version", { simple: true }), version);
+      backup.close();
+    });
+  }
+});
 
 test("custom proxy order and credentials survive subscription refresh through SQLite", { skip: !Database }, async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "keeper-custom-proxy-"));

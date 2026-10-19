@@ -33,6 +33,11 @@ export function resolveOperationSubject(
     return { title: "全局", action, deletedAccount: false };
   }
 
+  if (resource === "temporary-window") {
+    const { label, known } = lookup.account(resourceId);
+    return { title: known ? label : `临时窗口（${label}）`, action, deletedAccount: false };
+  }
+
   if (resource === "account") {
     const { label, known } = lookup.account(resourceId);
     // 只在确实有 id 却查不到时才说「已删除」。没有 id 是另一种情况（任务不针对某个账号），

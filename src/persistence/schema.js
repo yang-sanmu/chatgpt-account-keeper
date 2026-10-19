@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-export const SCHEMA_VERSION = 8;
+export const SCHEMA_VERSION = 11;
 
 const SCHEMA_V1 = String.raw`
 CREATE TABLE IF NOT EXISTS command_receipts (
@@ -396,6 +396,79 @@ ALTER TABLE proxy_settings ADD COLUMN network_config_json TEXT NOT NULL
   DEFAULT '{"mode":"system","relayProxyId":null,"systemProxyUrl":null,"outboundInterface":null}';
 `;
 
+// These migrations were already applied by the toolkit/register-flow branch.
+// Preserve their original SQL and checksums when returning to main.
+const SCHEMA_V9 = String.raw`
+CREATE TABLE tool_records (
+  kind TEXT NOT NULL,
+  id TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (kind, id)
+);
+CREATE INDEX idx_tool_records_updated ON tool_records(kind, updated_at DESC);
+CREATE TABLE tool_credentials (
+  account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
+  sealed TEXT NOT NULL,
+  expires_at INTEGER,
+  updated_at TEXT NOT NULL
+);
+`;
+
+const SCHEMA_V10 = String.raw`
+CREATE TABLE flow_pools (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  sealed TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE flow_proxies (
+  id TEXT PRIMARY KEY,
+  pool_id TEXT NOT NULL REFERENCES flow_pools(id) ON DELETE CASCADE,
+  enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+  disabled_reason TEXT CHECK (disabled_reason IN ('manual', 'refresh_failed', 'uncertain')),
+  state TEXT NOT NULL DEFAULT 'idle' CHECK (state IN ('idle', 'held', 'refreshing', 'cooldown')),
+  sort_order INTEGER NOT NULL,
+  sealed TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX idx_flow_proxies_pool ON flow_proxies(pool_id, sort_order);
+CREATE TABLE flow_leases (
+  proxy_id TEXT PRIMARY KEY REFERENCES flow_proxies(id) ON DELETE CASCADE,
+  run_id TEXT NOT NULL,
+  node TEXT NOT NULL,
+  phase TEXT NOT NULL CHECK (phase IN ('held', 'refreshing', 'cooldown')),
+  submitted INTEGER NOT NULL DEFAULT 0 CHECK (submitted IN (0, 1)),
+  acquired_at TEXT NOT NULL
+);
+CREATE TABLE registrations (
+  id TEXT PRIMARY KEY,
+  email TEXT NOT NULL COLLATE NOCASE UNIQUE,
+  status TEXT NOT NULL CHECK (status IN ('pending', 'registered', '2fa_pending', '2fa_enabled', '2fa_failed', 'dead')),
+  version INTEGER NOT NULL DEFAULT 1,
+  sealed TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  imported_account_id TEXT REFERENCES accounts(id) ON DELETE SET NULL
+);
+CREATE TABLE registration_addresses (
+  address TEXT PRIMARY KEY COLLATE NOCASE,
+  created_at TEXT NOT NULL,
+  outcome TEXT
+);
+ALTER TABLE tool_credentials ADD COLUMN source TEXT NOT NULL DEFAULT 'browser'
+  CHECK (source IN ('browser', 'registration'));
+`;
+
+const SCHEMA_V11 = String.raw`
+CREATE TABLE temporary_windows (
+  id TEXT PRIMARY KEY,
+  proxy_id TEXT REFERENCES proxy_nodes(id) ON DELETE RESTRICT,
+  config_json TEXT NOT NULL
+);
+`;
+
 export const MIGRATIONS = Object.freeze([
   Object.freeze({
     version: 1,
@@ -425,6 +498,9 @@ export const MIGRATIONS = Object.freeze([
   Object.freeze({ version: 6, name: "scheduled-promo-check", sql: SCHEMA_V6, checksum: createHash("sha256").update(SCHEMA_V6).digest("hex") }),
   Object.freeze({ version: 7, name: "account-environments", sql: SCHEMA_V7, checksum: createHash("sha256").update(SCHEMA_V7).digest("hex") }),
   Object.freeze({ version: 8, name: "network-connection-modes", sql: SCHEMA_V8, checksum: createHash("sha256").update(SCHEMA_V8).digest("hex") }),
+  Object.freeze({ version: 9, name: "toolkit", sql: SCHEMA_V9, checksum: createHash("sha256").update(SCHEMA_V9).digest("hex") }),
+  Object.freeze({ version: 10, name: "register-flow", sql: SCHEMA_V10, checksum: createHash("sha256").update(SCHEMA_V10).digest("hex") }),
+  Object.freeze({ version: 11, name: "temporary-windows", sql: SCHEMA_V11, checksum: createHash("sha256").update(SCHEMA_V11).digest("hex") }),
 ]);
 
 export const MIGRATION_LEDGER_SQL = String.raw`

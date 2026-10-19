@@ -7,7 +7,7 @@
 // kind 取值来自 src/application/services.js 的 enqueue 调用。
 
 /// resourceId 指向的东西。
-export type OperationResource = "account" | "profile" | "proxy" | "global";
+export type OperationResource = "account" | "profile" | "proxy" | "global" | "temporary-window";
 
 interface OperationMeta {
   action: string;
@@ -15,6 +15,12 @@ interface OperationMeta {
 }
 
 const OPERATIONS: Record<string, OperationMeta> = {
+  "temporary-window": { action: "临时窗口", resource: "temporary-window" },
+  "temporary-window-open": { action: "打开临时窗口", resource: "temporary-window" },
+  "temporary-window-close": { action: "关闭临时窗口", resource: "temporary-window" },
+  "temporary-window-remove": { action: "删除临时窗口", resource: "temporary-window" },
+  "temporary-window-clearData": { action: "清理浏览数据", resource: "temporary-window" },
+  "temporary-window-detectRegion": { action: "探测出口时区", resource: "temporary-window" },
   "account-login": { action: "登录", resource: "account" },
   "account-run": { action: "立即运行", resource: "account" },
   "account-status-refresh": { action: "刷新状态", resource: "account" },
@@ -53,6 +59,7 @@ export function describeOperation(kind: string, hasResourceId: boolean): Operati
 
 /// Chrome 运行的用途。browserRuns 用的是另一套枚举，不是 operation kind。
 const BROWSER_PURPOSES: Record<string, string> = {
+  "temporary-window": "临时窗口",
   login: "登录",
   "open-page": "打开网页",
   "manual-run": "手动运行",

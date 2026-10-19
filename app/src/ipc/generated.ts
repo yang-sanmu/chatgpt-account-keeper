@@ -8,6 +8,11 @@
 
 /**
  * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
+ * via the `definition` "temporaryWindowArray".
+ */
+export type TemporaryWindowArray = TemporaryWindowResult[];
+/**
+ * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
  * via the `definition` "historyEntryArray".
  */
 export type HistoryEntryArray = HistoryEntryResult[];
@@ -58,6 +63,13 @@ export type OperationArray = Operation[];
  * via the `definition` "method".
  */
 export type Method =
+  | "temporaryWindows.list"
+  | "temporaryWindows.save"
+  | "temporaryWindows.open"
+  | "temporaryWindows.close"
+  | "temporaryWindows.remove"
+  | "temporaryWindows.detectRegion"
+  | "temporaryWindows.clearData"
   | "environments.get"
   | "environments.update"
   | "environments.reset"
@@ -126,6 +138,7 @@ export type Method =
  * via the `definition` "eventName".
  */
 export type EventName =
+  | "temporaryWindows.changed"
   | "account.changed"
   | "account.removed"
   | "accountStatus.changed"
@@ -210,6 +223,10 @@ export type ConversationChangedPayload =
  */
 export type Event =
   | (EventBase & {
+      event: "temporaryWindows.changed";
+      payload: TemporaryWindowArray;
+    })
+  | (EventBase & {
       event: "operation.changed";
       payload: Operation;
     })
@@ -250,6 +267,9 @@ export type Event =
     });
 
 export interface KeeperIPCV1GeneratedSchema {
+  temporaryWindowSaveParams?: TemporaryWindowSaveParams;
+  temporaryWindowResult?: TemporaryWindowResult;
+  temporaryWindowArray?: TemporaryWindowArray;
   networkConfigParams?: NetworkConfigParams;
   networkConfigResult?: NetworkConfigResult;
   environmentUpdateParams?: EnvironmentUpdateParams;
@@ -333,6 +353,38 @@ export interface KeeperIPCV1GeneratedSchema {
   schedulerAccountChangedPayload?: SchedulerAccountChangedPayload;
   event?: Event;
   operation?: Operation;
+}
+/**
+ * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
+ * via the `definition` "temporaryWindowSaveParams".
+ */
+export interface TemporaryWindowSaveParams {
+  id?: string;
+  name: string;
+  note?: string;
+  homepage?: string;
+  proxyId: string;
+}
+/**
+ * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
+ * via the `definition` "temporaryWindowResult".
+ */
+export interface TemporaryWindowResult {
+  id: string;
+  name: string;
+  note: string;
+  homepage: string;
+  proxyId: string;
+  createdAt: string;
+  updatedAt: string;
+  timezone: string | null;
+  locale: string | null;
+  exitIp: string | null;
+  detectedAt: string | null;
+  proxyName: string | null;
+  proxyUnavailable: boolean;
+  state: "closed" | "busy" | "open" | "close_failed";
+  openedAt: string | null;
 }
 /**
  * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
@@ -812,7 +864,8 @@ export interface BrowserRun {
   browserRunId: string;
   accountId: string;
   operationId: string | null;
-  purpose: "login" | "open-page" | "manual-run" | "scheduled-run" | "status-check" | "selector-check";
+  purpose:
+    "temporary-window" | "login" | "open-page" | "manual-run" | "scheduled-run" | "status-check" | "selector-check";
   effectiveSource: string | null;
   profilePath: string | null;
   rootPid: number | null;
@@ -959,6 +1012,7 @@ export interface BootstrapResult {
     };
   };
   openPages: OpenPageMap;
+  temporaryWindows?: TemporaryWindowArray;
   groups: GroupArray;
   proxies: ProxyStateResult;
   conversations: ConversationMap;
@@ -1263,6 +1317,13 @@ export interface SchedulerAccountChangedPayload {
 }
 
 export interface IpcMethodContracts {
+  "temporaryWindows.list": { params: Record<string, never>; result: TemporaryWindowArray };
+  "temporaryWindows.save": { params: TemporaryWindowSaveParams; result: TemporaryWindowResult };
+  "temporaryWindows.open": { params: IdParams; result: Operation };
+  "temporaryWindows.close": { params: IdParams; result: Operation };
+  "temporaryWindows.remove": { params: IdParams; result: Operation };
+  "temporaryWindows.clearData": { params: IdParams; result: Operation };
+  "temporaryWindows.detectRegion": { params: IdParams; result: Operation };
   "environments.get": { params: AccountIdParams; result: EnvironmentStateResult };
   "environments.update": { params: EnvironmentUpdateParams; result: EnvironmentStateResult };
   "environments.reset": { params: EnvironmentResetParams; result: EnvironmentStateResult };
@@ -1333,6 +1394,11 @@ export type IpcParams<M extends IpcMethod> = IpcMethodContracts[M]["params"];
 export type IpcResult<M extends IpcMethod> = IpcMethodContracts[M]["result"];
 
 export const OPERATION_METHODS = [
+  "temporaryWindows.open",
+  "temporaryWindows.close",
+  "temporaryWindows.remove",
+  "temporaryWindows.clearData",
+  "temporaryWindows.detectRegion",
   "accounts.refreshStatus",
   "accounts.runNow",
   "accounts.checkSelectors",

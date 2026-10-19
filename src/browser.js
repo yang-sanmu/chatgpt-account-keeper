@@ -6,7 +6,7 @@ import net from "node:net";
 import path from "node:path";
 import WebSocket from "ws";
 import { fromRoot, ensureDir } from "./paths.js";
-import { proxyForAccount, ensureRunning, getNetworkConfig, waitForNetworkTransition } from "./proxyManager.js";
+import { proxyForAccount, proxyForNode, ensureRunning, getNetworkConfig, waitForNetworkTransition } from "./proxyManager.js";
 import { getAccount, effectiveProxyId, getAccountEnvironment, getGroup } from "./store.js";
 import { resolveRegionForAccount } from "./geo.js";
 import { DEFAULT_BROWSER_LOCALE, environmentSnapshot } from "./environmentConfig.js";
@@ -1423,20 +1423,25 @@ export async function launchForAccount(account, opts = {}) {
 
   // 调用可能在账号锁后排队很久（例如用户一直开着“打开网页”窗口）。
   // 真正启动时重新读取，避免期间改过的分组/分组代理没生效、任务走了旧出口。
-  const liveAccount = getAccount(account?.id) ?? account;
+  const temporary = opts.temporaryWindow;
+  const liveAccount = temporary ? account : getAccount(account?.id) ?? account;
   const headless = opts.headless ?? true;
   const userDataDir = ensureDir(fromRoot(liveAccount.profileDir));
 
   const launchArgs = baseLaunchArgs(headless);
-  const environment = getAccountEnvironment(liveAccount.id);
+  const environment = temporary
+    ? { mode: "fixed", locale: temporary.locale || DEFAULT_BROWSER_LOCALE, timezone: temporary.timezone, version: 0 }
+    : getAccountEnvironment(liveAccount.id);
   let headlessIdentity = null;
 
   // 分组节点由网络模式编译前置链路；未绑定节点时使用网络模式的默认出口。
   const networkConfig = getNetworkConfig().config;
-  if (effectiveProxyId(liveAccount) || networkConfig.mode === "relay") {
+  const selectedProxyId = temporary ? temporary.proxyId : effectiveProxyId(liveAccount);
+  const getProxy = () => temporary ? proxyForNode(selectedProxyId) : proxyForAccount(liveAccount);
+  if (selectedProxyId || networkConfig.mode === "relay") {
     // 边车必须先就绪，否则 Chromium 会连到一个还没监听的端口。
     await ensureRunning();
-    const p = proxyForAccount(liveAccount);
+    const p = getProxy();
     if (p) {
       launchArgs.proxy = applyProxyBypass(p, opts.proxyBypass);
       log.info(`账号 ${liveAccount.id} 使用代理节点 -> ${p.server}`);
@@ -1448,7 +1453,7 @@ export async function launchForAccount(account, opts = {}) {
       );
     }
   } else {
-    const p = proxyForAccount(liveAccount);
+    const p = getProxy();
     if (p) launchArgs.proxy = applyProxyBypass(p, opts.proxyBypass);
     else if (networkConfig.mode === "direct") launchArgs.args.push("--no-proxy-server");
   }
@@ -1504,7 +1509,7 @@ export async function launchForAccount(account, opts = {}) {
     });
     launched.context.once("close", () => {
       activeBrowserContexts.delete(launched.context);
-      if (!browserShutdownRequested) scheduleProfileCacheMaintenance(liveAccount.id);
+      if (!temporary && !browserShutdownRequested) scheduleProfileCacheMaintenance(liveAccount.id);
     });
     // Inherited environments retain the existing headed timezone
     // behavior. Only an explicitly fixed account opts into the fatal barrier.
@@ -1535,7 +1540,7 @@ export async function launchForAccount(account, opts = {}) {
   });
   context.once("close", () => {
     activeBrowserContexts.delete(context);
-    if (!browserShutdownRequested) scheduleProfileCacheMaintenance(liveAccount.id);
+    if (!temporary && !browserShutdownRequested) scheduleProfileCacheMaintenance(liveAccount.id);
   });
   if (browserShutdownRequested) {
     await context.close().catch(() => {});

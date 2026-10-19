@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 import {
   Activity,
   Users,
+  PanelsTopLeft,
   ListTodo,
   History,
   Network,
@@ -42,6 +43,7 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
     items: [
       { id: "overview", label: "总览", icon: Activity },
       { id: "accounts", label: "账号", icon: Users, showAccountCount: true },
+      { id: "temporaryWindows", label: "临时窗口", icon: PanelsTopLeft },
       { id: "operations", label: "任务", icon: ListTodo, showOpCount: true },
       { id: "history", label: "历史", icon: History },
     ],

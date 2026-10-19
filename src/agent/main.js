@@ -16,6 +16,7 @@ import { closeAllBrowserContexts } from "../browser.js";
 import { closeAllLoginTasks } from "../loginProvider.js";
 import { closeAllOpenPages } from "../openPage.js";
 import { composeBackground } from "./composition.js";
+import { TemporaryWindowManager, SqliteTemporaryWindowStore } from "../temporaryWindows.js";
 import { runShutdownSequence } from "./shutdownSequence.js";
 import { installShutdownHandlers } from "../shutdown.js";
 import * as log from "../logger.js";
@@ -88,6 +89,7 @@ async function performShutdown(exitCode, { preserveScheduler }) {
     cancelQueued: () => background?.queue?.cancelAllQueued("Agent 正在退出"),
     signalActive: () => background?.queue?.signalAllActive("Agent 正在退出"),
     closeInteractive: async () => {
+      await agent?.services.runtime.temporaryWindows?.shutdown();
       await closeAllLoginTasks().catch(() => {});
       await closeAllOpenPages().catch(() => {});
     },
@@ -101,6 +103,9 @@ async function performShutdown(exitCode, { preserveScheduler }) {
       if (drained && !drained.drained) log.warn("Agent 关闭时调度任务未能在限定时间内结束");
     },
     awaitConvergence: async () => {
+      // Do not seal/close SQLite while a temporary-window probe, launch, or
+      // profile deletion still has a pending completion callback.
+      await agent?.services.runtime.temporaryWindows?.shutdown();
       const queue = background?.queue;
       if (!queue) return;
       const deadline = Date.now() + 4_000;
@@ -310,6 +315,17 @@ async function main() {
   // 容量与明细里，Job 也无人 dispose。
   agent.services.runtime.acquireInteractiveChrome = (request) =>
     background.acquireInteractiveChrome(request);
+  const temporaryWindows = new TemporaryWindowManager({
+    store: new SqliteTemporaryWindowStore(repository), dataRoot, proxies,
+    acquireChrome: (request) => background.acquireInteractiveChrome(request),
+    browserRuns: background.browserRuns,
+    onChanged: (windows) => agent.services.events.publish("temporaryWindows.changed", windows),
+  });
+  agent.services.runtime.temporaryWindows = temporaryWindows;
+  backendRestorers.push(proxies.configureTemporaryProxyIds(() => temporaryWindows.proxyIds()));
+  backendRestorers.push(agent.services.events.subscribe((event) => {
+    if (event.event === "browserRun.changed") temporaryWindows.browserRunChanged(event.payload);
+  }));
   // 配置变更只触发复验，本身不取消任何条目（§7.1）。
   agent.services.runtime.bumpConfigEpoch = () => background.queue.bumpConfigEpoch();
   agent.services.runtime.scheduleAccount = (accountId) => {

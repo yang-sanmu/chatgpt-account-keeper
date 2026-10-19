@@ -17,7 +17,7 @@ desktop/  Avalonia 12 · .NET 10 NativeAOT · VeloPack   ← 历史 0.1.x，不�
 app/      Tauri 2 · Rust · React                       ← 当前版 0.2.x
                     │
         Named Pipe / Unix Domain Socket
-        IPC v1 · 协议 1.3 · 50 方法 / 18 事件
+        IPC v1 · 协议 1.6 · 70 方法 / 19 事件
                     │
 Keeper.Agent
 私有 Node 24 · playwright-core · SQLite · 调度 · mihomo
@@ -25,7 +25,7 @@ Keeper.Agent
            本机 Google Chrome
 ```
 
-- 管理端：托盘常驻，八个功能页。Tauri 把前端资源编进二进制，
+- 管理端：托盘常驻，独立功能页。Tauri 把前端资源编进二进制，
   经自定义协议加载——**不监听任何端口，CSP 不允许任何远端源，且永不访问 chatgpt.com**。
   访问 ChatGPT 是真实 Chrome 的职责，管理界面不参与。
 - 后台端：独立的每用户 Agent；管理窗口隐藏到托盘后，自动对话、巡检和调度继续运行。
@@ -46,7 +46,7 @@ Keeper.Agent
 - 新增账号默认在登录成功后保留 Chrome 窗口，可勾选“登录成功后自动关闭浏览器”。首次登录成功会复用当前页面检查一次优惠资格，不受自动巡检优惠开关影响；勾选自动关闭时会等检查结束后再关闭。
 - 自动调度启停、持久化与重启恢复；错过任务每账号最多补跑一次并增加抖动。
 - 独立 Profile、账号锁、WAF/unknown 状态保护、Headless Chrome 身份覆盖。
-- 侧栏对应八个独立页面：总览、账号、任务、分组与代理、会话、Profile、历史和设置。
+- 侧栏对应独立页面：总览、账号、临时窗口、任务、分组与代理、网络配置、会话、Profile、历史和设置。
 - 账号搜索/筛选/编辑/删除，分组与代理管理，会话集编辑，Profile 扫描/清理/归档/永久删除，已删除账号历史和 Agent 设置均已接入 IPC v1。
 - 旧 JSON/JSONL/Profile 到 SQLite 的原生预览、空间/运行锁检查、进度显示和校验式复制迁移；失败不修改旧数据。
 - Agent 自行写入用户状态目录的脱敏诊断日志，不依赖 Desktop 输出管道；桌面断线会自动重连并在事件缺口后重新获取完整快照。
@@ -57,6 +57,14 @@ Keeper.Agent
 `plus-2-months-50-pct-off`、`plus-3-months-50-pct-off`（1 个月用单数 `month`）。
 任一期限符合资格都归入现有“半价优惠”标签和筛选。直接在地址栏打开接口不等同于
 带认证的检查；`offline` 不能据此判定账号无优惠，程序会保留上次可信结果并标记待复核。
+
+## 临时窗口
+
+“临时窗口”页面独立管理浏览器窗口，支持名称、备注、默认主页和出口节点。直接选择可用的订阅或自定义节点，无需创建账号或分组；前置连接沿用“网络配置”。默认主页为 `https://chatgpt.com/`，也可填写其他 HTTP/HTTPS 网址。
+
+保存后可自动探测出口 IP 和时区；每次打开前再次通过所选节点探测，并在加载主页前应用时区。页面显示出口 IP、IANA 时区及最近探测时间。探测失败可重试，不使用本机时区冒充结果；节点失效时阻止打开，不回退到其他出口。
+
+每个窗口使用数据目录下独立的 `temporary-windows/<窗口 ID>` Chrome Profile。关闭窗口或重启应用会保留 Cookie、登录态和浏览数据。关闭窗口后，可选择“清理浏览数据”重置该窗口的全部浏览器数据（包括书签与扩展设置），保留名称、备注、主页及节点配置；“删除”同时删除窗口配置和浏览数据。两项操作均须在页面确认，且仅在 Chrome 已确认完全关闭后执行。临时窗口也参与浏览器容量、退出清理和更新阻塞检查。
 
 ## 导入自定义代理
 
@@ -152,7 +160,7 @@ Desktop 是 Agent 的客户端，不直接写 SQLite、Profile、Chrome 或 miho
 Canonical JSON Schema 位于 `contracts/ipc-v1.schema.json`（消息信封/共享类型）和 `contracts/ipc-v1.methods.schema.json`（所有方法输入/输出）。主要方法组：
 
 - `system.hello/bootstrap/getActivity/prepareUpdate/shutdown`
-- `accounts.*`、`browser.*`、`history.*`
+- `accounts.*`、`browser.*`、`temporaryWindows.*`、`history.*`
 - `groups.*`、`proxies.*`、`profiles.*`
 - `conversations.*`、`scheduler.*`、`settings.*`、`operations.*`
 

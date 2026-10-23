@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Copy, ExternalLink, Loader2, Pencil, Play, Plus, RefreshCw, Search, SlidersHorizontal, Square, X } from "lucide-react";
+import { Activity, Clock, Copy, ExternalLink, Filter, Loader2, Pencil, Play, Plus, RefreshCw, Search, ShieldCheck, SlidersHorizontal, Square, Tag, X } from "lucide-react";
 import { Page, PageHeader, PageBody } from "@/components/layout/page";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,6 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
 import { StatusDot } from "@/components/ui/status-dot";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel } from "@/components/ui/alert-dialog";
@@ -15,12 +16,29 @@ import { agentCall, newCommandId } from "@/ipc/bridge";
 import type { IcloudConfig, IcloudEmail, IcloudState } from "@/ipc/generated";
 import { useKeeperStore } from "@/store/keeperStore";
 import { notify } from "@/lib/notify";
+import { cn } from "@/lib/utils";
 
 const USAGE = { unknown: "待确认", unused: "未使用", used: "已使用" } as const;
 const REMOTE = { active: "活跃", inactive: "已停用", missing: "云端未找到" } as const;
 const STATUS = { not_logged_in: "尚未登录", idle: "就绪", running: "正在申请", cooldown: "冷却中", needs_login: "需要登录", paused: "已暂停", uncertain: "结果待核对" } as const;
 const NETWORK = { direct: "直连", inherit: "跟随网络配置", system: "系统代理" } as const;
 const ACTION = { open: "打开 iCloud", close: "关闭浏览器", sync: "同步列表", create: "申请 1 个", runNow: "立即执行一轮" } as const;
+const ACTION_RUNNING_TEXT: Record<keyof typeof ACTION, string> = {
+  open: "正在打开专用 iCloud 浏览器…",
+  close: "正在关闭并回收 iCloud 浏览器…",
+  sync: "正在同步云端隐藏邮件地址列表…",
+  create: "正在向 iCloud 申请 1 个新的隐藏邮件地址…",
+  runNow: "正在立即执行本轮申请任务…",
+};
+const HISTORY_ACTION_LABELS: Record<string, string> = {
+  open: "打开浏览器",
+  sync: "同步列表",
+  create: "申请邮箱",
+  round: "申请轮次",
+  settings: "策略设置",
+  reconcile: "结果核对",
+};
+
 const controlSelectClass = "h-9 rounded-control border border-subtle bg-sunken px-3 text-xs text-primary focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-50";
 const filterSelectClass = "h-8 rounded-control border border-subtle bg-sunken px-2.5 text-xs text-primary focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent";
 const time = (value: string | null) => value ? new Date(value).toLocaleString() : "—";
@@ -44,6 +62,21 @@ function statusIndicator(status: IcloudState["status"], busy: boolean): { dot: "
   return { dot: "needs_login", badge: "warn" };
 }
 
+function parseBatchProgress(message: string | undefined, config: IcloudConfig): { current: number; total: number; percent: number } | null {
+  if (!message || (config.mode ?? "single") !== "batch") return null;
+  const match = message.match(/已申请\s*(\d+)\s*\/\s*(\d+)/);
+  if (match) {
+    const current = Number(match[1]);
+    const total = Number(match[2]);
+    if (total > 0) return { current, total, percent: Math.min(100, Math.round((current / total) * 100)) };
+  }
+  if (/开始/.test(message)) {
+    const total = config.batchSize ?? 5;
+    return { current: 0, total, percent: 8 };
+  }
+  return null;
+}
+
 export function IcloudPage() {
   const state = useKeeperStore(s => s.icloud);
   const connection = useKeeperStore(s => s.connection);
@@ -53,6 +86,7 @@ export function IcloudPage() {
   const [dirty, setDirty] = useState(false);
   const [configOpen, setConfigOpen] = useState(false);
   const [working, setWorking] = useState(false);
+  const [activeAction, setActiveAction] = useState<keyof typeof ACTION | null>(null);
   const [loadError, setLoadError] = useState(false);
   const [query, setQuery] = useState("");
   const [usage, setUsage] = useState("all");
@@ -63,6 +97,7 @@ export function IcloudPage() {
   const [acknowledge, setAcknowledge] = useState(false);
   const disabled = !connection.connected || draining;
   const busy = working || state?.busy === true;
+  const isRunning = activeAction !== null || state?.busy === true || state?.status === "running";
   const needsLogin = !!state && (!state.bound || ["not_logged_in", "needs_login"].includes(state.status));
   const mode = draft?.mode ?? "single";
   const setSnapshot = (value: IcloudState) => useKeeperStore.setState({ icloud: value });
@@ -91,9 +126,10 @@ export function IcloudPage() {
       return;
     }
     setWorking(true);
+    setActiveAction(action);
     try { await runOperation(`icloud.${action}`, {}); notify.success(`${ACTION[action]}完成`); }
     catch (error) { notify.error(`${ACTION[action]}失败`, error); }
-    finally { await refresh(); setWorking(false); }
+    finally { await refresh(); setWorking(false); setActiveAction(null); }
   };
   const save = async (event: React.FormEvent) => {
     event.preventDefault(); if (!draft) return;
@@ -117,6 +153,10 @@ export function IcloudPage() {
   };
   const rows = state?.emails ?? [];
   const selectedRows = rows.filter(row => selected.has(row.id));
+  const unusedCount = rows.filter(row => row.usage === "unused").length;
+  const usedCount = rows.filter(row => row.usage === "used").length;
+  const unknownCount = rows.filter(row => row.usage === "unknown").length;
+
   const copy = async (ids: Set<string>, markUsed = false) => {
     const validIds = rows.filter(row => ids.has(row.id)).map(row => row.id);
     const text = selectedEmailText(rows, ids); if (!text) return;
@@ -147,15 +187,32 @@ export function IcloudPage() {
   const currentPage = Math.min(page, pageCount - 1);
   const visible = filtered.slice(currentPage * 50, currentPage * 50 + 50);
   const toggle = (id: string, checked: boolean) => setSelected(current => { const next = new Set(current); if (checked) next.add(id); else next.delete(id); return next; });
-  const indicator = state ? statusIndicator(state.status, busy) : null;
+  const indicator = state ? statusIndicator(state.status, isRunning) : null;
+  const isRoundRunning = activeAction === "runNow" || (!activeAction && state?.status === "running");
+  const batchProgress = state && isRoundRunning ? parseBatchProgress(state.lastMessage, state.config) : null;
+  const runningHeadline = activeAction
+    ? ACTION_RUNNING_TEXT[activeAction]
+    : state?.status === "running"
+    ? `正在执行自动申请（${strategySummary(state.config)}）…`
+    : "正在后台处理 iCloud 任务…";
 
   return <Page>
     <PageHeader title="iCloud 隐私邮箱" description="使用独立 Chrome Profile 登录，持续申请并管理隐藏邮件地址。" actions={<>
-      <Button size="sm" variant="outline" disabled={disabled || busy} onClick={() => void perform("open")}><ExternalLink className="size-3.5" />打开 iCloud / 登录</Button>
-      <Button size="sm" variant="outline" disabled={!connection.connected || busy || !state?.browserOpen} onClick={() => void perform("close")}><Square className="size-3.5" />关闭浏览器</Button>
-      <Button size="sm" variant="outline" disabled={disabled || busy} onClick={() => void perform("sync")}><RefreshCw className="size-3.5" />同步列表</Button>
-      <Button size="sm" variant="outline" disabled={!state} onClick={openConfig}><SlidersHorizontal className="size-3.5" />申请设置</Button>
-      <Button size="sm" disabled={disabled || busy || !state?.bound || !!state.pendingEmail || dirty} onClick={() => void perform("create")}><Plus className="size-3.5" />申请 1 个</Button>
+      <Button size="sm" variant="outline" disabled={disabled || busy} onClick={() => void perform("open")}>
+        {activeAction === "open" ? <Loader2 className="size-3.5 animate-spin" /> : <ExternalLink className="size-3.5" />}打开 iCloud / 登录
+      </Button>
+      <Button size="sm" variant="outline" disabled={!connection.connected || busy || !state?.browserOpen} onClick={() => void perform("close")}>
+        {activeAction === "close" ? <Loader2 className="size-3.5 animate-spin" /> : <Square className="size-3.5" />}关闭浏览器
+      </Button>
+      <Button size="sm" variant="outline" disabled={disabled || busy} onClick={() => void perform("sync")}>
+        <RefreshCw className={cn("size-3.5", activeAction === "sync" && "animate-spin")} />同步列表
+      </Button>
+      <Button size="sm" variant="outline" disabled={!state} onClick={openConfig}>
+        <SlidersHorizontal className="size-3.5" />申请设置
+      </Button>
+      <Button size="sm" disabled={disabled || busy || !state?.bound || !!state.pendingEmail || dirty} onClick={() => void perform("create")}>
+        {activeAction === "create" ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}申请 1 个
+      </Button>
     </>} />
 
     <PageBody className="space-y-4 pb-10">
@@ -166,50 +223,158 @@ export function IcloudPage() {
 
       {!state && !loadError && <p className="flex items-center gap-2 text-xs text-muted"><Loader2 className="size-4 animate-spin" />正在读取 iCloud 配置…</p>}
 
-      {state && indicator && <div className="rounded-panel border border-subtle bg-panel px-4 py-3 space-y-2">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-2 text-xs">
-            <Badge variant={indicator.badge} className="gap-1.5 font-medium">
-              <StatusDot status={indicator.dot} />
-              {busy ? "处理中" : STATUS[state.status]}
-            </Badge>
-            <Badge variant={state.config.enabled ? "accent" : "neutral"} className="font-normal">
-              {state.config.enabled ? "持续申请已开启" : "自动申请已关闭"}
-            </Badge>
-            <span className="text-secondary border-l border-subtle pl-2.5">
-              {strategySummary(state.config)} · 标签：<strong className="font-medium text-primary">{state.config.label || "—"}</strong>
-              {state.config.note ? ` · 备注：${state.config.note}` : ""} · {NETWORK[state.config.networkMode]}
-            </span>
-          </div>
-          <div className="flex flex-wrap items-center gap-3 text-xs text-muted tabular">
-            <span>下次自动申请：{state.config.enabled && needsLogin ? "等待登录" : time(state.nextRunAt)}</span>
-            <span>最近同步：{time(state.lastSyncAt)}</span>
-            {state.cooldownUntil && <span className="text-warn">冷却至：{time(state.cooldownUntil)}</span>}
-            <Button type="button" size="sm" className="h-7 px-2.5 text-xs"
-              title="跳过本地冷却立即执行；成功申请后重新计时，零成功保留原冷却和下次自动申请时间"
-              disabled={disabled || working}
-              onClick={() => void perform("runNow")}>
-              <Play className="size-3.5" />立即执行一轮
-            </Button>
-            {state.config.enabled && (
-              <Button type="button" size="sm" variant="outline" className="h-7 px-2.5 text-xs" disabled={!connection.connected} onClick={() => void stop()}>
-                停止自动申请
-              </Button>
+      {state && indicator && (
+        <div
+          className={cn(
+            "relative overflow-hidden rounded-panel border bg-panel transition-colors",
+            isRunning ? "border-info shadow-panel" : "border-subtle"
+          )}
+        >
+          {isRunning && (
+            <div className="h-1 w-full overflow-hidden bg-info-soft">
+              <div className="h-full w-full animate-pulse bg-info" />
+            </div>
+          )}
+
+          <div className="space-y-3 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <Badge variant={indicator.badge} className="gap-1.5 px-2.5 py-1 font-medium">
+                  {isRunning ? <Loader2 className="size-3 animate-spin" /> : <StatusDot status={indicator.dot} />}
+                  {isRunning ? "处理中" : STATUS[state.status]}
+                </Badge>
+                <Badge variant={state.config.enabled ? "accent" : "neutral"} className="px-2.5 py-1 font-normal">
+                  {state.config.enabled ? "持续申请已开启" : "自动申请已关闭"}
+                </Badge>
+                {state.browserOpen && (
+                  <Badge variant="warn" className="gap-1.5 px-2.5 py-1 font-normal">
+                    <StatusDot status="needs_login" />
+                    专用浏览器已打开
+                  </Badge>
+                )}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  className="h-7 px-3 text-xs"
+                  title="跳过本地冷却立即执行；成功申请后重新计时，零成功保留原冷却和下次自动申请时间"
+                  disabled={disabled || working}
+                  onClick={() => void perform("runNow")}
+                >
+                  {isRoundRunning ? (
+                    <Loader2 className="size-3.5 animate-spin" />
+                  ) : (
+                    <Play className="size-3.5" />
+                  )}
+                  立即执行一轮
+                </Button>
+                {state.config.enabled && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={isRunning ? "danger" : "outline"}
+                    className="h-7 px-3 text-xs"
+                    disabled={!connection.connected}
+                    onClick={() => void stop()}
+                  >
+                    <Square className="size-3" />
+                    停止自动申请
+                  </Button>
+                )}
+              </div>
+            </div>
+
+            {isRunning && (
+              <div className="rounded-control border border-info bg-info-soft px-3.5 py-2.5 text-xs">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 font-medium text-info">
+                    <Activity className="size-4 animate-pulse shrink-0" />
+                    <span>{runningHeadline}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {batchProgress && (
+                      <Badge variant="info" className="tabular">
+                        本轮进度 {batchProgress.current} / {batchProgress.total}
+                      </Badge>
+                    )}
+                    {state.pendingEmail && (
+                      <Badge variant="warn" className="font-mono font-normal">
+                        待确认：{state.pendingEmail}
+                      </Badge>
+                    )}
+                  </div>
+                </div>
+                {batchProgress && (
+                  <div className="mt-2">
+                    <Progress value={batchProgress.percent} className="h-1.5" />
+                  </div>
+                )}
+              </div>
             )}
+
+            <div className="grid grid-cols-1 gap-2.5 rounded-control border border-subtle bg-sunken/60 p-3 text-xs sm:grid-cols-2 xl:grid-cols-4">
+              <div className="space-y-1">
+                <div className="flex items-center gap-1.5 text-muted">
+                  <SlidersHorizontal className="size-3" />
+                  <span>申请策略与网络</span>
+                </div>
+                <p className="font-medium text-primary">
+                  {strategySummary(state.config)} · <span className="font-normal text-secondary">{NETWORK[state.config.networkMode]}</span>
+                </p>
+              </div>
+
+              <div className="space-y-1">
+                <div className="flex items-center gap-1.5 text-muted">
+                  <Tag className="size-3" />
+                  <span>默认标签与云端备注</span>
+                </div>
+                <p className="truncate text-secondary" title={`${state.config.label}${state.config.note ? ` · ${state.config.note}` : ""}`}>
+                  标签：<strong className="font-medium text-primary">{state.config.label || "—"}</strong>
+                  {state.config.note ? ` · 备注：${state.config.note}` : " · 无固定备注"}
+                </p>
+              </div>
+
+              <div className="space-y-1 tabular">
+                <div className="flex items-center gap-1.5 text-muted">
+                  <Clock className="size-3" />
+                  <span>调度计划</span>
+                </div>
+                <div className="flex flex-col gap-0.5 text-secondary">
+                  <span>下次自动申请：{state.config.enabled && needsLogin ? "等待登录" : time(state.nextRunAt)}</span>
+                  {state.cooldownUntil && <span className="text-warn">冷却至：{time(state.cooldownUntil)}</span>}
+                </div>
+              </div>
+
+              <div className="space-y-1 tabular">
+                <div className="flex items-center gap-1.5 text-muted">
+                  <ShieldCheck className="size-3" />
+                  <span>同步与库存统计</span>
+                </div>
+                <div className="flex flex-col gap-0.5 text-secondary">
+                  <span>最近同步：{time(state.lastSyncAt)}</span>
+                  <span className="text-muted">
+                    库存：<span className="text-ok font-medium">未使用 {unusedCount}</span> · 待确认 {unknownCount} · 已使用 {usedCount}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted">
+              <span role="status" className={cn("font-medium", isRunning ? "text-info" : "text-secondary")}>
+                {state.lastMessage || "请在专用浏览器中手动登录，勾选“保持登录/信任此浏览器”后同步列表。"}
+              </span>
+              {["not_logged_in", "needs_login"].includes(state.status) && state.lastMessage && (
+                <span>登录时请勾选“保持登录 / 信任此浏览器”，以便关闭窗口后继续申请。</span>
+              )}
+              {state.browserOpen && state.config.enabled && !state.busy && (
+                <span className="text-warn">手动浏览器打开期间自动申请暂停，关闭浏览器后继续。</span>
+              )}
+            </div>
           </div>
         </div>
-        {(state.lastMessage || ["not_logged_in", "needs_login"].includes(state.status) || (state.browserOpen && state.config.enabled && !state.busy)) && (
-          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-subtle pt-2 text-xs text-muted">
-            <span role="status">{state.lastMessage || "请在专用浏览器中手动登录，勾选“保持登录/信任此浏览器”后同步列表。"}</span>
-            {["not_logged_in", "needs_login"].includes(state.status) && state.lastMessage && (
-              <span>登录时请勾选“保持登录 / 信任此浏览器”，以便关闭窗口后继续申请。</span>
-            )}
-            {state.browserOpen && state.config.enabled && !state.busy && (
-              <span className="text-warn">手动浏览器打开期间自动申请暂停，关闭浏览器后继续。</span>
-            )}
-          </div>
-        )}
-      </div>}
+      )}
 
       {state?.config.enabled && needsLogin && <div role="alert" className="rounded-panel border border-warn bg-warn-soft px-4 py-2.5 text-xs leading-5 text-warn">
         自动申请已开启，但 iCloud 尚未登录或登录已失效。请点击“打开 iCloud / 登录”，登录并同步成功后等待 {state.config.intervalMinutes} 分钟开始申请；请关闭专用浏览器，以便后台自动运行。
@@ -221,7 +386,7 @@ export function IcloudPage() {
       </div>}
 
       <div className="space-y-2.5">
-        <div className="flex flex-wrap items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-2">
           <div className="relative w-64 sm:w-72">
             <Search aria-hidden="true" className="pointer-events-none absolute left-2.5 top-2 size-3.5 text-muted" />
             <Input
@@ -233,21 +398,46 @@ export function IcloudPage() {
               onChange={event => setQuery(event.target.value)}
             />
           </div>
-          <select id="icloud-usage-filter" aria-label="使用状态筛选" className={filterSelectClass} value={usage} onChange={event => setUsage(event.target.value)}>
+
+          <div className="flex items-center rounded-control border border-subtle bg-sunken p-0.5 text-xs tabular">
+            {([
+              { key: "all", label: "全部", count: rows.length },
+              { key: "unused", label: "未使用", count: unusedCount },
+              { key: "unknown", label: "待确认", count: unknownCount },
+              { key: "used", label: "已使用", count: usedCount },
+            ] as const).map(tab => (
+              <button
+                key={tab.key}
+                type="button"
+                onClick={() => setUsage(tab.key)}
+                className={cn(
+                  "rounded-chip px-2 py-1 text-xs transition-colors cursor-pointer",
+                  usage === tab.key ? "bg-panel font-medium text-primary shadow-panel" : "text-muted hover:text-secondary"
+                )}
+              >
+                {tab.label} <span className="opacity-75">({tab.count})</span>
+              </button>
+            ))}
+          </div>
+
+          <select id="icloud-usage-filter" aria-label="使用状态筛选" className={`${filterSelectClass} sr-only`} value={usage} onChange={event => setUsage(event.target.value)}>
             <option value="all">全部使用状态</option>
             {Object.entries(USAGE).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
           </select>
+
           <select id="icloud-remote-filter" aria-label="云端状态筛选" className={filterSelectClass} value={remote} onChange={event => setRemote(event.target.value)}>
             <option value="all">全部云端状态</option>
             {Object.entries(REMOTE).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
           </select>
+
           {hasFilters && (
             <Button size="sm" variant="ghost" className="h-8 px-2.5 text-xs text-muted hover:text-primary" onClick={() => { setQuery(""); setUsage("all"); setRemote("all"); }}>
               <X className="size-3.5" />清除筛选
             </Button>
           )}
-          <span className="ml-auto text-xs text-muted tabular">
-            共 {rows.length} 个 · 筛选 {filtered.length} 个 · 已选 {selectedRows.length} 个
+          <span className="ml-auto flex items-center gap-1.5 text-xs text-muted tabular">
+            <Filter className="size-3" />
+            共 {rows.length} 个 · 筛选 {filtered.length} 个 · 已选 <strong className={cn("font-medium", selectedRows.length > 0 ? "text-accent" : "text-secondary")}>{selectedRows.length}</strong> 个
           </span>
         </div>
 
@@ -260,7 +450,7 @@ export function IcloudPage() {
             </div>
             <div className="flex flex-wrap items-center gap-1.5">
               <Button size="sm" variant="outline" className="h-7 px-2.5 text-xs" disabled={!selectedRows.length || busy} onClick={() => void copy(selected)}><Copy className="size-3.5" />复制选中</Button>
-              <Button size="sm" variant="outline" className="h-7 px-2.5 text-xs" disabled={!selectedRows.length || disabled || busy} onClick={() => void copy(selected, true)}>复制并标记已使用</Button>
+              <Button size="sm" variant={selectedRows.length ? "default" : "outline"} className="h-7 px-2.5 text-xs" disabled={!selectedRows.length || disabled || busy} onClick={() => void copy(selected, true)}>复制并标记已使用</Button>
               <div className="mx-0.5 hidden h-3.5 w-px bg-subtle sm:block" />
               {(["unused", "used", "unknown"] as const).map(value => (
                 <Button key={value} size="sm" variant="ghost" className="h-7 px-2 text-xs" disabled={!selectedRows.length || disabled || busy} onClick={() => void mark(value)}>
@@ -280,34 +470,37 @@ export function IcloudPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-subtle bg-panel">
-                {visible.map(row => (
-                  <tr key={row.id} className="transition-colors hover:bg-hover">
-                    <td className="px-3 py-2">
-                      <Checkbox aria-label={`选择 ${row.email}`} checked={selected.has(row.id)} onCheckedChange={checked => toggle(row.id, checked === true)} />
-                    </td>
-                    <td className="whitespace-nowrap px-3 py-2 font-mono text-xs text-primary">{row.email}</td>
-                    <td className="max-w-40 truncate px-3 py-2 text-xs text-secondary" title={row.label}>{row.label}</td>
-                    <td className="max-w-48 truncate px-3 py-2 text-xs text-secondary" title={row.cloudNote}>{row.cloudNote || "—"}</td>
-                    <td className="max-w-48 truncate px-3 py-2 text-xs text-secondary" title={row.localNote}>{row.localNote || "—"}</td>
-                    <td className="whitespace-nowrap px-3 py-2">
-                      <Badge variant={row.usage === "unused" ? "ok" : row.usage === "used" ? "neutral" : "warn"} className="font-normal">
-                        {USAGE[row.usage]}
-                      </Badge>
-                    </td>
-                    <td className="whitespace-nowrap px-3 py-2">
-                      <Badge variant={row.remoteState === "active" ? "ok" : row.remoteState === "missing" ? "danger" : "neutral"} className="font-normal">
-                        {REMOTE[row.remoteState]}
-                      </Badge>
-                    </td>
-                    <td className="whitespace-nowrap px-3 py-2 text-xs text-muted tabular">{time(row.createdAt)}</td>
-                    <td className="px-3 py-2">
-                      <div className="flex items-center">
-                        <Button size="icon-sm" variant="ghost" aria-label={`复制 ${row.email}`} disabled={busy} onClick={() => void copy(new Set([row.id]))}><Copy className="size-3.5" /></Button>
-                        <Button size="icon-sm" variant="ghost" aria-label={`编辑 ${row.email} 的本地备注`} disabled={disabled || busy} onClick={() => setEdit({ id: row.id, email: row.email, note: row.localNote })}><Pencil className="size-3.5" /></Button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                {visible.map(row => {
+                  const isRowSelected = selected.has(row.id);
+                  return (
+                    <tr key={row.id} className={cn("transition-colors hover:bg-hover", isRowSelected && "bg-accent-soft/40")}>
+                      <td className="px-3 py-2">
+                        <Checkbox aria-label={`选择 ${row.email}`} checked={isRowSelected} onCheckedChange={checked => toggle(row.id, checked === true)} />
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-2 font-mono text-xs text-primary">{row.email}</td>
+                      <td className="max-w-40 truncate px-3 py-2 text-xs text-secondary" title={row.label}>{row.label}</td>
+                      <td className="max-w-48 truncate px-3 py-2 text-xs text-secondary" title={row.cloudNote}>{row.cloudNote || "—"}</td>
+                      <td className="max-w-48 truncate px-3 py-2 text-xs text-secondary" title={row.localNote}>{row.localNote || "—"}</td>
+                      <td className="whitespace-nowrap px-3 py-2">
+                        <Badge variant={row.usage === "unused" ? "ok" : row.usage === "used" ? "neutral" : "warn"} className="font-normal">
+                          {USAGE[row.usage]}
+                        </Badge>
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-2">
+                        <Badge variant={row.remoteState === "active" ? "ok" : row.remoteState === "missing" ? "danger" : "neutral"} className="font-normal">
+                          {REMOTE[row.remoteState]}
+                        </Badge>
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-2 text-xs text-muted tabular">{time(row.createdAt)}</td>
+                      <td className="px-3 py-2">
+                        <div className="flex items-center">
+                          <Button size="icon-sm" variant="ghost" aria-label={`复制 ${row.email}`} disabled={busy} onClick={() => void copy(new Set([row.id]))}><Copy className="size-3.5" /></Button>
+                          <Button size="icon-sm" variant="ghost" aria-label={`编辑 ${row.email} 的本地备注`} disabled={disabled || busy} onClick={() => setEdit({ id: row.id, email: row.email, note: row.localNote })}><Pencil className="size-3.5" /></Button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
             {!visible.length && <p className="p-8 text-center text-xs text-muted">{rows.length ? "没有符合筛选条件的邮箱" : "登录后同步列表，已有邮箱将标为待确认"}</p>}
@@ -327,8 +520,20 @@ export function IcloudPage() {
       {!!state?.history.length && (
         <details className="rounded-panel border border-subtle bg-panel px-4 py-2.5">
           <summary className="cursor-pointer text-xs font-medium text-secondary">最近申请与同步记录（{state.history.length}）</summary>
-          <div className="mt-2.5 space-y-1.5 border-t border-subtle pt-2">
-            {state.history.map((entry, index) => <p key={`${entry.at}-${index}`} className="text-xs text-muted tabular">{time(entry.at)} · {entry.message}</p>)}
+          <div className="mt-2.5 divide-y divide-subtle border-t border-subtle pt-1">
+            {state.history.map((entry, index) => {
+              const outcomeDot = entry.outcome === "ok" ? "ok" : ["started", "retry", "cooldown", "uncertain", "unchanged"].includes(entry.outcome) ? "needs_login" : "failed";
+              return (
+                <div key={`${entry.at}-${index}`} className="flex flex-wrap items-center gap-2 py-1.5 text-xs">
+                  <StatusDot status={outcomeDot} />
+                  <span className="text-muted tabular">{time(entry.at)}</span>
+                  <Badge variant="neutral" className="px-1.5 py-0 text-2xs font-normal">
+                    {HISTORY_ACTION_LABELS[entry.action] ?? entry.action}
+                  </Badge>
+                  <span className="text-secondary">{entry.message}</span>
+                </div>
+              );
+            })}
           </div>
         </details>
       )}

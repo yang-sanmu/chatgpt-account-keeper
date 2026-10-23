@@ -1,4 +1,4 @@
-export const ICLOUD_DEFAULT_CONFIG = Object.freeze({ enabled: false, mode: "single", batchSize: 5, intervalMinutes: 15, label: "G", note: "", networkMode: "direct" });
+export const ICLOUD_DEFAULT_CONFIG = Object.freeze({ enabled: true, mode: "until_limit", batchSize: 5, intervalMinutes: 61, label: "G", note: "", networkMode: "direct" });
 export const HOUR = 60 * 60 * 1000;
 
 export class IcloudError extends Error {
@@ -64,11 +64,11 @@ export function classifyIcloudFailure({ status, body, text = "", retryAfter }, n
   // Only inspect explicit error fields: labels/notes in successful responses are untrusted user content.
   const errorText = [text, body?.error?.errorCode, body?.error?.errorMessage, body?.error?.message,
     body?.errorCode, body?.errorMessage].filter(value => typeof value === "string").join(" ").slice(0, 4000);
-  if (status === 429 || /too many|rate.?limit|throttl|稍后再试|过于频繁|频率|每小时|一小时/i.test(errorText)) {
+  if (status === 429 || body?.error?.errorCode === "-41015" || /too many|rate.?limit|throttl|过于频繁|频率|每小时|一小时/i.test(errorText)) {
     return new IcloudError("rate_limit", "iCloud 暂时限制创建频率，冷却后再试", retryAfterTime(retryAfter, now));
   }
-  if (/maximum|limit.*reach|quota|上限|达到.*限制|太多.*地址/i.test(errorText)) {
-    return new IcloudError("limit", "iCloud 提示创建数量达到限制，已暂停；请检查官方页面后手动恢复");
+  if (/maximum|limit.*reach|reach.*limit|quota|上限|达到.*限制|太多.*地址/i.test(errorText)) {
+    return new IcloudError("limit", "iCloud 提示创建数量达到限制，本轮结束，等待后再试", retryAfterTime(retryAfter, now));
   }
   if ([401, 403, 421, 450].includes(status)) return new IcloudError("auth", "iCloud 会话需要确认，请打开浏览器手动登录或完成验证");
   if ((status && status >= 400) || body?.success === false) return new IcloudError("service", "iCloud 请求失败，请稍后重试或查看官方页面");

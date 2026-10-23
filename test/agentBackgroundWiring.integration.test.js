@@ -163,7 +163,7 @@ function spawnAgent(dataRoot, tempRoot, endpoint) {
 }
 
 test(
-  "真实 Agent：minor 3 客户端兼容 minor 7 Agent、队列与 BrowserRun 可用、broker 恒为 1，shutdown 干净退出",
+  "真实 Agent：minor 3 客户端兼容 minor 8 Agent、队列与 BrowserRun 可用、broker 恒为 1，shutdown 干净退出",
   { timeout: 90_000 },
   async (t) => {
     if (process.platform === "win32" && !resolveBrokerExecutable()) {
@@ -193,7 +193,7 @@ test(
       clientVersion: "wiring-test",
       capabilities: ["events"],
     });
-    assert.equal(hello.protocol.maxMinor, 7, output());
+    assert.equal(hello.protocol.maxMinor, 8, output());
 
     // 新方法必须真的接在服务上，而不只是写进契约。
     const snapshot = await client.call("queue.getSnapshot");
@@ -220,8 +220,12 @@ test(
     const bootstrap = await client.call("system.bootstrap");
     const icloud = await client.call("icloud.getState");
     assert.deepEqual(bootstrap.icloud, icloud);
-    assert.equal(icloud.config.enabled, false);
+    assert.equal(icloud.config.enabled, true);
+    assert.equal(icloud.config.mode, "until_limit");
+    assert.equal(icloud.config.intervalMinutes, 61);
     assert.equal(icloud.config.networkMode, "direct");
+    assert.equal(icloud.status, "not_logged_in");
+    assert.equal(icloud.nextRunAt, null);
     const icloudCommand = randomUUID();
     const icloudConfig = { ...icloud.config, label: "固定标签", note: "固定备注", intervalMinutes: 17 };
     const icloudSaved = await client.call("icloud.saveConfig", icloudConfig, icloudCommand);
@@ -229,7 +233,12 @@ test(
     assert.deepEqual(await client.call("icloud.saveConfig", icloudConfig, icloudCommand), icloudSaved);
     assert.equal((await client.call("system.bootstrap")).icloud.config.note, "固定备注");
     assert.ok(client.events.some(event => event.event === "icloud.changed"));
-    await assert.rejects(client.call("icloud.saveConfig", { ...icloudConfig, enabled: true }, randomUUID()), /登录/);
+    await client.call("icloud.stop", {}, randomUUID());
+    const waiting = await client.call("icloud.saveConfig", { ...icloudConfig, enabled: true }, randomUUID());
+    assert.equal(waiting.config.enabled, true);
+    assert.equal(waiting.status, "not_logged_in");
+    assert.equal(waiting.nextRunAt, null);
+    assert.deepEqual((await client.call("browserRuns.list")).active, []);
     assert.deepEqual(bootstrap.temporaryWindows, []);
     assert.deepEqual(await client.call("temporaryWindows.list"), []);
     const imported = await client.call("proxies.importCustom", { input: "http://127.0.0.1:31001" }, randomUUID());

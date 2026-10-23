@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { tauri, makeBootstrap, makeOperation } from "@/test/harness";
 import { __resetKeeperStoreForTests, useKeeperStore } from "@/store/keeperStore";
 import type { IcloudState } from "@/ipc/generated";
+import { notify } from "@/lib/notify";
 import { IcloudPage } from "./icloud-page";
 
 const initial: IcloudState = {
@@ -23,6 +24,28 @@ beforeEach(async () => {
       ? { ...row, ...(params.usage ? { usage: params.usage } : {}), ...(params.localNote !== undefined ? { localNote: params.localNote } : {}) } : row) };
   });
 });
+
+for (const status of ["not_logged_in", "needs_login"] as const) {
+  it(`shows enabled defaults and a login reminder while ${status}, then clears it after sync`, async () => {
+    const user = userEvent.setup();
+    const config = { ...initial.config, enabled: true, mode: "until_limit" as const, batchSize: 5, intervalMinutes: 61 };
+    const state = { ...initial, config, status, bound: status === "needs_login", nextRunAt: null };
+    useKeeperStore.setState({ icloud: state });
+    await act(async () => { render(<IcloudPage />); });
+    expect(screen.getByRole("alert")).toHaveTextContent("自动申请已开启，但 iCloud 尚未登录或登录已失效");
+    expect(screen.getByText(/^下次自动申请：/)).toHaveTextContent("等待登录");
+    await user.click(screen.getByRole("button", { name: "申请设置" }));
+    expect(screen.getByLabelText("申请模式")).toHaveValue("until_limit");
+    expect(screen.getByLabelText("限额后等待（分钟）")).toHaveValue(61);
+    expect(screen.getByLabelText("网络模式")).toHaveValue("direct");
+    expect(screen.getByRole("switch", { name: "自动申请 · 持续申请" })).toBeChecked();
+    await user.click(screen.getByRole("button", { name: "取消" }));
+    const nextRunAt = "2026-10-23T12:01:00Z";
+    act(() => tauri.emitAgentEvent("icloud.changed", { ...state, bound: true, status: "idle", nextRunAt }));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByText(/^下次自动申请：/)).toHaveTextContent(new Date(nextRunAt).toLocaleString());
+  });
+}
 
 it("copies selected emails across pages, one per line, without marking ordinary copies used", async () => {
   useKeeperStore.setState({ icloud: { ...initial, emails: Array.from({ length: 52 }, (_, index) => ({ ...initial.emails[0]!, id: `id${index}`, email: `mail${index}@example.com` })) } });
@@ -99,6 +122,54 @@ it("live cooldown and pending creation appear without losing unsaved settings", 
   expect(screen.getByRole("button", { name: "申请 1 个" })).toBeDisabled();
   expect(screen.getByText(/待核对地址：/)).toBeInTheDocument();
   expect(screen.getByText("pending@example.com")).toBeInTheDocument();
+});
+
+it("runs one automatic round despite stale browser state and shows the rescheduled time", async () => {
+  const user = userEvent.setup();
+  await act(async () => { render(<IcloudPage />); });
+  const enabled = { ...initial, config: { ...initial.config, enabled: true, mode: "batch" as const, batchSize: 5, intervalMinutes: 60 } };
+  act(() => tauri.emitAgentEvent("icloud.changed", { ...enabled, browserOpen: true, busy: true }));
+  expect(screen.getByRole("button", { name: "立即执行一轮" })).toBeEnabled();
+  const nextRunAt = "2026-10-22T12:00:00Z";
+  tauri.onMethod("icloud.runNow", () => {
+    tauri.emitAgentEvent("icloud.changed", { ...enabled, nextRunAt, lastMessage: "本轮结束，已申请 5 个邮箱" });
+    return makeOperation({ kind: "icloud-runNow", state: "succeeded" });
+  });
+  await user.click(screen.getByRole("button", { name: "立即执行一轮" }));
+  await waitFor(() => expect(tauri.methodSequence()).toContain("icloud.runNow"));
+  expect(tauri.methodSequence()).not.toContain("icloud.create");
+  expect(screen.getByText(/^下次自动申请：/)).toHaveTextContent(new Date(nextRunAt).toLocaleString());
+  expect(screen.getByRole("status")).toHaveTextContent("本轮结束，已申请 5 个邮箱");
+});
+
+it("prevents overlapping automatic rounds while keeping stop available", async () => {
+  const user = userEvent.setup();
+  const enabled = { ...initial, config: { ...initial.config, enabled: true } };
+  useKeeperStore.setState({ icloud: enabled });
+  tauri.onMethod("icloud.runNow", () => makeOperation({ kind: "icloud-runNow", state: "running" }));
+  tauri.onMethod("icloud.stop", () => initial);
+  render(<IcloudPage />);
+  await user.click(screen.getByRole("button", { name: "立即执行一轮" }));
+  expect(screen.getByRole("button", { name: "立即执行一轮" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "停止自动申请" })).toBeEnabled();
+  await user.click(screen.getByRole("button", { name: "停止自动申请" }));
+  await waitFor(() => expect(useKeeperStore.getState().icloud!.config.enabled).toBe(false));
+  act(() => tauri.emitAgentEvent("operation.changed", makeOperation({ kind: "icloud-runNow", state: "succeeded" })));
+  await waitFor(() => expect(screen.getByRole("button", { name: "立即执行一轮" })).toBeEnabled());
+  expect(tauri.methodSequence().filter(method => method === "icloud.runNow")).toHaveLength(1);
+});
+
+it("shows the backend reason when an automatic round cannot start", async () => {
+  const user = userEvent.setup();
+  const errorSpy = vi.spyOn(notify, "error");
+  const error = { code: "VALIDATION_FAILED" as const, message: "请先保存设置并开启自动申请", retryable: false };
+  tauri.onMethod("icloud.runNow", () => makeOperation({ kind: "icloud-runNow", state: "failed", error }));
+  try {
+    render(<IcloudPage />);
+    await user.click(screen.getByRole("button", { name: "立即执行一轮" }));
+    await waitFor(() => expect(errorSpy).toHaveBeenCalledWith("立即执行一轮失败", error));
+    expect(screen.getByRole("button", { name: "立即执行一轮" })).toBeEnabled();
+  } finally { errorSpy.mockRestore(); }
 });
 
 it("opening uses the operation channel and local note editing does not modify cloud fields", async () => {

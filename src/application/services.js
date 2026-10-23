@@ -63,11 +63,11 @@ import { environmentSnapshot, environmentPending, validateFixedEnvironment } fro
 import { getBrowserEnvironmentSnapshots } from "../browser.js";
 import { getStrictNetworkCapabilities } from "../network/strictConfig.js";
 
-// Minor 7 adds iCloud Hide My Email management.
-export const PROTOCOL_VERSION = Object.freeze({ major: 1, minor: 7 });
+// Minor 8 adds immediate execution of an iCloud automatic round.
+export const PROTOCOL_VERSION = Object.freeze({ major: 1, minor: 8 });
 
 export const MUTATING_METHODS = new Set([
-  "icloud.saveConfig", "icloud.open", "icloud.close", "icloud.sync", "icloud.create", "icloud.stop", "icloud.updateLocal", "icloud.acknowledge",
+  "icloud.saveConfig", "icloud.open", "icloud.close", "icloud.sync", "icloud.create", "icloud.runNow", "icloud.stop", "icloud.updateLocal", "icloud.acknowledge",
   "temporaryWindows.save", "temporaryWindows.remove", "temporaryWindows.open",
   "temporaryWindows.close", "temporaryWindows.detectRegion", "temporaryWindows.clearData",
   "network.updateConfig",
@@ -550,7 +550,7 @@ export class ApplicationServices {
     for (const name of ["saveConfig", "stop", "updateLocal", "acknowledge"]) {
       add(`icloud.${name}`, params => icloud()[name](params));
     }
-    for (const name of ["open", "close", "sync", "create"]) {
+    for (const name of ["open", "close", "sync", "create", "runNow"]) {
       add(`icloud.${name}`, () => this.operations.create(`icloud-${name}`,
         ({ operationId }) => icloud()[name]({ operationId }), { resourceId: "icloud_primary", blocksUpdate: true }));
     }

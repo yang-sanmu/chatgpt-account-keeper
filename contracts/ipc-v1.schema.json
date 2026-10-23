@@ -23,7 +23,7 @@
     "method": {
       "type": "string",
       "enum": [
-        "icloud.getState", "icloud.saveConfig", "icloud.open", "icloud.close", "icloud.sync", "icloud.create", "icloud.stop", "icloud.updateLocal", "icloud.acknowledge",
+        "icloud.getState", "icloud.saveConfig", "icloud.open", "icloud.close", "icloud.sync", "icloud.create", "icloud.runNow", "icloud.stop", "icloud.updateLocal", "icloud.acknowledge",
         "temporaryWindows.list", "temporaryWindows.save", "temporaryWindows.open", "temporaryWindows.close", "temporaryWindows.remove", "temporaryWindows.detectRegion", "temporaryWindows.clearData",
         "environments.get", "environments.update", "environments.reset", "network.getCapabilities", "network.getConfig", "network.updateConfig",
         "system.hello", "system.bootstrap", "system.getActivity", "system.prepareUpdate", "system.shutdown",

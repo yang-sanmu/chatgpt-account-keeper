@@ -8,6 +8,8 @@ import { buildLegacyMigrationPlan } from "../src/migration/legacyPlan.js";
 import { runLegacyMigration } from "../src/migration/legacyMigration.js";
 import { openKeeperRepository } from "../src/persistence/sqliteRepository.js";
 import { MIGRATION_LEDGER_SQL, MIGRATIONS } from "../src/persistence/schema.js";
+import { SqliteIcloudStore } from "../src/icloud/model.js";
+import { IcloudManager } from "../src/icloud/manager.js";
 
 const require = createRequire(import.meta.url);
 const loadedDatabase = require("better-sqlite3");
@@ -223,6 +225,40 @@ test("legacy migration does not treat user-customized settings as a pristine dat
   });
   assert.equal(preservedRepository.getSettings().intervalMinutes, 60);
   preservedRepository.close();
+});
+
+test("upgrade from before iCloud adopts enabled 61-minute defaults and preserves later user settings", async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "keeper-icloud-upgrade-"));
+  let repository; let manager;
+  t.after(async () => {
+    await manager?.shutdown(); repository?.close();
+    assert.equal(path.dirname(root), os.tmpdir()); fs.rmSync(root, { recursive: true, force: true });
+  });
+  const filePath = path.join(root, "keeper.db");
+  const database = new Database(filePath);
+  database.exec(MIGRATION_LEDGER_SQL);
+  const ledger = database.prepare("INSERT INTO schema_migrations(version, name, checksum, applied_at, app_version) VALUES (?, ?, ?, ?, ?)");
+  for (const migration of MIGRATIONS.filter(item => item.version < 12)) {
+    database.exec(migration.sql);
+    ledger.run(migration.version, migration.name, migration.checksum, "2026-10-01T00:00:00.000Z", "old");
+  }
+  database.pragma("user_version = 11"); database.close();
+  repository = await openKeeperRepository({ filePath });
+  manager = new IcloudManager({ store: new SqliteIcloudStore(repository), dataRoot: root,
+    acquireChrome: () => { throw new Error("Must wait for manual login"); } });
+  manager.schedule(); await manager.tick();
+  assert.deepEqual(manager.state().config, {
+    enabled: true, mode: "until_limit", batchSize: 5, intervalMinutes: 61, label: "G", note: "", networkMode: "direct",
+  });
+  assert.equal(manager.state().status, "not_logged_in");
+  assert.equal(manager.state().nextRunAt, null);
+  assert.equal(manager.timer, null);
+  const customized = { ...manager.state().config, enabled: false, mode: "batch", intervalMinutes: 90, networkMode: "system" };
+  manager.saveConfig(customized);
+  await manager.shutdown(); repository.close();
+  repository = await openKeeperRepository({ filePath });
+  manager = new IcloudManager({ store: new SqliteIcloudStore(repository), dataRoot: root });
+  assert.deepEqual(manager.state().config, customized);
 });
 
 test("schema upgrade repairs legacy conversation ids imported by older builds", async (t) => {

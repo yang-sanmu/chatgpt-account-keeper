@@ -29,7 +29,7 @@ export function resolveOperationSubject(
   );
   const resourceId = operation.resourceId;
   if (operation.kind.startsWith("icloud-") || operation.kind === "icloud") {
-    const labels: Record<string, string> = { "icloud-open": "打开 iCloud", "icloud-close": "关闭 iCloud", "icloud-sync": "同步邮箱", "icloud-create": "申请邮箱", icloud: "iCloud 浏览器" };
+    const labels: Record<string, string> = { "icloud-open": "打开 iCloud", "icloud-close": "关闭 iCloud", "icloud-sync": "同步邮箱", "icloud-create": "申请邮箱", "icloud-runNow": "立即执行自动申请", icloud: "iCloud 浏览器" };
     return { title: "iCloud 隐私邮箱", action: labels[operation.kind] ?? action, deletedAccount: false };
   }
 

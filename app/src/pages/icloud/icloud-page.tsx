@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Copy, ExternalLink, Loader2, Pencil, Plus, RefreshCw, Search, SlidersHorizontal, Square, X } from "lucide-react";
+import { Copy, ExternalLink, Loader2, Pencil, Play, Plus, RefreshCw, Search, SlidersHorizontal, Square, X } from "lucide-react";
 import { Page, PageHeader, PageBody } from "@/components/layout/page";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,7 +20,7 @@ const USAGE = { unknown: "待确认", unused: "未使用", used: "已使用" } a
 const REMOTE = { active: "活跃", inactive: "已停用", missing: "云端未找到" } as const;
 const STATUS = { not_logged_in: "尚未登录", idle: "就绪", running: "正在申请", cooldown: "冷却中", needs_login: "需要登录", paused: "已暂停", uncertain: "结果待核对" } as const;
 const NETWORK = { direct: "直连", inherit: "跟随网络配置", system: "系统代理" } as const;
-const ACTION = { open: "打开 iCloud", close: "关闭浏览器", sync: "同步列表", create: "申请 1 个" } as const;
+const ACTION = { open: "打开 iCloud", close: "关闭浏览器", sync: "同步列表", create: "申请 1 个", runNow: "立即执行一轮" } as const;
 const controlSelectClass = "h-9 rounded-control border border-subtle bg-sunken px-3 text-xs text-primary focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-50";
 const filterSelectClass = "h-8 rounded-control border border-subtle bg-sunken px-2.5 text-xs text-primary focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent";
 const time = (value: string | null) => value ? new Date(value).toLocaleString() : "—";
@@ -63,6 +63,7 @@ export function IcloudPage() {
   const [acknowledge, setAcknowledge] = useState(false);
   const disabled = !connection.connected || draining;
   const busy = working || state?.busy === true;
+  const needsLogin = !!state && (!state.bound || ["not_logged_in", "needs_login"].includes(state.status));
   const mode = draft?.mode ?? "single";
   const setSnapshot = (value: IcloudState) => useKeeperStore.setState({ icloud: value });
   const refresh = async () => {
@@ -85,6 +86,10 @@ export function IcloudPage() {
     if (state) setDraft(state.config);
   };
   const perform = async (action: keyof typeof ACTION) => {
+    if (action === "runNow" && dirty) {
+      notify.error("请先保存或取消申请设置，再立即执行一轮");
+      return;
+    }
     setWorking(true);
     try { await runOperation(`icloud.${action}`, {}); notify.success(`${ACTION[action]}完成`); }
     catch (error) { notify.error(`${ACTION[action]}失败`, error); }
@@ -177,9 +182,15 @@ export function IcloudPage() {
             </span>
           </div>
           <div className="flex flex-wrap items-center gap-3 text-xs text-muted tabular">
-            <span>下次自动申请：{time(state.nextRunAt)}</span>
+            <span>下次自动申请：{state.config.enabled && needsLogin ? "等待登录" : time(state.nextRunAt)}</span>
             <span>最近同步：{time(state.lastSyncAt)}</span>
             {state.cooldownUntil && <span className="text-warn">冷却至：{time(state.cooldownUntil)}</span>}
+            <Button type="button" size="sm" className="h-7 px-2.5 text-xs"
+              title="跳过本地冷却立即执行；成功申请后重新计时，零成功保留原冷却和下次自动申请时间"
+              disabled={disabled || working}
+              onClick={() => void perform("runNow")}>
+              <Play className="size-3.5" />立即执行一轮
+            </Button>
             {state.config.enabled && (
               <Button type="button" size="sm" variant="outline" className="h-7 px-2.5 text-xs" disabled={!connection.connected} onClick={() => void stop()}>
                 停止自动申请
@@ -200,8 +211,12 @@ export function IcloudPage() {
         )}
       </div>}
 
+      {state?.config.enabled && needsLogin && <div role="alert" className="rounded-panel border border-warn bg-warn-soft px-4 py-2.5 text-xs leading-5 text-warn">
+        自动申请已开启，但 iCloud 尚未登录或登录已失效。请点击“打开 iCloud / 登录”，登录并同步成功后等待 {state.config.intervalMinutes} 分钟开始申请；请关闭专用浏览器，以便后台自动运行。
+      </div>}
+
       {state?.pendingEmail && <div className="flex flex-wrap items-center justify-between gap-3 rounded-panel border border-warn bg-warn-soft px-4 py-2.5 text-xs text-warn">
-        <p>待核对地址：<strong className="font-mono">{state.pendingEmail}</strong>。先同步列表确认创建结果，再继续申请。</p>
+        <p>待核对地址：<strong className="font-mono">{state.pendingEmail}</strong>。{state.busy ? "正在处理，完成后自动同步确认结果…" : "自动同步未能确认结果，请检查登录或网络后重试同步。"}</p>
         <Button size="sm" variant="outline" className="h-7 text-xs" disabled={disabled || busy} onClick={() => setAcknowledge(true)}>我已在 iCloud 核对结果</Button>
       </div>}
 
@@ -377,8 +392,8 @@ export function IcloudPage() {
               </div>
             </fieldset>
             <p className="rounded-control bg-sunken px-3.5 py-2.5 text-xs leading-5 text-muted">
-              {mode === "single" ? `每隔 ${draft.intervalMinutes} 分钟申请 1 个。` : mode === "batch" ? `每轮连续申请 ${draft.batchSize ?? 5} 个，完成后等待 ${draft.intervalMinutes} 分钟开始下一轮。` : `连续逐个申请，直到 iCloud 返回限额；临时限额后至少等待 ${draft.intervalMinutes} 分钟，服务端要求更久时按服务端时间等待。总量上限或无法判断的限额会暂停。`}
-              {mode !== "until_limit" && "滚动一小时最多尝试 5 次，服务端限制优先。"}每个地址确认成功后才申请下一个；出错或点击停止会结束本轮。开启或保存后先等待设定间隔，可查看上方下次自动申请时间。最小化到托盘后继续，完全退出或休眠期间停止，恢复后不集中补跑。
+              {mode === "single" ? `每隔 ${draft.intervalMinutes} 分钟申请 1 个。` : mode === "batch" ? `每轮连续申请 ${draft.batchSize ?? 5} 个，完成后等待 ${draft.intervalMinutes} 分钟开始下一轮。` : `连续逐个申请，直到 iCloud 返回限额；达到限额即结束本轮并自动同步，持续申请保持开启，冷却后继续。至少等待 ${draft.intervalMinutes} 分钟，冷却要求更久时按冷却时间等待。`}
+              {mode !== "until_limit" && "定时申请滚动一小时最多尝试 5 次，服务端限制优先。"}每个地址确认成功后才申请下一个；出错或点击停止会结束本轮。开启或保存后先等待设定间隔，也可点击“立即执行一轮”跳过本地冷却：成功至少 1 个后从本轮结束重新计时，零成功保留原冷却和下次自动申请时间。可查看上方下次自动申请时间。最小化到托盘后继续，完全退出或休眠期间停止，恢复后不集中补跑。
             </p>
             <DialogFooter>
               <Button type="button" variant="ghost" disabled={working} onClick={closeConfig}>取消</Button>

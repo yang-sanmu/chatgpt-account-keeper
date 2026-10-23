@@ -69,6 +69,7 @@ export type Method =
   | "icloud.close"
   | "icloud.sync"
   | "icloud.create"
+  | "icloud.runNow"
   | "icloud.stop"
   | "icloud.updateLocal"
   | "icloud.acknowledge"
@@ -1415,6 +1416,7 @@ export interface IpcMethodContracts {
   "icloud.close": { params: Record<string, never>; result: Operation };
   "icloud.sync": { params: Record<string, never>; result: Operation };
   "icloud.create": { params: Record<string, never>; result: Operation };
+  "icloud.runNow": { params: Record<string, never>; result: Operation };
   "icloud.stop": { params: Record<string, never>; result: IcloudState };
   "icloud.updateLocal": { params: IcloudLocalParams; result: IcloudState };
   "icloud.acknowledge": { params: Record<string, never>; result: IcloudState };
@@ -1499,6 +1501,7 @@ export const OPERATION_METHODS = [
   "icloud.close",
   "icloud.sync",
   "icloud.create",
+  "icloud.runNow",
   "temporaryWindows.open",
   "temporaryWindows.close",
   "temporaryWindows.remove",

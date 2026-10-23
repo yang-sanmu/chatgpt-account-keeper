@@ -16,7 +16,7 @@ export function hmeEndpoint(value) {
 export class IcloudBrowser {
   constructor({ acquireChrome, onList = () => {}, onClosed = () => {}, signal }) {
     Object.assign(this, { acquireChrome, onList, onClosed, signal });
-    this.launched = null; this.sequence = 0; this.latest = null; this.failure = null; this.responseTasks = new Set(); this.closing = false;
+    this.launched = null; this.sequence = 0; this.syncSince = 0; this.latest = null; this.failure = null; this.responseTasks = new Set(); this.closing = false;
   }
   async launch(config, { headed = false, operationId = null } = {}) {
     this.launched = await this.acquireChrome({ accountId: ICLOUD_RESOURCE, account: { id: ICLOUD_RESOURCE, profileDir: ICLOUD_PROFILE },
@@ -46,6 +46,7 @@ export class IcloudBrowser {
   }
   async readResponse(response, url, sequence) {
     if (this.closing) return;
+    const isList = /\/hme\/list\/?$/.test(url.pathname);
     const status = response.status(); const retryAfter = response.headers()["retry-after"];
     // Set explicit status failures before awaiting the body. Otherwise the UI's
     // generic error can win the race and hide a verified rejection of the POST.
@@ -55,17 +56,19 @@ export class IcloudBrowser {
     let body = null;
     try { body = await response.json(); } catch { /* status still detects auth/rate limiting */ }
     if (this.closing) return;
+    // Navigating for a new sync can abort a previous list's body. That old
+    // response must not fail the fresh sync or replace a newer list snapshot.
+    if (isList && (sequence <= this.syncSince || sequence < (this.latest?.sequence ?? 0))) return;
     const failure = classifyIcloudFailure({ status, body, retryAfter });
     if (failure) {
       this.rejectResponse(response, failure); return;
     }
-    if (!/\/hme\/list\/?$/.test(url.pathname)) return;
+    if (!isList) return;
     const dsid = url.searchParams.get("dsid");
     if (!dsid || !/^\d+$/.test(dsid)) { this.failure = new IcloudError("format", "无法确认 iCloud 账号标识，已停止同步"); return; }
     try {
       const emails = parseIcloudList(body);
       const accountKey = createHash("sha256").update(`${url.hostname.endsWith(".cn") ? "cn" : "global"}:${dsid}`).digest("hex");
-      if ((this.latest?.sequence ?? -1) > sequence) return;
       this.latest = { accountKey, emails, sequence };
       this.onList(this.latest);
     } catch (error) { this.failure = error instanceof IcloudError ? error : new IcloudError("format", "iCloud 列表读取失败"); }
@@ -121,11 +124,19 @@ export class IcloudBrowser {
       throw new IcloudError("format", `未能打开隐藏邮件地址：${reason}，未提交创建`);
     }
   }
-  async openLogin() { await this.page.goto(ICLOUD_HOME, { waitUntil: "domcontentloaded", timeout: 45_000 }); }
+  async openLogin() {
+    try { await this.page.goto(ICLOUD_HOME, { waitUntil: "domcontentloaded", timeout: 45_000 }); }
+    catch (error) {
+      if (this.signal?.aborted || this.closing || this.page.isClosed()) throw new IcloudError("cancelled", "iCloud 操作已停止");
+      if (this.failure) throw this.failure;
+      const timedOut = error.name === "TimeoutError";
+      throw new IcloudError(timedOut ? "timeout" : "service", timedOut ? "打开 iCloud 页面超时，请检查网络后重试" : "打开 iCloud 页面失败，请检查网络后重试");
+    }
+  }
   async sync() {
     this.failure = null;
     this.submittedCandidate = null;
-    const since = this.sequence;
+    const since = this.syncSince = this.sequence;
     await this.openLogin();
     let opened = false; let loginVisibleSince = null;
     const list = await this.waitFor(async () => {
@@ -142,7 +153,6 @@ export class IcloudBrowser {
       }
       return null;
     }, 45_000);
-    await this.openManagement();
     return this.latest ?? list;
   }
   async create(config, beforeSubmit) {

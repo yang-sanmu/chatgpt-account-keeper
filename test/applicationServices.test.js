@@ -206,7 +206,7 @@ test("hello negotiates major version and bootstrap contains a consistent managem
   });
   // minor 3 新增 queue.getSnapshot / browserRuns.* 与 queue.changed /
   // browserRun.changed；minMinor 仍为 0，旧客户端不受影响。
-  assert.deepEqual(hello.protocol, { major: 1, minMinor: 0, maxMinor: 7 });
+  assert.deepEqual(hello.protocol, { major: 1, minMinor: 0, maxMinor: 8 });
   assert.equal(hello.agentVersion, "test");
   assert.ok(hello.capabilities.includes("operations"));
 
@@ -461,6 +461,23 @@ test("persisted commandId reuse by another method is a validation error", async 
     services.execute(request("accounts.create", { note: "reused", groupId: null })),
     (error) => error.code === ERROR_CODES.VALIDATION_FAILED
   );
+});
+
+test("iCloud runNow is an idempotent operation and forwards its operation id", async t => {
+  const calls = [];
+  const runtime = fakeRuntime({ icloud: { runNow: async options => { calls.push(options); return { ok: true, count: 5 }; } } });
+  const services = new ApplicationServices({ runtime });
+  t.after(() => services.dispose());
+  const command = request("icloud.runNow", {});
+  const first = await services.execute(command);
+  const replay = await services.execute(command);
+  assert.equal(replay.id, first.id);
+  assert.equal(first.kind, "icloud-runNow");
+  assert.equal(first.resourceId, "icloud_primary");
+  const finished = await services.operations.waitForTerminal(first.id);
+  assert.equal(finished.state, "succeeded");
+  assert.equal(finished.result.count, 5);
+  assert.deepEqual(calls, [{ operationId: first.id }]);
 });
 
 test("long work returns an operation immediately and publishes lifecycle events", async () => {

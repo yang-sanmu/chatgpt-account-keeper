@@ -30,15 +30,20 @@ beforeEach(async () => {
   ] } }));
 });
 
-it("shows diagrams for all three modes and collapses the system group to one system hop", async () => {
+it("shows diagrams for all three modes and omits the removed group route preview section", async () => {
   render(<NetworkPage />);
   await waitFor(() => expect(screen.getByRole("radio", { name: /直连模式/ })).toBeEnabled());
-  for (const route of ["浏览器 → 分组专用节点 → 网站", "浏览器 → 系统代理 → 分组专用节点 → 网站", "浏览器 → 指定中转 → 分组专用节点 → 网站", "浏览器 → 系统代理 → 网站"]) {
+  for (const route of [
+    "浏览器 → 分组专用节点 → 网站",
+    "浏览器 → 系统代理 → 分组专用节点 → 网站",
+    "浏览器 → 指定中转 → 分组专用节点 → 网站",
+  ]) {
     expect(screen.getByRole("img", { name: route })).toBeInTheDocument();
   }
+  expect(screen.queryByText("分组链路预览")).not.toBeInTheDocument();
 });
 
-it("fuzzy-searches subscription and custom nodes, omits unavailable nodes, saves and deduplicates relay preview", async () => {
+it("fuzzy-searches subscription and custom nodes, omits unavailable nodes, and saves relay config", async () => {
   const user = userEvent.setup();
   let saved: Record<string, unknown> | undefined;
   tauri.onMethod("network.updateConfig", (params) => { saved = params; return { ...network, config: params }; });
@@ -52,7 +57,7 @@ it("fuzzy-searches subscription and custom nodes, omits unavailable nodes, saves
   await user.type(screen.getByRole("textbox", { name: "搜索中转节点" }), "HY2 hk");
   expect(within(list).getAllByRole("option")).toHaveLength(1);
   await user.keyboard("{Enter}");
-  expect(screen.getAllByRole("img", { name: "浏览器 → Hong Kong HY2 → 网站" })).toHaveLength(2);
+  expect(screen.getByText("hk.example:443")).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "保存网络配置" }));
   await waitFor(() => expect(saved).toMatchObject({ mode: "relay", relayProxyId: "px_hy" }));
   expect(useKeeperStore.getState().proxies.network?.config.mode).toBe("relay");

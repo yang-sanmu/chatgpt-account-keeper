@@ -60,6 +60,7 @@ it("stores fixed label, cloud note, interval and explicit continuous opt-in", as
   const user = userEvent.setup(); let submitted: Record<string, unknown> | undefined;
   tauri.onMethod("icloud.saveConfig", params => { submitted = params; return { ...initial, config: params }; });
   render(<IcloudPage />);
+  await user.click(screen.getByRole("button", { name: "申请设置" }));
   await user.clear(screen.getByLabelText("固定标签 *"));
   expect(screen.getByRole("button", { name: "保存设置" })).toBeDisabled();
   await user.type(screen.getByLabelText("固定标签 *"), "购物");
@@ -73,12 +74,14 @@ it("saves a five-address hourly batch and switches to until-limit without a fixe
   const user = userEvent.setup(); let submitted: Record<string, unknown> | undefined;
   tauri.onMethod("icloud.saveConfig", params => { submitted = params; return { ...initial, config: params }; });
   render(<IcloudPage />);
+  await user.click(screen.getByRole("button", { name: "申请设置" }));
   await user.selectOptions(screen.getByLabelText("申请模式"), "batch");
   expect(screen.getByLabelText("每轮申请数量")).toHaveValue(5);
   expect(screen.getByLabelText("轮次间隔（分钟）")).toHaveValue(60);
   await user.click(screen.getByRole("switch", { name: "自动申请 · 持续申请" }));
   await user.click(screen.getByRole("button", { name: "保存设置" }));
   await waitFor(() => expect(submitted).toMatchObject({ enabled: true, mode: "batch", batchSize: 5, intervalMinutes: 60 }));
+  await user.click(screen.getByRole("button", { name: "申请设置" }));
   await user.selectOptions(screen.getByLabelText("申请模式"), "until_limit");
   expect(screen.queryByLabelText("每轮申请数量")).not.toBeInTheDocument();
   expect(screen.getByLabelText("限额后等待（分钟）")).toHaveValue(60);
@@ -88,11 +91,14 @@ it("saves a five-address hourly batch and switches to until-limit without a fixe
 
 it("live cooldown and pending creation appear without losing unsaved settings", async () => {
   const user = userEvent.setup(); render(<IcloudPage />);
+  await user.click(screen.getByRole("button", { name: "申请设置" }));
   await user.clear(screen.getByLabelText("固定标签 *")); await user.type(screen.getByLabelText("固定标签 *"), "新标签");
   act(() => tauri.emitAgentEvent("icloud.changed", { ...initial, status: "uncertain", pendingEmail: "pending@example.com", lastMessage: "结果待核对" }));
   expect(screen.getByLabelText("固定标签 *")).toHaveValue("新标签");
+  await user.click(screen.getByRole("button", { name: "取消" }));
   expect(screen.getByRole("button", { name: "申请 1 个" })).toBeDisabled();
-  expect(screen.getByText(/待核对地址：pending@example.com/)).toBeInTheDocument();
+  expect(screen.getByText(/待核对地址：/)).toBeInTheDocument();
+  expect(screen.getByText("pending@example.com")).toBeInTheDocument();
 });
 
 it("opening uses the operation channel and local note editing does not modify cloud fields", async () => {

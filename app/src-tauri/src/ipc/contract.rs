@@ -7,7 +7,7 @@
 /// 协议主版本。不同主版本不兼容。
 pub const PROTOCOL_MAJOR: u32 = 1;
 /// 协议次版本。次版本只增加可选字段、方法、事件或能力。
-pub const PROTOCOL_MINOR: u32 = 6;
+pub const PROTOCOL_MINOR: u32 = 7;
 /// 帧长度上限。超过它必须在分配 payload 缓冲区之前拒绝。
 pub const MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
 
@@ -26,6 +26,15 @@ pub const INTERNAL_METHODS: &[&str] = &[
 
 /// 前端可经 `agent_call` 调用的业务方法。
 pub const UI_METHODS: &[&str] = &[
+    "icloud.getState",
+    "icloud.saveConfig",
+    "icloud.open",
+    "icloud.close",
+    "icloud.sync",
+    "icloud.create",
+    "icloud.stop",
+    "icloud.updateLocal",
+    "icloud.acknowledge",
     "temporaryWindows.list",
     "temporaryWindows.save",
     "temporaryWindows.open",
@@ -95,6 +104,7 @@ pub const UI_METHODS: &[&str] = &[
 
 /// Agent 推送的事件名。
 pub const EVENT_NAMES: &[&str] = &[
+    "icloud.changed",
     "temporaryWindows.changed",
     "account.changed",
     "account.removed",
@@ -179,7 +189,7 @@ mod tests {
 
         // 数量固定，防止有人一边加一边删还让上面两条都过。
         assert_eq!(INTERNAL_METHODS.len(), 5);
-        assert_eq!(UI_METHODS.len(), 65);
+        assert_eq!(UI_METHODS.len(), 74);
     }
 
     #[test]

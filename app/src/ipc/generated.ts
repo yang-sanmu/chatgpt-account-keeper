@@ -63,6 +63,15 @@ export type OperationArray = Operation[];
  * via the `definition` "method".
  */
 export type Method =
+  | "icloud.getState"
+  | "icloud.saveConfig"
+  | "icloud.open"
+  | "icloud.close"
+  | "icloud.sync"
+  | "icloud.create"
+  | "icloud.stop"
+  | "icloud.updateLocal"
+  | "icloud.acknowledge"
   | "temporaryWindows.list"
   | "temporaryWindows.save"
   | "temporaryWindows.open"
@@ -138,6 +147,7 @@ export type Method =
  * via the `definition` "eventName".
  */
 export type EventName =
+  | "icloud.changed"
   | "temporaryWindows.changed"
   | "account.changed"
   | "account.removed"
@@ -223,6 +233,10 @@ export type ConversationChangedPayload =
  */
 export type Event =
   | (EventBase & {
+      event: "icloud.changed";
+      payload: IcloudState;
+    })
+  | (EventBase & {
       event: "temporaryWindows.changed";
       payload: TemporaryWindowArray;
     })
@@ -267,6 +281,10 @@ export type Event =
     });
 
 export interface KeeperIPCV1GeneratedSchema {
+  icloudConfig?: IcloudConfig;
+  icloudEmail?: IcloudEmail;
+  icloudState?: IcloudState;
+  icloudLocalParams?: IcloudLocalParams;
   temporaryWindowSaveParams?: TemporaryWindowSaveParams;
   temporaryWindowResult?: TemporaryWindowResult;
   temporaryWindowArray?: TemporaryWindowArray;
@@ -353,6 +371,72 @@ export interface KeeperIPCV1GeneratedSchema {
   schedulerAccountChangedPayload?: SchedulerAccountChangedPayload;
   event?: Event;
   operation?: Operation;
+}
+/**
+ * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
+ * via the `definition` "icloudConfig".
+ */
+export interface IcloudConfig {
+  enabled: boolean;
+  mode?: "single" | "batch" | "until_limit";
+  batchSize?: number;
+  intervalMinutes: number;
+  label: string;
+  note: string;
+  networkMode: "direct" | "inherit" | "system";
+}
+/**
+ * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
+ * via the `definition` "icloudEmail".
+ */
+export interface IcloudEmail {
+  id: string;
+  email: string;
+  label: string;
+  cloudNote: string;
+  localNote: string;
+  usage: "unknown" | "unused" | "used";
+  remoteState: "active" | "inactive" | "missing";
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
+ * via the `definition` "icloudState".
+ */
+export interface IcloudState {
+  config: IcloudConfig;
+  status: "not_logged_in" | "idle" | "running" | "cooldown" | "needs_login" | "paused" | "uncertain";
+  busy: boolean;
+  browserOpen: boolean;
+  bound: boolean;
+  nextRunAt: string | null;
+  cooldownUntil: string | null;
+  lastSyncAt: string | null;
+  lastMessage: string;
+  pendingEmail: string | null;
+  emails: IcloudEmail[];
+  /**
+   * @maxItems 50
+   */
+  history: {
+    at: string;
+    action: string;
+    outcome: string;
+    message: string;
+  }[];
+}
+/**
+ * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
+ * via the `definition` "icloudLocalParams".
+ */
+export interface IcloudLocalParams {
+  /**
+   * @minItems 1
+   * @maxItems 10000
+   */
+  ids: [string, ...string[]];
+  usage?: "unknown" | "unused" | "used";
+  localNote?: string;
 }
 /**
  * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
@@ -865,7 +949,14 @@ export interface BrowserRun {
   accountId: string;
   operationId: string | null;
   purpose:
-    "temporary-window" | "login" | "open-page" | "manual-run" | "scheduled-run" | "status-check" | "selector-check";
+    | "icloud"
+    | "temporary-window"
+    | "login"
+    | "open-page"
+    | "manual-run"
+    | "scheduled-run"
+    | "status-check"
+    | "selector-check";
   effectiveSource: string | null;
   profilePath: string | null;
   rootPid: number | null;
@@ -1013,6 +1104,7 @@ export interface BootstrapResult {
   };
   openPages: OpenPageMap;
   temporaryWindows?: TemporaryWindowArray;
+  icloud?: IcloudState;
   groups: GroupArray;
   proxies: ProxyStateResult;
   conversations: ConversationMap;
@@ -1317,6 +1409,15 @@ export interface SchedulerAccountChangedPayload {
 }
 
 export interface IpcMethodContracts {
+  "icloud.getState": { params: Record<string, never>; result: IcloudState };
+  "icloud.saveConfig": { params: IcloudConfig; result: IcloudState };
+  "icloud.open": { params: Record<string, never>; result: Operation };
+  "icloud.close": { params: Record<string, never>; result: Operation };
+  "icloud.sync": { params: Record<string, never>; result: Operation };
+  "icloud.create": { params: Record<string, never>; result: Operation };
+  "icloud.stop": { params: Record<string, never>; result: IcloudState };
+  "icloud.updateLocal": { params: IcloudLocalParams; result: IcloudState };
+  "icloud.acknowledge": { params: Record<string, never>; result: IcloudState };
   "temporaryWindows.list": { params: Record<string, never>; result: TemporaryWindowArray };
   "temporaryWindows.save": { params: TemporaryWindowSaveParams; result: TemporaryWindowResult };
   "temporaryWindows.open": { params: IdParams; result: Operation };
@@ -1394,6 +1495,10 @@ export type IpcParams<M extends IpcMethod> = IpcMethodContracts[M]["params"];
 export type IpcResult<M extends IpcMethod> = IpcMethodContracts[M]["result"];
 
 export const OPERATION_METHODS = [
+  "icloud.open",
+  "icloud.close",
+  "icloud.sync",
+  "icloud.create",
   "temporaryWindows.open",
   "temporaryWindows.close",
   "temporaryWindows.remove",

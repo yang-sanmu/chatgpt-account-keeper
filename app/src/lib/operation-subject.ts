@@ -28,6 +28,10 @@ export function resolveOperationSubject(
     operation.resourceId !== null
   );
   const resourceId = operation.resourceId;
+  if (operation.kind.startsWith("icloud-") || operation.kind === "icloud") {
+    const labels: Record<string, string> = { "icloud-open": "打开 iCloud", "icloud-close": "关闭 iCloud", "icloud-sync": "同步邮箱", "icloud-create": "申请邮箱", icloud: "iCloud 浏览器" };
+    return { title: "iCloud 隐私邮箱", action: labels[operation.kind] ?? action, deletedAccount: false };
+  }
 
   if (resource === "global") {
     return { title: "全局", action, deletedAccount: false };

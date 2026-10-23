@@ -67,6 +67,7 @@ export function NetworkPage() {
   const unavailableRelay = draft.mode === "relay" && !relay;
   const busy = useKeeperStore((state) => state.accountIds.some((id) => state.accounts[id]?.baseline.pageOpen || state.accounts[id]?.baseline.running));
   const temporaryBusy = useKeeperStore((state) => state.temporaryWindows.some(window => window.state !== "closed"));
+  const icloudBusy = useKeeperStore((state) => state.icloud?.busy || state.icloud?.browserOpen);
 
   const refresh = async () => {
     setLoading(true);
@@ -158,10 +159,10 @@ export function NetworkPage() {
           {!groups.length && <p className="text-sm text-muted">在“分组与代理”中创建分组后，可查看每组的实际链路。</p>}
         </CardContent>
       </Card>
-      {(busy || temporaryBusy) && <p role="status" className="text-sm text-warn">请先关闭账号浏览器和临时窗口，并等待运行任务结束，再保存网络配置。</p>}
+      {(busy || temporaryBusy || icloudBusy) && <p role="status" className="text-sm text-warn">请先关闭账号浏览器、临时窗口和 iCloud 浏览器，并等待运行任务结束，再保存网络配置。</p>}
       {loadError && <p role="alert" className="text-sm text-warn">网络配置读取失败，请刷新后重试。</p>}
       <div className="flex items-center gap-3">
-        <Button onClick={() => void save()} disabled={loading || saving || loadError || busy || temporaryBusy || unavailableRelay || !dirty}>{saving && <Loader2 className="size-4 animate-spin" />}保存网络配置</Button>
+        <Button onClick={() => void save()} disabled={loading || saving || loadError || busy || temporaryBusy || icloudBusy || unavailableRelay || !dirty}>{saving && <Loader2 className="size-4 animate-spin" />}保存网络配置</Button>
         <span className="text-xs text-muted">{dirty ? "有未保存的更改" : `当前模式：${MODES.find((mode) => mode.id === current?.config.mode)?.title ?? "读取中…"}`}</span>
       </div>
     </PageBody>

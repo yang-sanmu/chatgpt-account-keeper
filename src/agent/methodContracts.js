@@ -5,6 +5,15 @@
  * 复制第二张表。返回 operationResult 的方法会由生成器自动归入 OPERATION_METHODS。
  */
 export const METHOD_CONTRACTS = Object.freeze({
+  "icloud.getState": ["emptyParams", "icloudState"],
+  "icloud.saveConfig": ["icloudConfig", "icloudState"],
+  "icloud.open": ["emptyParams", "operationResult"],
+  "icloud.close": ["emptyParams", "operationResult"],
+  "icloud.sync": ["emptyParams", "operationResult"],
+  "icloud.create": ["emptyParams", "operationResult"],
+  "icloud.stop": ["emptyParams", "icloudState"],
+  "icloud.updateLocal": ["icloudLocalParams", "icloudState"],
+  "icloud.acknowledge": ["emptyParams", "icloudState"],
   "temporaryWindows.list": ["emptyParams", "temporaryWindowArray"],
   "temporaryWindows.save": ["temporaryWindowSaveParams", "temporaryWindowResult"],
   "temporaryWindows.open": ["idParams", "operationResult"],

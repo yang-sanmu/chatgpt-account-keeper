@@ -99,6 +99,7 @@ import { normalizeProfileScan, normalizeScheduler } from "./normalize";
 import { applyAccountProfileRemoval, applyProfileOperation } from "./profileUpdates";
 
 export type NavKey =
+  | "icloud"
   | "temporaryWindows"
   | "overview"
   | "accounts"
@@ -189,6 +190,7 @@ interface KeeperState {
 
   groups: Group[];
   temporaryWindows: import("@/ipc/generated").TemporaryWindowResult[];
+  icloud: import("@/ipc/generated").IcloudState | null;
   proxies: ProxyState;
   conversations: Record<string, ConversationSet>;
   scheduler: SchedulerState;
@@ -307,6 +309,7 @@ const INITIAL_STATE: KeeperState = {
 
   groups: [],
   temporaryWindows: [],
+  icloud: null,
   proxies: DEFAULT_PROXY_STATE,
   conversations: {},
   scheduler: DEFAULT_SCHEDULER,
@@ -546,11 +549,14 @@ export const useKeeperStore = create<KeeperStore>()((set, get) => {
       }
 
       return {
+        // A successful Agent snapshot confirms the new data directory is ready.
+        startupInfo: state.startupInfo ? { ...state.startupInfo, initialized: true } : null,
         accounts: records,
         accountIds: ids,
         selectedAccountIds: selected,
         groups: snapshot.groups ?? state.groups,
         temporaryWindows: snapshot.temporaryWindows ?? [],
+        icloud: snapshot.icloud ?? null,
         proxies: snapshot.proxies ?? state.proxies,
         conversations: snapshot.conversations ?? state.conversations,
         scheduler,
@@ -676,6 +682,10 @@ export const useKeeperStore = create<KeeperStore>()((set, get) => {
         break;
       }
 
+      case "icloud.changed": {
+        set({ icloud: envelope.payload });
+        break;
+      }
       case "temporaryWindows.changed": {
         set({ temporaryWindows: envelope.payload });
         break;

@@ -15,6 +15,7 @@ import { scheduleProfileCacheMaintenance } from "./profileMaintenance.js";
 import { replaceFileSync } from "./atomicFile.js";
 import { throwIfCancelled } from "./cancellation.js";
 import { STRICT_RESOLVER_ARGUMENT } from "./network/strictConfig.js";
+import { resolveSystemProxy } from "./network/connectionMode.js";
 import * as log from "./logger.js";
 
 /**
@@ -1440,21 +1441,30 @@ export async function launchForAccount(account, opts = {}) {
   // 调用可能在账号锁后排队很久（例如用户一直开着“打开网页”窗口）。
   // 真正启动时重新读取，避免期间改过的分组/分组代理没生效、任务走了旧出口。
   const temporary = opts.temporaryWindow;
-  const liveAccount = temporary ? account : getAccount(account?.id) ?? account;
+  const icloud = opts.icloud;
+  const independent = temporary || icloud;
+  const liveAccount = independent ? account : getAccount(account?.id) ?? account;
   const headless = opts.headless ?? true;
   const userDataDir = ensureDir(fromRoot(liveAccount.profileDir));
 
   const launchArgs = baseLaunchArgs(headless);
-  const environment = temporary
-    ? { mode: "fixed", locale: temporary.locale || DEFAULT_BROWSER_LOCALE, timezone: temporary.timezone, version: 0 }
+  const environment = independent
+    ? { mode: "fixed", locale: temporary?.locale || (icloud ? "zh-CN" : DEFAULT_BROWSER_LOCALE), timezone: temporary?.timezone ?? null, version: 0 }
     : getAccountEnvironment(liveAccount.id);
   let headlessIdentity = null;
 
   // 分组节点由网络模式编译前置链路；未绑定节点时使用网络模式的默认出口。
   const networkConfig = getNetworkConfig().config;
-  const selectedProxyId = temporary ? temporary.proxyId : effectiveProxyId(liveAccount);
-  const getProxy = () => temporary ? proxyForNode(selectedProxyId) : proxyForAccount(liveAccount);
-  if (selectedProxyId || networkConfig.mode === "relay") {
+  const selectedProxyId = temporary ? temporary.proxyId : icloud ? null : effectiveProxyId(liveAccount);
+  const getProxy = () => independent ? proxyForNode(selectedProxyId) : proxyForAccount(liveAccount);
+  if (icloud && icloud.networkMode !== "inherit") {
+    if (icloud.networkMode === "direct") launchArgs.args.push("--no-proxy-server");
+    else if (icloud.networkMode === "system") {
+      const system = resolveSystemProxy({ systemProxyUrl: null });
+      if (["pac", "unavailable"].includes(system.source)) throw new Error("无法识别系统代理，请使用直连或跟随网络配置");
+      if (system.server) launchArgs.proxy = { server: system.server };
+    } else throw new Error("无效的 iCloud 网络模式");
+  } else if (selectedProxyId || networkConfig.mode === "relay") {
     // 边车必须先就绪，否则 Chromium 会连到一个还没监听的端口。
     await ensureRunning();
     const p = getProxy();
@@ -1527,7 +1537,7 @@ export async function launchForAccount(account, opts = {}) {
     });
     launched.context.once("close", () => {
       activeBrowserContexts.delete(launched.context);
-      if (!temporary && !browserShutdownRequested) scheduleProfileCacheMaintenance(liveAccount.id);
+      if (!independent && !browserShutdownRequested) scheduleProfileCacheMaintenance(liveAccount.id);
     });
     // Inherited environments retain the existing headed timezone
     // behavior. Only an explicitly fixed account opts into the fatal barrier.
@@ -1559,7 +1569,7 @@ export async function launchForAccount(account, opts = {}) {
   });
   context.once("close", () => {
     activeBrowserContexts.delete(context);
-    if (!temporary && !browserShutdownRequested) scheduleProfileCacheMaintenance(liveAccount.id);
+    if (!independent && !browserShutdownRequested) scheduleProfileCacheMaintenance(liveAccount.id);
   });
   if (browserShutdownRequested) {
     await context.close().catch(() => {});

@@ -3,6 +3,56 @@
   "$id": "https://github.com/yang-sanmu/chatgpt-account-keeper/contracts/ipc-v1.methods.schema.json",
   "title": "GptAccount Keeper IPC v1 method DTOs",
   "$defs": {
+    "icloudConfig": {
+      "type": "object", "additionalProperties": false,
+      "required": ["enabled", "intervalMinutes", "label", "note", "networkMode"],
+      "properties": {
+        "enabled": {"type":"boolean"},
+        "mode": {"enum":["single","batch","until_limit"]},
+        "batchSize": {"type":"integer","minimum":1,"maximum":5},
+        "intervalMinutes": {"type":"integer","minimum":1,"maximum":1440},
+        "label": {"type":"string","minLength":1,"maxLength":100},
+        "note": {"type":"string","maxLength":1000},
+        "networkMode": {"enum":["direct","inherit","system"]}
+      }
+    },
+    "icloudEmail": {
+      "type":"object", "additionalProperties":false,
+      "required":["id","email","label","cloudNote","localNote","usage","remoteState","createdAt"],
+      "properties": {
+        "id":{"type":"string"}, "email":{"type":"string"}, "label":{"type":"string"},
+        "cloudNote":{"type":"string"}, "localNote":{"type":"string"},
+        "usage":{"enum":["unknown","unused","used"]},
+        "remoteState":{"enum":["active","inactive","missing"]},
+        "createdAt":{"type":"string","format":"date-time"}
+      }
+    },
+    "icloudState": {
+      "type":"object", "additionalProperties":false,
+      "required":["config","status","busy","browserOpen","bound","nextRunAt","cooldownUntil","lastSyncAt","lastMessage","pendingEmail","emails","history"],
+      "properties": {
+        "config":{"$ref":"#/$defs/icloudConfig"},
+        "status":{"enum":["not_logged_in","idle","running","cooldown","needs_login","paused","uncertain"]},
+        "busy":{"type":"boolean"}, "browserOpen":{"type":"boolean"}, "bound":{"type":"boolean"},
+        "nextRunAt":{"type":["string","null"],"format":"date-time"},
+        "cooldownUntil":{"type":["string","null"],"format":"date-time"},
+        "lastSyncAt":{"type":["string","null"],"format":"date-time"},
+        "lastMessage":{"type":"string"}, "pendingEmail":{"type":["string","null"]},
+        "emails":{"type":"array","items":{"$ref":"#/$defs/icloudEmail"}},
+        "history":{"type":"array","maxItems":50,"items":{
+          "type":"object","additionalProperties":false,"required":["at","action","outcome","message"],
+          "properties":{"at":{"type":"string","format":"date-time"},"action":{"type":"string"},"outcome":{"type":"string"},"message":{"type":"string"}}
+        }}
+      }
+    },
+    "icloudLocalParams": {
+      "type":"object","additionalProperties":false,"required":["ids"],
+      "minProperties":2,
+      "properties": {
+        "ids":{"type":"array","minItems":1,"maxItems":10000,"uniqueItems":true,"items":{"type":"string","minLength":1}},
+        "usage":{"enum":["unknown","unused","used"]},"localNote":{"type":"string","maxLength":2000}
+      }
+    },
     "temporaryWindowSaveParams": {
       "type": "object",
       "additionalProperties": false,
@@ -807,7 +857,7 @@
         "browserRunId": { "type": "string", "minLength": 1 },
         "accountId": { "type": "string", "minLength": 1 },
         "operationId": { "type": ["string", "null"] },
-        "purpose": { "enum": ["temporary-window", "login", "open-page", "manual-run", "scheduled-run", "status-check", "selector-check"] },
+        "purpose": { "enum": ["icloud", "temporary-window", "login", "open-page", "manual-run", "scheduled-run", "status-check", "selector-check"] },
         "effectiveSource": { "type": ["string", "null"] },
         "profilePath": { "type": ["string", "null"] },
         "rootPid": { "type": ["integer", "null"] },
@@ -958,6 +1008,7 @@
         },
         "openPages": { "$ref": "#/$defs/openPageMap" },
         "temporaryWindows": { "$ref": "#/$defs/temporaryWindowArray" },
+        "icloud": { "$ref": "#/$defs/icloudState" },
         "groups": { "$ref": "#/$defs/groupArray" },
         "proxies": { "$ref": "#/$defs/proxyStateResult" },
         "conversations": { "$ref": "#/$defs/conversationMap" },

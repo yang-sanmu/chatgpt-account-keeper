@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-export const SCHEMA_VERSION = 11;
+export const SCHEMA_VERSION = 12;
 
 const SCHEMA_V1 = String.raw`
 CREATE TABLE IF NOT EXISTS command_receipts (
@@ -469,6 +469,13 @@ CREATE TABLE temporary_windows (
 );
 `;
 
+const SCHEMA_V12 = String.raw`
+CREATE TABLE icloud_state (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  data_json TEXT NOT NULL
+);
+`;
+
 export const MIGRATIONS = Object.freeze([
   Object.freeze({
     version: 1,
@@ -501,6 +508,7 @@ export const MIGRATIONS = Object.freeze([
   Object.freeze({ version: 9, name: "toolkit", sql: SCHEMA_V9, checksum: createHash("sha256").update(SCHEMA_V9).digest("hex") }),
   Object.freeze({ version: 10, name: "register-flow", sql: SCHEMA_V10, checksum: createHash("sha256").update(SCHEMA_V10).digest("hex") }),
   Object.freeze({ version: 11, name: "temporary-windows", sql: SCHEMA_V11, checksum: createHash("sha256").update(SCHEMA_V11).digest("hex") }),
+  Object.freeze({ version: 12, name: "icloud-hide-my-email", sql: SCHEMA_V12, checksum: createHash("sha256").update(SCHEMA_V12).digest("hex") }),
 ]);
 
 export const MIGRATION_LEDGER_SQL = String.raw`

@@ -59,6 +59,7 @@ export function describeOperation(kind: string, hasResourceId: boolean): Operati
 
 /// Chrome 运行的用途。browserRuns 用的是另一套枚举，不是 operation kind。
 const BROWSER_PURPOSES: Record<string, string> = {
+  icloud: "iCloud 隐私邮箱",
   "temporary-window": "临时窗口",
   login: "登录",
   "open-page": "打开网页",

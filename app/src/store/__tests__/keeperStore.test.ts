@@ -70,6 +70,14 @@ describe("断线后的手动恢复", () => {
 });
 
 describe("全量快照与增量事件的闭环", () => {
+  it("首次建库收到快照后完成初始化，退出欢迎页", () => {
+    useKeeperStore.setState({ startupInfo: { ...store().startupInfo!, initialized: false } });
+    tauri.emitConnection({ connected: true, status: "Agent 已连接", detail: "已恢复" });
+    expect(store().startupInfo?.initialized).toBe(false);
+    tauri.emitBootstrap(makeBootstrap());
+    expect(store().startupInfo?.initialized).toBe(true);
+  });
+
   it("bootstrap 填充账号、分组、会话与调度状态", () => {
     tauri.emitBootstrap(
       makeBootstrap({

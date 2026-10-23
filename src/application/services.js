@@ -63,10 +63,11 @@ import { environmentSnapshot, environmentPending, validateFixedEnvironment } fro
 import { getBrowserEnvironmentSnapshots } from "../browser.js";
 import { getStrictNetworkCapabilities } from "../network/strictConfig.js";
 
-// Minor 6 adds independent temporary browser windows.
-export const PROTOCOL_VERSION = Object.freeze({ major: 1, minor: 6 });
+// Minor 7 adds iCloud Hide My Email management.
+export const PROTOCOL_VERSION = Object.freeze({ major: 1, minor: 7 });
 
 export const MUTATING_METHODS = new Set([
+  "icloud.saveConfig", "icloud.open", "icloud.close", "icloud.sync", "icloud.create", "icloud.stop", "icloud.updateLocal", "icloud.acknowledge",
   "temporaryWindows.save", "temporaryWindows.remove", "temporaryWindows.open",
   "temporaryWindows.close", "temporaryWindows.detectRegion", "temporaryWindows.clearData",
   "network.updateConfig",
@@ -110,6 +111,7 @@ export const MUTATING_METHODS = new Set([
 ]);
 
 const DRAIN_ALLOWED_MUTATIONS = new Set([
+  "icloud.close", "icloud.stop",
   "temporaryWindows.close",
   "system.prepareUpdate",
   "system.shutdown",
@@ -540,6 +542,18 @@ export class ApplicationServices {
   _buildMethods() {
     const methods = new Map();
     const add = (name, fn) => methods.set(name, fn.bind(this));
+    const icloud = () => {
+      if (!this.runtime.icloud) fail(ERROR_CODES.INTERNAL, "iCloud 服务尚未就绪");
+      return this.runtime.icloud;
+    };
+    add("icloud.getState", () => icloud().state());
+    for (const name of ["saveConfig", "stop", "updateLocal", "acknowledge"]) {
+      add(`icloud.${name}`, params => icloud()[name](params));
+    }
+    for (const name of ["open", "close", "sync", "create"]) {
+      add(`icloud.${name}`, () => this.operations.create(`icloud-${name}`,
+        ({ operationId }) => icloud()[name]({ operationId }), { resourceId: "icloud_primary", blocksUpdate: true }));
+    }
     const windows = () => {
       if (!this.runtime.temporaryWindows) fail(ERROR_CODES.INTERNAL, "临时窗口服务尚未就绪");
       return this.runtime.temporaryWindows;
@@ -716,6 +730,7 @@ export class ApplicationServices {
       statuses: this.runtime.getAllCachedStatus(),
       openPages: this.runtime.getOpenPages(),
       temporaryWindows: this.runtime.temporaryWindows?.list() ?? [],
+      ...(this.runtime.icloud ? { icloud: this.runtime.icloud.state() } : {}),
       groups: this._groupsList(),
       proxies: this._proxiesGetState(),
       conversations: this.runtime.store.getConversations(),
@@ -751,6 +766,7 @@ export class ApplicationServices {
       openPages,
       operations,
       blockers: [
+        ...(this.runtime.icloud?.active() ? [{ kind: "icloud", resourceId: "icloud_primary", detail: { name: "iCloud 隐私邮箱" } }] : []),
         ...(this.runtime.temporaryWindows?.list() ?? []).filter(window => window.state !== "closed")
           .map(window => ({ kind: "temporary-window", resourceId: window.id, detail: { name: window.name, state: window.state } })),
         ...Object.entries(openPages).map(([accountId, page]) => ({
@@ -1294,7 +1310,7 @@ export class ApplicationServices {
     const assertIdle = () => {
       assertInput(!this.draining, "Agent 正在退出或更新，请稍后保存");
       if (this._getActivity().blockers.length || this.runtime.browserRuns?.listActive?.().length) {
-        fail(ERROR_CODES.RESOURCE_BUSY, "请先关闭账号浏览器和临时窗口，并等待运行任务结束，再保存网络配置", { retryable: true });
+        fail(ERROR_CODES.RESOURCE_BUSY, "请先关闭账号、临时窗口和 iCloud 浏览器，并等待运行任务结束，再保存网络配置", { retryable: true });
       }
     };
     let result;

@@ -16,6 +16,7 @@ import { ProfilesPage } from "@/pages/profiles/profiles-page";
 import { SettingsPage } from "@/pages/settings/settings-page";
 import { NetworkPage } from "@/pages/network/network-page";
 import { TemporaryWindowsPage } from "@/pages/temporary-windows/temporary-windows-page";
+import { IcloudPage } from "@/pages/icloud/icloud-page";
 import { FirstRunWizard } from "@/pages/first-run/first-run-wizard";
 import { Loader2 } from "lucide-react";
 
@@ -53,6 +54,8 @@ function AppContent() {
         <AccountsPage />
       ) : nav === "temporaryWindows" ? (
         <TemporaryWindowsPage />
+      ) : nav === "icloud" ? (
+        <IcloudPage />
       ) : nav === "operations" ? (
         <OperationsPage />
       ) : nav === "history" ? (

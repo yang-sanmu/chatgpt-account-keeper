@@ -17,6 +17,8 @@ import { closeAllLoginTasks } from "../loginProvider.js";
 import { closeAllOpenPages } from "../openPage.js";
 import { composeBackground } from "./composition.js";
 import { TemporaryWindowManager, SqliteTemporaryWindowStore } from "../temporaryWindows.js";
+import { IcloudManager } from "../icloud/manager.js";
+import { SqliteIcloudStore } from "../icloud/model.js";
 import { runShutdownSequence } from "./shutdownSequence.js";
 import { installShutdownHandlers } from "../shutdown.js";
 import * as log from "../logger.js";
@@ -89,6 +91,7 @@ async function performShutdown(exitCode, { preserveScheduler }) {
     cancelQueued: () => background?.queue?.cancelAllQueued("Agent 正在退出"),
     signalActive: () => background?.queue?.signalAllActive("Agent 正在退出"),
     closeInteractive: async () => {
+      await agent?.services.runtime.icloud?.shutdown();
       await agent?.services.runtime.temporaryWindows?.shutdown();
       await closeAllLoginTasks().catch(() => {});
       await closeAllOpenPages().catch(() => {});
@@ -103,6 +106,7 @@ async function performShutdown(exitCode, { preserveScheduler }) {
       if (drained && !drained.drained) log.warn("Agent 关闭时调度任务未能在限定时间内结束");
     },
     awaitConvergence: async () => {
+      await agent?.services.runtime.icloud?.shutdown();
       // Do not seal/close SQLite while a temporary-window probe, launch, or
       // profile deletion still has a pending completion callback.
       await agent?.services.runtime.temporaryWindows?.shutdown();
@@ -264,6 +268,7 @@ async function main() {
       if (selectedDataRoot) log.info(`Agent 数据目录：${selectedDataRoot}`);
     },
     afterStart: () => {
+      agent.services.runtime.icloud?.schedule();
       startProfileMaintenance();
       // 巡检定时器与调度时钟都在后台组合完成后才启动。
       statusMonitor.start();
@@ -322,6 +327,13 @@ async function main() {
     onChanged: (windows) => agent.services.events.publish("temporaryWindows.changed", windows),
   });
   agent.services.runtime.temporaryWindows = temporaryWindows;
+  agent.services.runtime.icloud = new IcloudManager({
+    store: new SqliteIcloudStore(repository), dataRoot,
+    acquireChrome: request => background.acquireInteractiveChrome(request),
+    browserRuns: background.browserRuns,
+    canRun: () => !agent.services.draining && !shuttingDown,
+    onChanged: state => agent.services.events.publish("icloud.changed", state),
+  });
   backendRestorers.push(proxies.configureTemporaryProxyIds(() => temporaryWindows.proxyIds()));
   backendRestorers.push(agent.services.events.subscribe((event) => {
     if (event.event === "browserRun.changed") temporaryWindows.browserRunChanged(event.payload);

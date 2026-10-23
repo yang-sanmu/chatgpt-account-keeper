@@ -6,6 +6,7 @@ import path from "node:path";
 import { waitForDevToolsEndpoint, configureChromeLauncher, getChromeLauncher, launchForAccount } from "../src/browser.js";
 import { ChromeProcessLauncher } from "../src/chromeProcessLauncher.js";
 import { configureStoreBackend } from "../src/store.js";
+import { configureProxyStoreBackend } from "../src/proxyManager.js";
 import { fromRoot } from "../src/paths.js";
 
 test("account launch preserves inherited defaults and only forwards an explicit fixed environment", async t => {
@@ -33,6 +34,32 @@ test("account launch preserves inherited defaults and only forwards an explicit 
   assert.equal(captured[1].launchArgs.timezoneId, "Europe/Berlin");
   assert.equal(captured[1].environmentMode, "fixed");
   assert.equal(captured[1].manual, true);
+});
+
+test("iCloud direct mode ignores configured proxy; inherit uses it with an independent Chinese Profile", async t => {
+  const fixtureRoot = path.join(fromRoot(), "tmp");
+  fs.mkdirSync(fixtureRoot, { recursive: true });
+  const profile = fs.mkdtempSync(path.join(fixtureRoot, "keeper-icloud-network-"));
+  const account = { id: "icloud_primary", profileDir: path.relative(fromRoot(), profile) };
+  const restoreStore = configureStoreBackend({ getAccount: () => { throw new Error("must not resolve a ChatGPT account"); } });
+  const restoreProxy = configureProxyStoreBackend({ readProxyStore: () => ({ nodes: [], network: { mode: "system", systemProxyUrl: "http://127.0.0.1:31999" } }) });
+  const previous = getChromeLauncher(); const captured = [];
+  const stop = new Error("stop before creating a real browser");
+  configureChromeLauncher({ launch: async options => { captured.push(options); throw stop; } });
+  t.after(() => {
+    configureChromeLauncher(previous); restoreProxy(); restoreStore();
+    assert.equal(path.dirname(profile), fixtureRoot); fs.rmSync(profile, { recursive: true, force: true });
+  });
+  for (const mode of ["direct", "inherit"]) {
+    await assert.rejects(launchForAccount(account, { headless: false, runToken: mode, icloud: { networkMode: mode } }), error => error === stop);
+  }
+  assert.equal(captured[0].launchArgs.proxy, undefined);
+  assert.ok(captured[0].launchArgs.args.includes("--no-proxy-server"));
+  assert.equal(captured[1].launchArgs.proxy.server, "http://127.0.0.1:31999");
+  assert.equal(captured[1].launchArgs.args.includes("--no-proxy-server"), false);
+  assert.equal(captured[0].launchArgs.locale, "zh-CN");
+  assert.equal(captured[0].manual, false);
+  assert.equal(captured[0].userDataDir, profile);
 });
 
 // Exercise the real polling loop and filesystem. Only elapsed time is accelerated;

@@ -23,6 +23,7 @@
     "method": {
       "type": "string",
       "enum": [
+        "icloud.getState", "icloud.saveConfig", "icloud.open", "icloud.close", "icloud.sync", "icloud.create", "icloud.stop", "icloud.updateLocal", "icloud.acknowledge",
         "temporaryWindows.list", "temporaryWindows.save", "temporaryWindows.open", "temporaryWindows.close", "temporaryWindows.remove", "temporaryWindows.detectRegion", "temporaryWindows.clearData",
         "environments.get", "environments.update", "environments.reset", "network.getCapabilities", "network.getConfig", "network.updateConfig",
         "system.hello", "system.bootstrap", "system.getActivity", "system.prepareUpdate", "system.shutdown",
@@ -90,7 +91,7 @@
     "eventName": {
       "type": "string",
       "enum": [
-        "temporaryWindows.changed",
+        "icloud.changed", "temporaryWindows.changed",
         "account.changed", "account.removed", "accountStatus.changed", "openPage.changed",
         "operation.changed", "group.changed", "proxyState.changed", "proxyNode.tested",
         "profile.changed", "conversation.changed", "scheduler.changed",
@@ -278,6 +279,7 @@
     },
     "event": {
       "oneOf": [
+        {"allOf":[{"$ref":"#/$defs/eventBase"},{"type":"object","required":["event","payload"],"properties":{"event":{"const":"icloud.changed"},"payload":{"$ref":"ipc-v1.methods.schema.json#/$defs/icloudState"}}}]},
         {"allOf":[{"$ref":"#/$defs/eventBase"},{"type":"object","required":["event","payload"],"properties":{"event":{"const":"temporaryWindows.changed"},"payload":{"$ref":"ipc-v1.methods.schema.json#/$defs/temporaryWindowArray"}}}]},
         {
           "allOf": [

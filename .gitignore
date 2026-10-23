@@ -19,6 +19,7 @@ keeper.db-shm
 
 # 敏感：账号登录态（cookies/session），泄露即账号被盗
 profiles/
+icloud-profiles/
 
 # React 页面目录，不是账号登录态数据。Windows 的 Git ignore 大小写不敏感，
 # 上面的 profiles/ 否则会把 app/src/pages/Profiles/ 一并吞掉。

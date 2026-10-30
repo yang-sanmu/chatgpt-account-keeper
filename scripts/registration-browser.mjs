@@ -55,12 +55,15 @@ async function open(options) {
   const { ChromeProcessLauncher } = await import("../src/chromeProcessLauncher.js");
   const { BrowserRunRegistry } = await import("../src/application/browserRuns.js");
   const { baseLaunchArgs, applyWebrtcProfilePolicy, probeHeadlessIdentity } = await import("../src/browser.js");
+  const { installRegistrationTargetBarrier } = await import("./registration-target-barrier.mjs");
   controller.signal.throwIfAborted();
   broker = new ChromeLauncherBroker({ log, onFatal: () => { void close("broker-exited"); } });
   await broker.start();
   controller.signal.throwIfAborted();
   registry = new BrowserRunRegistry({ broker, log });
-  const launcher = new ChromeProcessLauncher({ broker, log });
+  const launcher = new ChromeProcessLauncher({ broker, log,
+    installIdentityBarrier: options => installRegistrationTargetBarrier(options, { log }),
+  });
   const profilePath = path.join(runtimeRoot, "profile");
   const headless = options.headless === true;
   const args = baseLaunchArgs(headless);

@@ -342,7 +342,13 @@ export async function importSubscription(url) {
 
   log.info(`订阅导入完成：${count} 个节点`);
   portOrderAfterRemoval = null;
-  await restart();
+  try {
+    await restart({ throwOnError: true });
+  } catch (cause) {
+    throw Object.assign(new Error(`订阅节点已更新，但代理未能应用：${cause.message || cause}`, { cause }), {
+      code: "PROXY_UNAVAILABLE",
+    });
+  }
   return { count, total: nodes.length };
 }
 
@@ -636,10 +642,16 @@ export function buildConfig(basePort = currentBasePort()) {
  * 一个账号开浏览器就会掐断其它账号正在进行的请求。
  */
 async function ensureRunningUnlocked() {
+  const store = readStore();
+  const network = normalizeNetworkConfig(store.network);
+  // 中转失效必须先报告，即使当前已没有可用监听节点，也不能当成无需启动而成功。
+  if (network.mode === "relay") {
+    compileConnectionRoutes({ nodes: store.nodes, proxyIds: [], network });
+  }
   // 先只判断"有没有需要监听的节点"。真正要用的端口段在下面确定，
   // 所以这里不能把这份配置当成最终配置使用。
   const routedNodeCount = selectRuntimeProxyNodes(
-    readStore().nodes,
+    store.nodes,
     referencedProxyIds()
   ).length;
   if (routedNodeCount === 0) {
@@ -830,13 +842,14 @@ async function stopAndWait(timeoutMs = 5000) {
   });
 }
 
-export async function restart() {
+export async function restart({ throwOnError = false } = {}) {
   return runLifecycleTransition(async () => {
     await stopAndWait();
     try {
       return await ensureRunningUnlocked();
     } catch (e) {
       log.warn("代理边车重启失败: " + e.message);
+      if (throwOnError) throw e;
       return { running: false, reason: e.message };
     }
   });

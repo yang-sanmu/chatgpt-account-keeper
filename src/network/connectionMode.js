@@ -119,7 +119,11 @@ export function compileConnectionRoutes({ nodes, proxyIds, network = DEFAULT_NET
   const requireNode = (id) => {
     const node = byId.get(id);
     if (!node || node.enabled === false || node.missing || !node.raw?.type || !node.raw?.server) {
-      throw Object.assign(new Error("指定的中转节点不存在、已停用或不在订阅中，请重新选择"), { code: "PROXY_UNAVAILABLE" });
+      const label = node?.name ? `「${node.name}」` : "";
+      const reason = node?.missing
+        ? "已从订阅移除，中转节点选择已变空"
+        : "不存在、已停用或不在订阅中";
+      throw Object.assign(new Error(`指定的中转节点${label}${reason}，请到“网络配置”重新选择中转节点`), { code: "PROXY_UNAVAILABLE" });
     }
     return node;
   };

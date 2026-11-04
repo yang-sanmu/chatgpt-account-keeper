@@ -5,6 +5,7 @@ import {
   findChromeExecutable,
   installIdentityBarrierOnEndpoint,
   normalizeChromeLaunchError,
+  chromeNotStartedError,
   reserveLocalDebugPort,
   waitForDevToolsEndpoint,
   waitForInteractiveCdp,
@@ -14,17 +15,6 @@ import { connectManualBrowser } from "./manualBrowser.js";
 import * as defaultLog from "./logger.js";
 import { throwIfCancelled } from "./cancellation.js";
 import { STRICT_RESOLVER_ARGUMENT } from "./network/strictConfig.js";
-
-function throwIfCancelledBeforeLaunch(signal) {
-  try {
-    throwIfCancelled(signal);
-  } catch (error) {
-    // token 已由 BrowserRun 预登记，但尚未向 broker 发出 launch。
-    // 只给新建的取消错误附证明，不能修改可能由多个任务共享的 signal.reason。
-    error.ownershipCertain = true;
-    throw error;
-  }
-}
 
 /**
  * 统一的 Chrome 创建入口（计划 §9.1）。有头与无头共用同一条路径：同样的进程登记、
@@ -88,29 +78,27 @@ export class ChromeProcessLauncher {
     runToken,
     signal = null,
   }) {
-    throwIfCancelledBeforeLaunch(signal);
-    if (!this._broker?.running) {
-      const error = new Error("chrome-launcher 不可用，无法启动 Chrome");
-      error.code = "CHROME_BROKER_UNAVAILABLE";
-      throw error;
+    let executable, resolvedUserDataDir, debugPort, args, notBefore;
+    try {
+      throwIfCancelled(signal);
+      if (!this._broker?.running) {
+        const error = new Error("chrome-launcher 不可用，无法启动 Chrome");
+        error.code = "CHROME_BROKER_UNAVAILABLE";
+        throw error;
+      }
+      executable = this._findChrome();
+      if (!executable) throw new ChromeNotFoundError(new Error("Google Chrome executable not found"));
+
+      resolvedUserDataDir = path.resolve(userDataDir);
+      // 交互窗口用随机非零端口，避免 port=0 暴露 webdriver；Headless 仍用 0。
+      debugPort = headless ? 0 : await this._reserveDebugPort();
+      args = buildLaunchArgs({ userDataDir: resolvedUserDataDir, launchArgs, headless, debugPort });
+      notBefore = Date.now();
+      throwIfCancelled(signal);
+    } catch (error) {
+      // 所有启动前失败都无 Job，包括 Chrome 缺失、调试端口分配失败和取消。
+      throw chromeNotStartedError(error);
     }
-    const executable = this._findChrome();
-    if (!executable) throw new ChromeNotFoundError(new Error("Google Chrome executable not found"));
-
-    const resolvedUserDataDir = path.resolve(userDataDir);
-    // Chrome 会把 --remote-debugging-port=0 视为自动化信号并暴露
-    // navigator.webdriver=true。交互窗口必须恢复旧路径的随机非零端口；Headless
-    // 仍用 0，让 Chrome 通过 DevToolsActivePort 回报实际端口。
-    const debugPort = headless ? 0 : await this._reserveDebugPort();
-    const args = buildLaunchArgs({
-      userDataDir: resolvedUserDataDir,
-      launchArgs,
-      headless,
-      debugPort,
-    });
-    const notBefore = Date.now();
-
-    throwIfCancelledBeforeLaunch(signal);
     const launched = await this._broker.launch(runToken, executable, args);
 
     let browser = null;

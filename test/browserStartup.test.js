@@ -232,6 +232,24 @@ test("launcher cancellation before launch does not create a broker-owned process
   assert.deepEqual(events, []);
 });
 
+test("launcher preflight failures prove no Job was created without mutating shared errors", async () => {
+  const shared = Object.freeze(Object.assign(new Error("no free debug port"), { code: "EADDRINUSE" }));
+  for (const [overrides, code] of [
+    [{ findChromeExecutable: () => null }, "CHROME_NOT_FOUND"],
+    [{ broker: { running: false } }, "CHROME_BROKER_UNAVAILABLE"],
+    [{ reserveLocalDebugPort: async () => { throw shared; } }, "EADDRINUSE"],
+  ]) {
+    const { events, launch } = launcherFixture(overrides);
+    await assert.rejects(launch({ headless: false }), error => {
+      assert.equal(error.code, code);
+      assert.equal(error.ownershipCertain, true);
+      return true;
+    });
+    assert.deepEqual(events, []);
+  }
+  assert.equal(shared.ownershipCertain, undefined);
+});
+
 test("launcher cancellation during real endpoint waiting never attaches or claims cleanup ownership", async (t) => {
   const controller = new AbortController();
   const reason = new Error("cancelled during readiness");

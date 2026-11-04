@@ -779,6 +779,18 @@ test("Chrome missing keeps its stable code through run, open-page, and login ope
   }
 });
 
+test("open-page busy failures retain RESOURCE_BUSY and can be retried", async () => {
+  const services = new ApplicationServices({ runtime: fakeRuntime({
+    openPageForAccount: async () => ({ ok: false, message: "账号正在执行其它浏览器操作", code: "RESOURCE_BUSY" }),
+  }) });
+  try {
+    const operation = await services.execute(request("browser.openPage", { accountId: "acc_1" }));
+    const finished = await services.operations.waitForTerminal(operation.id);
+    assert.equal(finished.error.code, ERROR_CODES.RESOURCE_BUSY);
+    assert.equal(finished.error.retryable, true);
+  } finally { services.dispose(); }
+});
+
 test("update preparation reports blockers before committing drain mode", async () => {
   const runtime = fakeRuntime();
   await runtime.openPageForAccount(runtime.store.getAccount("acc_1"));

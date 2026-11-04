@@ -1334,9 +1334,15 @@ export class ApplicationServices {
     return this.operations.create(
       kind,
       async (controls) => {
-        const result = await action(controls);
-        this.events.publish("proxyState.changed", this._proxiesGetState());
-        return result;
+        try {
+          const result = await action(controls);
+          this.events.publish("proxyState.changed", this._proxiesGetState());
+          return result;
+        } catch (error) {
+          // 订阅已落库而应用链路失败时，也要展示新的节点和 missing 状态。
+          try { this.events.publish("proxyState.changed", this._proxiesGetState()); } catch { /* 保留原始失败 */ }
+          throw error;
+        }
       },
       { resourceId, ...options }
     );
@@ -1349,9 +1355,10 @@ export class ApplicationServices {
       null,
       async ({ update }) => {
         update({ stage: "download", message: "正在下载并解析订阅", progress: 0.1 });
-        const result = await this.runtime.proxies.importSubscription(params.url);
+        let result;
+        try { result = await this.runtime.proxies.importSubscription(params.url); }
+        finally { this.runtime.clearRegionCache(); }
         update({ stage: "reconcile", message: "正在应用新的节点列表", progress: 0.8 });
-        this.runtime.clearRegionCache();
         return result;
       },
       { stage: "queued", message: "等待导入订阅" }
@@ -1373,9 +1380,10 @@ export class ApplicationServices {
       null,
       async ({ update }) => {
         update({ stage: "download", message: "正在刷新订阅", progress: 0.1 });
-        const result = await this.runtime.proxies.refreshSubscription();
+        let result;
+        try { result = await this.runtime.proxies.refreshSubscription(); }
+        finally { this.runtime.clearRegionCache(); }
         update({ stage: "reconcile", message: "正在应用新的节点列表", progress: 0.8 });
-        this.runtime.clearRegionCache();
         return result;
       },
       { stage: "queued", message: "等待刷新订阅" }

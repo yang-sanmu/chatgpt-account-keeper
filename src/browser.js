@@ -188,6 +188,14 @@ export function normalizeChromeLaunchError(error) {
   return isMissingChannelError(error) ? new ChromeNotFoundError(error) : error;
 }
 
+// 仅在尚未调用进程启动器的边界使用。复制错误，避免给共享错误或取消原因附上
+// 不属于其它启动的所有权证明；一旦发出 launch，仍须由 broker 证明进程树已回收。
+export function chromeNotStartedError(error) {
+  return Object.assign(new Error(String(error?.message || error), { cause: error }), error, {
+    ownershipCertain: true,
+  });
+}
+
 /**
  * Headless Chrome 会把自身暴露为 HeadlessChrome，ChatGPT/Cloudflare 会据此
  * 直接让 session 接口返回 403。不能用硬编码 UA，也不能只改字符串后丢掉
@@ -1434,7 +1442,7 @@ export function getChromeLauncher() {
   return injectedLauncher;
 }
 
-export async function launchForAccount(account, opts = {}) {
+async function prepareAccountLaunch(account, opts) {
   await waitForNetworkTransition();
   if (browserShutdownRequested) throw new Error("Agent 正在退出，已取消启动 Chrome");
 
@@ -1474,9 +1482,9 @@ export async function launchForAccount(account, opts = {}) {
     } else {
       // 绑了节点却拿不到端口（节点被停用/已从订阅移除）。宁可报错也不静默裸奔，
       // 否则账号会用错误的出口 IP 访问，风险更高。
-      throw new Error(
+      throw Object.assign(new Error(
         `账号所属分组绑定的代理节点不可用（可能已停用或不在订阅中），请到分组管理里重新选择节点`
-      );
+      ), { code: "PROXY_UNAVAILABLE" });
     }
   } else {
     const p = getProxy();
@@ -1502,6 +1510,20 @@ export async function launchForAccount(account, opts = {}) {
 
   if (browserShutdownRequested) throw new Error("Agent 正在退出，已取消启动 Chrome");
 
+  if (injectedLauncher && !opts.runToken) {
+    throw new Error(
+      "启动 Chrome 缺少已登记的 runToken：必须经 BrowserRun 登记后再启动，不能自行创建"
+    );
+  }
+  return { liveAccount, headless, userDataDir, launchArgs, environment, headlessIdentity, snapshot, independent };
+}
+
+export async function launchForAccount(account, opts = {}) {
+  // BrowserRun 已预登记 token，但代理、Profile、环境等准备失败时，broker 根本未
+  // 收到 launch。必须撤回该 token，否则 UNKNOWN_TOKEN 会被误判为回收失败并永久隔离。
+  const { liveAccount, headless, userDataDir, launchArgs, environment, headlessIdentity, snapshot, independent } =
+    await prepareAccountLaunch(account, opts).catch(error => { throw chromeNotStartedError(error); });
+
   let context;
   if (!headless && opts.manual === true) log.info(`账号 ${liveAccount.id} 使用手动浏览控制（不连接 Playwright）`);
   let interactiveLaunch = null;
@@ -1514,11 +1536,6 @@ export async function launchForAccount(account, opts = {}) {
     // Job 无人 dispose，同时把 BrowserRun 关联到一个从未启动进程的 token 上——
     // 关闭序列于是对着空 token 收敛，真实 Chrome 残留且不可见。fail-closed。
     const runToken = opts.runToken;
-    if (!runToken) {
-      throw new Error(
-        "启动 Chrome 缺少已登记的 runToken：必须经 BrowserRun 登记后再启动，不能自行创建"
-      );
-    }
     const launched = await injectedLauncher.launch({
       userDataDir,
       launchArgs,

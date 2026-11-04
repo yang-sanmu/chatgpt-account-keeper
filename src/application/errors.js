@@ -51,6 +51,9 @@ export function normalizeApplicationError(error) {
   if (error?.code === ERROR_CODES.PROXY_UNAVAILABLE) {
     return new ApplicationError(ERROR_CODES.PROXY_UNAVAILABLE, message, { cause: error });
   }
+  if (error?.code === ERROR_CODES.RESOURCE_BUSY) {
+    return new ApplicationError(ERROR_CODES.RESOURCE_BUSY, message, { retryable: true, cause: error });
+  }
   if (
     error?.code === "INVALID_JSON" ||
     error?.code === "INVALID_FRAME" ||

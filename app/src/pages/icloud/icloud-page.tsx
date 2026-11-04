@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Activity, Clock, Copy, ExternalLink, Filter, Loader2, Pencil, Play, Plus, RefreshCw, Search, ShieldCheck, SlidersHorizontal, Square, Tag, X } from "lucide-react";
+import { Activity, Clock, Copy, ExternalLink, Filter, Loader2, Pencil, Play, Plus, RefreshCw, Search, ShieldCheck, SlidersHorizontal, Square, Tag, Trash2, X } from "lucide-react";
 import { Page, PageHeader, PageBody } from "@/components/layout/page";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,7 +20,7 @@ import { cn } from "@/lib/utils";
 
 const USAGE = { unknown: "待确认", unused: "未使用", used: "已使用" } as const;
 const REMOTE = { active: "活跃", inactive: "已停用", missing: "云端未找到" } as const;
-const STATUS = { not_logged_in: "尚未登录", idle: "就绪", running: "正在申请", cooldown: "冷却中", needs_login: "需要登录", paused: "已暂停", uncertain: "结果待核对" } as const;
+const STATUS = { not_logged_in: "尚未登录", idle: "就绪", running: "正在申请", deleting: "正在删除", cooldown: "冷却中", needs_login: "需要登录", paused: "已暂停", uncertain: "结果待核对" } as const;
 const NETWORK = { direct: "直连", inherit: "跟随网络配置", system: "系统代理" } as const;
 const ACTION = { open: "打开 iCloud", close: "关闭浏览器", sync: "同步列表", create: "申请 1 个", runNow: "立即执行一轮" } as const;
 const ACTION_RUNNING_TEXT: Record<keyof typeof ACTION, string> = {
@@ -34,6 +34,7 @@ const HISTORY_ACTION_LABELS: Record<string, string> = {
   open: "打开浏览器",
   sync: "同步列表",
   create: "申请邮箱",
+  delete: "删除邮箱",
   round: "申请轮次",
   settings: "策略设置",
   reconcile: "结果核对",
@@ -46,6 +47,13 @@ const searchText = (value: string) => value.normalize("NFKC").toLocaleLowerCase(
 
 export function selectedEmailText(rows: IcloudEmail[], ids: Set<string>) {
   return [...new Set(rows.filter(row => ids.has(row.id)).map(row => row.email))].join("\n");
+}
+
+export function parseDeleteInput(text: string) {
+  const lines = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  const invalid = lines.filter(line => line.length > 320 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(line));
+  const emails = [...new Set(lines.map(line => line.toLowerCase()))];
+  return { emails, error: invalid.length ? `邮箱格式有误：${invalid[0]}。请每行填写一个邮箱。` : emails.length > 1000 ? "单次最多删除 1000 个邮箱" : "" };
 }
 
 function strategySummary(config: IcloudConfig) {
@@ -95,6 +103,11 @@ export function IcloudPage() {
   const [page, setPage] = useState(0);
   const [edit, setEdit] = useState<{ id: string; email: string; note: string } | null>(null);
   const [acknowledge, setAcknowledge] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteText, setDeleteText] = useState("");
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+  const deletion = parseDeleteInput(deleteText);
   const disabled = !connection.connected || draining;
   const busy = working || state?.busy === true;
   const isRunning = activeAction !== null || state?.busy === true || state?.status === "running";
@@ -153,6 +166,21 @@ export function IcloudPage() {
   };
   const rows = state?.emails ?? [];
   const selectedRows = rows.filter(row => selected.has(row.id));
+  const openDelete = (text: string) => { setDeleteText(text); setDeleteError(""); setDeleteOpen(true); };
+  const deleteEmails = async () => {
+    if (busy || disabled || deletion.error || !deletion.emails.length) return;
+    setWorking(true); setDeleting(true); setDeleteError("");
+    try {
+      const result = await runOperation("icloud.delete", { emails: deletion.emails as [string, ...string[]] });
+      if (result.state === "succeeded") {
+        setDeleteOpen(false); setSelected(new Set());
+        notify.success("删除操作完成，请查看处理记录");
+      }
+    } catch (error) {
+      setDeleteError("删除结果尚未完全确认。请查看处理记录并同步列表，核对后再重试。");
+      notify.error("删除邮箱失败", error);
+    } finally { await refresh(); setWorking(false); setDeleting(false); }
+  };
   const unusedCount = rows.filter(row => row.usage === "unused").length;
   const usedCount = rows.filter(row => row.usage === "used").length;
   const unknownCount = rows.filter(row => row.usage === "unknown").length;
@@ -449,6 +477,7 @@ export function IcloudPage() {
               <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" disabled={!selectedRows.length} onClick={() => setSelected(new Set())}>清空选择</Button>
             </div>
             <div className="flex flex-wrap items-center gap-1.5">
+              <Button size="sm" variant="outline" className="h-7 px-2.5 text-xs text-danger" disabled={disabled || busy || !state?.bound || !!state?.pendingEmail} onClick={() => openDelete(selectedEmailText(rows, selected))}><Trash2 className="size-3.5" />批量删除</Button>
               <Button size="sm" variant="outline" className="h-7 px-2.5 text-xs" disabled={!selectedRows.length || busy} onClick={() => void copy(selected)}><Copy className="size-3.5" />复制选中</Button>
               <Button size="sm" variant={selectedRows.length ? "default" : "outline"} className="h-7 px-2.5 text-xs" disabled={!selectedRows.length || disabled || busy} onClick={() => void copy(selected, true)}>复制并标记已使用</Button>
               <div className="mx-0.5 hidden h-3.5 w-px bg-subtle sm:block" />
@@ -496,6 +525,7 @@ export function IcloudPage() {
                         <div className="flex items-center">
                           <Button size="icon-sm" variant="ghost" aria-label={`复制 ${row.email}`} disabled={busy} onClick={() => void copy(new Set([row.id]))}><Copy className="size-3.5" /></Button>
                           <Button size="icon-sm" variant="ghost" aria-label={`编辑 ${row.email} 的本地备注`} disabled={disabled || busy} onClick={() => setEdit({ id: row.id, email: row.email, note: row.localNote })}><Pencil className="size-3.5" /></Button>
+                          <Button size="icon-sm" variant="ghost" className="text-danger" aria-label={`删除 ${row.email}`} disabled={disabled || busy || !!state?.pendingEmail} onClick={() => openDelete(row.email)}><Trash2 className="size-3.5" /></Button>
                         </div>
                       </td>
                     </tr>
@@ -519,7 +549,7 @@ export function IcloudPage() {
 
       {!!state?.history.length && (
         <details className="rounded-panel border border-subtle bg-panel px-4 py-2.5">
-          <summary className="cursor-pointer text-xs font-medium text-secondary">最近申请与同步记录（{state.history.length}）</summary>
+          <summary className="cursor-pointer text-xs font-medium text-secondary">最近申请、同步与删除记录（{state.history.length}）</summary>
           <div className="mt-2.5 divide-y divide-subtle border-t border-subtle pt-1">
             {state.history.map((entry, index) => {
               const outcomeDot = entry.outcome === "ok" ? "ok" : ["started", "retry", "cooldown", "uncertain", "unchanged"].includes(entry.outcome) ? "needs_login" : "failed";
@@ -538,6 +568,28 @@ export function IcloudPage() {
         </details>
       )}
     </PageBody>
+
+    <Dialog open={deleteOpen} onOpenChange={open => { if (!deleting) setDeleteOpen(open); }}>
+      <DialogContent className="max-w-xl">
+        <DialogHeader>
+          <DialogTitle>删除 iCloud 邮箱</DialogTitle>
+          <DialogDescription>先停用邮箱，再从停用列表中永久删除。删除后无法恢复，也无法再接收发送到这些地址的邮件。</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <Label htmlFor="icloud-delete-emails">待删除邮箱（每行一个）</Label>
+          <Textarea id="icloud-delete-emails" className="min-h-48 font-mono text-xs" value={deleteText} onChange={event => { setDeleteText(event.target.value); setDeleteError(""); }} disabled={deleting} placeholder={"first@icloud.com\nsecond@icloud.com"} />
+          <p className="text-xs text-muted">已去重 {deletion.emails.length} 个邮箱。同步确认云端不存在的邮箱会移除本地记录；本地和云端均未找到才跳过。</p>
+          {(deletion.error || deleteError) && <p role="alert" className="text-xs text-danger">{deletion.error || deleteError}</p>}
+          {deleting && <p role="status" className="text-sm text-secondary">{state?.lastMessage || "正在删除…"}</p>}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" disabled={deleting} onClick={() => setDeleteOpen(false)}>取消</Button>
+          <Button variant="danger" disabled={disabled || busy || !!deletion.error || !deletion.emails.length} onClick={() => void deleteEmails()}>
+            {deleting ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}{deleting ? "正在删除…" : `永久删除 ${deletion.emails.length} 个邮箱`}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
 
     <Dialog open={configOpen} onOpenChange={open => { if (!open) closeConfig(); else setConfigOpen(true); }}>
       <DialogContent className="max-w-xl">

@@ -206,7 +206,7 @@ test("hello negotiates major version and bootstrap contains a consistent managem
   });
   // minor 3 新增 queue.getSnapshot / browserRuns.* 与 queue.changed /
   // browserRun.changed；minMinor 仍为 0，旧客户端不受影响。
-  assert.deepEqual(hello.protocol, { major: 1, minMinor: 0, maxMinor: 8 });
+  assert.deepEqual(hello.protocol, { major: 1, minMinor: 0, maxMinor: 9 });
   assert.equal(hello.agentVersion, "test");
   assert.ok(hello.capabilities.includes("operations"));
 
@@ -498,6 +498,20 @@ test("long work returns an operation immediately and publishes lifecycle events"
   assert.equal(finished.result.totalRounds, 3);
   assert.ok(events.filter((event) => event.event === "operation.changed").length >= 3);
   assert.ok(events.every((event, index) => index === 0 || event.seq > events[index - 1].seq));
+});
+
+test("iCloud delete forwards explicit addresses and replays the same operation without deleting twice", async t => {
+  const calls = [];
+  const runtime = fakeRuntime({ icloud: { delete: async options => { calls.push(options); return { ok: true, count: 2, skipped: 0 }; } } });
+  const services = new ApplicationServices({ runtime }); t.after(() => services.dispose());
+  const emails = ["first@example.com", "second@example.com"];
+  const command = request("icloud.delete", { emails });
+  const first = await services.execute(command);
+  assert.equal((await services.execute(command)).id, first.id);
+  const finished = await services.operations.waitForTerminal(first.id);
+  assert.equal(first.kind, "icloud-delete"); assert.equal(first.blocksUpdate, true);
+  assert.equal(finished.state, "succeeded");
+  assert.deepEqual(calls, [{ emails, operationId: first.id }]);
 });
 
 test("group and conversation change events expose the exact UI delta payloads", async () => {

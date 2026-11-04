@@ -63,11 +63,11 @@ import { environmentSnapshot, environmentPending, validateFixedEnvironment } fro
 import { getBrowserEnvironmentSnapshots } from "../browser.js";
 import { getStrictNetworkCapabilities } from "../network/strictConfig.js";
 
-// Minor 8 adds immediate execution of an iCloud automatic round.
-export const PROTOCOL_VERSION = Object.freeze({ major: 1, minor: 8 });
+// Minor 9 adds single and batch iCloud address deletion.
+export const PROTOCOL_VERSION = Object.freeze({ major: 1, minor: 9 });
 
 export const MUTATING_METHODS = new Set([
-  "icloud.saveConfig", "icloud.open", "icloud.close", "icloud.sync", "icloud.create", "icloud.runNow", "icloud.stop", "icloud.updateLocal", "icloud.acknowledge",
+  "icloud.saveConfig", "icloud.open", "icloud.close", "icloud.sync", "icloud.create", "icloud.runNow", "icloud.delete", "icloud.stop", "icloud.updateLocal", "icloud.acknowledge",
   "temporaryWindows.save", "temporaryWindows.remove", "temporaryWindows.open",
   "temporaryWindows.close", "temporaryWindows.detectRegion", "temporaryWindows.clearData",
   "network.updateConfig",
@@ -554,6 +554,8 @@ export class ApplicationServices {
       add(`icloud.${name}`, () => this.operations.create(`icloud-${name}`,
         ({ operationId }) => icloud()[name]({ operationId }), { resourceId: "icloud_primary", blocksUpdate: true }));
     }
+    add("icloud.delete", params => this.operations.create("icloud-delete",
+      ({ operationId }) => icloud().delete({ ...params, operationId }), { resourceId: "icloud_primary", blocksUpdate: true }));
     const windows = () => {
       if (!this.runtime.temporaryWindows) fail(ERROR_CODES.INTERNAL, "临时窗口服务尚未就绪");
       return this.runtime.temporaryWindows;

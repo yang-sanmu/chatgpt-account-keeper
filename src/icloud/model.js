@@ -5,6 +5,14 @@ export class IcloudError extends Error {
   constructor(kind, message, retryAt = null) { super(message); this.kind = kind; this.retryAt = retryAt; this.badRequest = kind === "validation"; }
 }
 
+export function validateDeleteEmails(emails) {
+  if (!Array.isArray(emails) || !emails.length || emails.length > 1000 ||
+      emails.some(email => typeof email !== "string" || email.length > 320 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()))) {
+    throw new IcloudError("validation", "请输入有效邮箱，每行一个，单次最多 1000 个");
+  }
+  return [...new Set(emails.map(email => email.trim().toLowerCase()))];
+}
+
 export function validateIcloudConfig(value) {
   if (!value || typeof value !== "object" || Object.keys(value).some(key => !Object.hasOwn(ICLOUD_DEFAULT_CONFIG, key))) {
     throw new IcloudError("validation", "无效的 iCloud 配置");

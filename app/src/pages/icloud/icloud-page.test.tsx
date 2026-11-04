@@ -5,7 +5,7 @@ import { tauri, makeBootstrap, makeOperation } from "@/test/harness";
 import { __resetKeeperStoreForTests, useKeeperStore } from "@/store/keeperStore";
 import type { IcloudState } from "@/ipc/generated";
 import { notify } from "@/lib/notify";
-import { IcloudPage } from "./icloud-page";
+import { IcloudPage, parseDeleteInput } from "./icloud-page";
 
 const initial: IcloudState = {
   config: { enabled: false, intervalMinutes: 15, label: "G", note: "", networkMode: "direct" },
@@ -23,6 +23,80 @@ beforeEach(async () => {
     return { ...state, emails: state.emails.map(row => (params.ids as string[]).includes(row.id)
       ? { ...row, ...(params.usage ? { usage: params.usage } : {}), ...(params.localNote !== undefined ? { localNote: params.localNote } : {}) } : row) };
   });
+});
+
+it("single delete requires confirmation and sends only the chosen address", async () => {
+  const user = userEvent.setup(); let submitted: unknown;
+  tauri.onMethod("icloud.delete", params => { submitted = params; return makeOperation({ kind: "icloud-delete", state: "succeeded" }); });
+  render(<IcloudPage />);
+  await user.click(screen.getByRole("button", { name: "删除 mail0@example.com" }));
+  expect(screen.getByLabelText("待删除邮箱（每行一个）")).toHaveValue("mail0@example.com");
+  expect(tauri.methodSequence()).not.toContain("icloud.delete");
+  await user.click(screen.getByRole("button", { name: "取消" }));
+  expect(tauri.methodSequence()).not.toContain("icloud.delete");
+  await user.click(screen.getByRole("button", { name: "删除 mail0@example.com" }));
+  await user.click(screen.getByRole("button", { name: "永久删除 1 个邮箱" }));
+  await waitFor(() => expect(submitted).toEqual({ emails: ["mail0@example.com"] }));
+});
+
+it("selecting all filtered missing emails removes them from the list after batch deletion", async () => {
+  const user = userEvent.setup(); let submitted: unknown;
+  const state = { ...initial, emails: initial.emails.map(row => ({ ...row, remoteState: "missing" as const })) };
+  useKeeperStore.setState({ icloud: state });
+  tauri.onMethod("icloud.delete", params => {
+    submitted = params;
+    tauri.emitAgentEvent("icloud.changed", { ...state, emails: [], lastMessage: "删除完成：已删除 2 个" });
+    return makeOperation({ kind: "icloud-delete", state: "succeeded" });
+  });
+  render(<IcloudPage />);
+  expect(screen.getByRole("button", { name: "删除 mail0@example.com" })).toBeEnabled();
+  await user.selectOptions(screen.getByLabelText("云端状态筛选"), "missing");
+  await user.click(screen.getByRole("button", { name: "选择全部筛选结果" }));
+  await user.click(screen.getByRole("button", { name: "批量删除" }));
+  expect(screen.getByLabelText("待删除邮箱（每行一个）")).toHaveValue("mail0@example.com\nmail1@example.com");
+  expect(screen.getByText(/同步确认云端不存在的邮箱会移除本地记录/)).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "永久删除 2 个邮箱" }));
+  await waitFor(() => expect(screen.queryByRole("button", { name: "删除 mail0@example.com" })).not.toBeInTheDocument());
+  expect(submitted).toEqual({ emails: ["mail0@example.com", "mail1@example.com"] });
+  expect(useKeeperStore.getState().icloud!.emails).toEqual([]);
+});
+
+it("batch deletion accepts multiline input, validates and deduplicates before submission", async () => {
+  const user = userEvent.setup(); let submitted: unknown;
+  tauri.onMethod("icloud.delete", params => { submitted = params; return makeOperation({ kind: "icloud-delete", state: "succeeded" }); });
+  render(<IcloudPage />);
+  await user.click(screen.getByRole("button", { name: "批量删除" }));
+  const input = screen.getByLabelText("待删除邮箱（每行一个）");
+  await user.type(input, "bad address");
+  expect(screen.getByRole("alert")).toHaveTextContent("邮箱格式有误");
+  expect(screen.getByRole("button", { name: "永久删除 1 个邮箱" })).toBeDisabled();
+  await user.clear(input);
+  await user.type(input, "MAIL0@example.com\n\nmail1@example.com\nmail0@example.com");
+  await user.click(screen.getByRole("button", { name: "永久删除 2 个邮箱" }));
+  await waitFor(() => expect(submitted).toEqual({ emails: ["mail0@example.com", "mail1@example.com"] }));
+  expect(parseDeleteInput(" a@example.com\r\nA@example.com ").emails).toEqual(["a@example.com"]);
+});
+
+it("failed batch stays open with input and does not report success", async () => {
+  const user = userEvent.setup();
+  tauri.onMethod("icloud.delete", () => makeOperation({ state: "failed", error: { code: "INTERNAL", message: "同步失败", retryable: false, details: null } }));
+  render(<IcloudPage />);
+  await user.click(screen.getByRole("button", { name: "删除 mail0@example.com" }));
+  await user.click(screen.getByRole("button", { name: "永久删除 1 个邮箱" }));
+  await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("删除结果尚未完全确认"));
+  expect(screen.getByLabelText("待删除邮箱（每行一个）")).toHaveValue("mail0@example.com");
+});
+
+it("an IPC timeout does not claim the backend deletion has stopped", async () => {
+  const user = userEvent.setup();
+  tauri.onMethod("icloud.delete", () => { throw new Error("请求超时：icloud.delete"); });
+  render(<IcloudPage />);
+  await user.click(screen.getByRole("button", { name: "删除 mail0@example.com" }));
+  await user.click(screen.getByRole("button", { name: "永久删除 1 个邮箱" }));
+  await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
+  expect(screen.getByRole("alert")).not.toHaveTextContent("已停止");
+  expect(screen.getByRole("alert")).toHaveTextContent("同步");
+  expect(screen.getByLabelText("待删除邮箱（每行一个）")).toHaveValue("mail0@example.com");
 });
 
 for (const status of ["not_logged_in", "needs_login"] as const) {

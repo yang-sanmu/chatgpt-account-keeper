@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { IcloudManager } from "../src/icloud/manager.js";
-import { ICLOUD_DEFAULT_CONFIG, IcloudError, HOUR, classifyIcloudFailure, retryAfterTime, parseIcloudList, initialIcloudData, SqliteIcloudStore } from "../src/icloud/model.js";
+import { ICLOUD_DEFAULT_CONFIG, IcloudError, HOUR, classifyIcloudFailure, retryAfterTime, parseIcloudList, initialIcloudData, SqliteIcloudStore, validateDeleteEmails } from "../src/icloud/model.js";
 import { IcloudBrowser, hmeEndpoint } from "../src/icloud/browser.js";
 import { openKeeperRepository } from "../src/persistence/sqliteRepository.js";
 import { assertRequestContract, assertMethodResultContract, assertOutgoingContract } from "../src/agent/contractValidator.js";
@@ -17,7 +17,7 @@ const payload = rows => ({ success: true, timestamp: NOW / 1000, result: { hmeEm
 
 function fixture(t, overrides = {}) {
   let now = NOW; let saved = structuredClone(overrides.data ?? initialIcloudData());
-  const calls = { launches: [], closes: 0, creates: 0, syncs: 0, hooks: null };
+  const calls = { launches: [], closes: 0, creates: 0, deletes: [], syncs: 0, hooks: null };
   const remote = { accountKey: "test-account", emails: parseIcloudList(payload([raw()])) };
   const store = { load: () => structuredClone(saved), save: data => { saved = structuredClone(data); } };
   const options = { store, dataRoot: path.join(os.tmpdir(), `icloud-unit-${randomUUID()}`), now: () => now,
@@ -33,12 +33,161 @@ function fixture(t, overrides = {}) {
         remote.emails.push(...parseIcloudList(payload([raw(id, { label: config.label, note: config.note, createTimestamp: now })])));
         return `${id}@example.com`;
       },
+      async delete(row, before) {
+        calls.deletes.push(row);
+        if (overrides.beforeDelete) await overrides.beforeDelete(row);
+        before();
+        if (overrides.onDelete) await overrides.onDelete(row);
+        if (overrides.deleteError) throw overrides.deleteError;
+        remote.emails = remote.emails.filter(item => item.id !== row.id);
+      },
       async close() { calls.closes++; if (overrides.onClose) await overrides.onClose(); if (overrides.closeError) throw overrides.closeError; },
     }), ...overrides.managerOptions };
   const manager = new IcloudManager(options);
   t.after(() => manager.shutdown());
   return { manager, store, options, remote, calls, clock: value => { now = value; }, saved: () => saved };
 }
+
+test("deletion validates the entire batch before launching and deduplicates case-insensitively", async t => {
+  assert.deepEqual(validateDeleteEmails([" Old@example.com ", "old@example.com"]), ["old@example.com"]);
+  const { manager, calls } = fixture(t);
+  for (const emails of [[], ["old@example.com", "bad address"], Array(1001).fill("old@example.com"), [null]]) {
+    await assert.rejects(manager.delete({ emails }), error => error.kind === "validation");
+  }
+  assert.equal(calls.launches.length, 0);
+  assertRequestContract({ id: "delete-request", method: "icloud.delete", params: { emails: ["old@example.com"] }, commandId: randomUUID() });
+});
+
+test("batch deletion handles active and inactive addresses, skips absent ones and preserves other metadata", async t => {
+  const { manager, remote, calls } = fixture(t);
+  remote.emails.push(...parseIcloudList(payload([raw("inactive", { isActive: false }), raw("keep")])));
+  await manager.sync(); manager.updateLocal({ ids: ["keep"], localNote: "保留备注", usage: "used" });
+  const result = await manager.delete({ emails: ["OLD@example.com", "old@example.com", "absent@example.com", "inactive@example.com"] });
+  assert.deepEqual(result, { ok: true, count: 2, skipped: 1 });
+  assert.deepEqual(calls.deletes.map(row => [row.id, row.remoteState]), [["old", "active"], ["inactive", "inactive"]]);
+  assert.equal(manager.state().emails.length, 1);
+  assert.equal(manager.state().emails[0].localNote, "保留备注");
+  assert.equal(manager.state().emails[0].usage, "used");
+  assertMethodResultContract("icloud.getState", manager.state());
+  assert.equal(calls.launches.length, calls.closes);
+});
+
+test("deleting selected missing addresses removes their local records across sync and restart", async t => {
+  const { manager, remote, calls, options } = fixture(t);
+  remote.emails.push(...parseIcloudList(payload([raw("second"), raw("keep")])));
+  await manager.sync(); manager.updateLocal({ ids: ["keep"], localNote: "保留备注", usage: "used" });
+  remote.emails = []; await manager.sync();
+  assert.ok(manager.state().emails.every(row => row.remoteState === "missing"));
+  assert.deepEqual(await manager.delete({ emails: ["OLD@example.com", "second@example.com", "old@example.com"] }), { ok: true, count: 2, skipped: 0 });
+  assert.equal(calls.deletes.length, 0, "missing addresses require no remote deletion");
+  const remaining = manager.state().emails;
+  assert.deepEqual(remaining.map(row => row.id), ["keep"]);
+  assert.equal(remaining[0].localNote, "保留备注"); assert.equal(remaining[0].usage, "used");
+  await manager.sync();
+  const restarted = new IcloudManager(options); t.after(() => restarted.shutdown());
+  assert.deepEqual(restarted.state().emails, remaining);
+  assert.match(restarted.state().lastMessage, /同步/);
+});
+
+test("a mixed batch removes local missing records and remote addresses, skipping only unknown addresses", async t => {
+  const { manager, remote, calls } = fixture(t);
+  remote.emails.push(...parseIcloudList(payload([raw("active")])));
+  await manager.sync(); remote.emails = remote.emails.filter(row => row.id !== "old");
+  assert.deepEqual(await manager.delete({ emails: ["old@example.com", "active@example.com", "unknown@example.com"] }), { ok: true, count: 2, skipped: 1 });
+  assert.deepEqual(manager.state().emails, []);
+  assert.deepEqual(calls.deletes.map(row => row.id), ["active"]);
+});
+
+test("failed sync cannot erase a selected cached missing address", async t => {
+  const overrides = {};
+  const { manager, remote, calls } = fixture(t, overrides);
+  await manager.sync(); remote.emails = []; await manager.sync();
+  overrides.syncError = new IcloudError("service", "同步失败");
+  await assert.rejects(manager.delete({ emails: ["old@example.com"] }), /同步失败/);
+  assert.equal(manager.state().emails[0].id, "old");
+  assert.equal(calls.deletes.length, 0);
+});
+
+test("a failed deletion stops the batch and retains the inactive address", async t => {
+  const overrides = { deleteError: new IcloudError("service", "删除失败") };
+  const { manager, remote, calls, saved } = fixture(t, overrides);
+  remote.emails.push(...parseIcloudList(payload([raw("second")])));
+  overrides.onDelete = () => { remote.emails[0].remoteState = "inactive"; };
+  await assert.rejects(manager.delete({ emails: ["old@example.com", "second@example.com"] }), /删除失败/);
+  assert.equal(calls.deletes.length, 1);
+  assert.equal(manager.state().emails.find(row => row.id === "old").remoteState, "inactive");
+  assert.equal(saved().pendingDelete.email, "old@example.com");
+  await manager.sync();
+  assert.equal(saved().pendingDelete, null);
+  assert.equal(manager.state().emails.find(row => row.id === "old").remoteState, "inactive");
+});
+
+test("lost delete acknowledgement is reconciled once without another submission", async t => {
+  const overrides = { deleteError: new IcloudError("timeout", "连接中断") };
+  const { manager, remote, calls, saved } = fixture(t, overrides);
+  overrides.onDelete = () => { assert.equal(saved().pendingDelete.email, "old@example.com"); remote.emails = []; };
+  assert.deepEqual(await manager.delete({ emails: ["old@example.com"] }), { ok: true, count: 1, skipped: 0 });
+  assert.equal(calls.deletes.length, 1);
+  assert.equal(manager.state().emails.length, 0);
+  assert.equal(saved().pendingDelete, null);
+});
+
+for (const lostAcknowledgement of [false, true]) {
+  test(`a stale list after deletion retains intent until sync (lost acknowledgement: ${lostAcknowledgement})`, async t => {
+    const overrides = lostAcknowledgement ? { deleteError: new IcloudError("timeout", "未收到删除结果") } : {};
+    const { manager, remote, calls, saved } = fixture(t, overrides);
+    const original = structuredClone(remote.emails[0]);
+    remote.emails.push(...parseIcloudList(payload([raw("second")])));
+    let stale = true;
+    overrides.onDelete = () => { remote.emails = remote.emails.filter(row => row.id !== original.id); };
+    overrides.onSync = () => {
+      if (calls.deletes.length && stale && !remote.emails.some(row => row.id === original.id)) remote.emails.push(original);
+    };
+    await assert.rejects(manager.delete({ emails: [original.email, "second@example.com"] }));
+    assert.equal(saved().pendingDelete?.email, original.email);
+    assert.equal(manager.state().status, "uncertain");
+    assert.equal(calls.deletes.length, 1, "the remaining batch must not run before reconciliation");
+    stale = false; remote.emails = remote.emails.filter(row => row.id !== original.id);
+    await manager.sync();
+    assert.equal(saved().pendingDelete, null);
+    assert.deepEqual(manager.state().emails.map(row => row.id), ["second"]);
+    assert.equal(calls.deletes.length, 1, "sync resolves deletion without submitting again");
+  });
+}
+
+test("unverified delete survives restart, pauses automation and resolves on explicit sync", async t => {
+  const overrides = {};
+  const { manager, calls, saved, options } = fixture(t, overrides);
+  overrides.onDelete = () => { overrides.syncError = new IcloudError("service", "同步失败"); };
+  await assert.rejects(manager.delete({ emails: ["old@example.com"] }), /同步失败/);
+  assert.equal(manager.state().status, "uncertain");
+  assert.equal(manager.state().config.enabled, false);
+  assert.equal(saved().pendingDelete.email, "old@example.com");
+  assert.equal(manager.state().emails.length, 1);
+  await assert.rejects(manager.create(), /先同步/);
+  assert.equal(calls.creates, 0);
+  const restarted = new IcloudManager(options); t.after(() => restarted.shutdown());
+  assert.equal(restarted.state().status, "uncertain");
+  delete overrides.syncError;
+  await restarted.sync();
+  assert.equal(restarted.state().status, "idle");
+  assert.equal(saved().pendingDelete, null);
+  assert.equal(calls.deletes.length, 1, "restart only reconciles; never replays a delete");
+});
+
+test("deletion refuses a different Apple account and serializes against other iCloud work", async t => {
+  const overrides = {};
+  const { manager, remote, calls } = fixture(t, overrides);
+  await manager.sync(); remote.accountKey = "different-account";
+  await assert.rejects(manager.delete({ emails: ["old@example.com"] }), error => error.kind === "account");
+  assert.equal(calls.deletes.length, 0);
+  remote.accountKey = "test-account";
+  let release; overrides.onSync = () => new Promise(resolve => { release = resolve; });
+  const work = manager.sync();
+  while (!release) await new Promise(resolve => setImmediate(resolve));
+  await assert.rejects(manager.delete({ emails: ["old@example.com"] }), error => error.code === "RESOURCE_BUSY");
+  release(); await work;
+});
 
 test("default automation waits for login, then runs until the server limit every 61 minutes", async t => {
   const overrides = {}; const { manager, calls, clock } = fixture(t, overrides);

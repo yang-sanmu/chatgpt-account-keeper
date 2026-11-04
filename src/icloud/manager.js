@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { ApplicationError, ERROR_CODES } from "../application/errors.js";
 import { IcloudBrowser, ICLOUD_PROFILE, ICLOUD_RESOURCE } from "./browser.js";
-import { HOUR, IcloudError, validateIcloudConfig, mergeIcloudEmails, nextAllowedCreate } from "./model.js";
+import { HOUR, IcloudError, validateIcloudConfig, validateDeleteEmails, mergeIcloudEmails, nextAllowedCreate } from "./model.js";
 
 const iso = value => value == null ? null : new Date(value).toISOString();
 const busyError = () => new ApplicationError(ERROR_CODES.RESOURCE_BUSY, "iCloud 正在处理另一项操作，请稍后重试");
@@ -15,10 +15,13 @@ export class IcloudManager {
     // Existing settings retain the original one-address-per-interval behavior.
     this.data.config = validateIcloudConfig({ mode: "single", ...this.data.config });
     this.controller = new AbortController();
-    if (this.data.pendingCreate) {
+    if (this.data.pendingDelete) {
+      this.data.status = "uncertain"; this.data.config.enabled = false;
+      this.data.lastMessage = `上次删除结果待核对：${this.data.pendingDelete.email}，请先同步列表`;
+    } else if (this.data.pendingCreate) {
       this.data.status = "uncertain"; this.data.config.enabled = false;
       this.data.lastMessage = "上次创建结果待核对，请先同步列表";
-    } else if (this.data.status === "running") {
+    } else if (["running", "deleting"].includes(this.data.status)) {
       this.data.status = "idle";
     }
     if (this.needsLogin()) this.data.nextRunAt = null;
@@ -65,7 +68,7 @@ export class IcloudManager {
     if (!Object.hasOwn(input, "batchSize")) config.batchSize = this.data.config.batchSize;
     if (this.pending) throw busyError();
     if (config.networkMode !== this.data.config.networkMode && this.active()) throw new IcloudError("validation", "请先关闭 iCloud 浏览器，再修改网络模式");
-    if (config.enabled && this.data.pendingCreate) {
+    if (config.enabled && (this.data.pendingCreate || this.data.pendingDelete)) {
       throw new IcloudError("validation", "请先同步列表，完成待核对结果后再启用自动申请");
     }
     const wasEnabled = this.data.config.enabled;
@@ -94,6 +97,7 @@ export class IcloudManager {
   }
   acknowledge() {
     if (this.pending) throw busyError();
+    if (this.data.pendingDelete) throw new IcloudError("validation", "删除结果待核对，请同步列表确认");
     this.data.pendingCreate = null; this.data.config.enabled = false; this.data.status = this.data.accountKey ? "idle" : "not_logged_in";
     this.record("reconcile", "ok", "已手动确认待核对结果，自动申请保持关闭"); this.persist(); return this.state();
   }
@@ -105,11 +109,17 @@ export class IcloudManager {
     const created = pending && emails.some(row => row.email.toLowerCase() === pending.email.toLowerCase());
     const merged = mergeIcloudEmails(this.data.emails, emails, created ? pending.email : null);
     this.data.accountKey = accountKey; this.data.emails = merged; this.data.lastSyncAt = this.now();
+    const deletion = this.data.pendingDelete;
+    if (deletion && !emails.some(row => row.id === deletion.id || row.email.toLowerCase() === deletion.email.toLowerCase())) {
+      this.data.emails = merged.filter(row => row.id !== deletion.id);
+      this.data.pendingDelete = null;
+      this.record("delete", "ok", `已删除：${deletion.email}`);
+    }
     if (created) {
       this.data.pendingCreate = null;
       this.record("create", "ok", `创建成功：${pending.email}`);
     }
-    if (!this.data.pendingCreate && (wasWaitingForLogin || this.data.status === "uncertain")) this.data.status = "idle";
+    if (!this.data.pendingCreate && !this.data.pendingDelete && (wasWaitingForLogin || this.data.status === "uncertain")) this.data.status = "idle";
     if (wasWaitingForLogin && this.data.config.enabled) {
       this.data.nextRunAt = Math.max(this.now() + this.data.config.intervalMinutes * 60_000, nextAllowedCreate(this.data, this.now()));
       if (!this.pending) this.schedule();
@@ -178,6 +188,10 @@ export class IcloudManager {
     if (["rate_limit", "limit"].includes(kind) && error.creationRejected === true && !d.pendingCreate?.confirmed) d.pendingCreate = null;
     // Reconciliation must not discard a server cooldown received after submit.
     this.rememberCooldown(error);
+    if (d.pendingDelete) {
+      d.status = "uncertain"; d.config.enabled = false; d.nextRunAt = null;
+      this.record("delete", "uncertain", `删除结果待核对：${d.pendingDelete.email}，已停止批量删除；请同步列表确认`); return;
+    }
     if (d.pendingCreate) {
       d.status = "uncertain"; d.config.enabled = false; d.nextRunAt = null;
       this.record(action, "uncertain", "自动同步后仍无法确认创建结果，已暂停；请检查登录或网络后重试同步"); return;
@@ -239,9 +253,65 @@ export class IcloudManager {
   sync({ operationId = null } = {}) {
     return this.exclusive("sync", () => this.usingBrowser(operationId, async browser => {
       const list = await browser.sync(); this.acceptList(list);
+      if (this.data.pendingDelete) {
+        this.record("delete", "remaining", `邮箱仍在云端：${this.data.pendingDelete.email}，可重新发起删除`);
+        this.data.pendingDelete = null;
+        if (!this.data.pendingCreate) this.data.status = "idle";
+      }
       this.data.failures = 0;
       if (!this.data.pendingCreate) this.record("sync", "ok", `已同步 ${list.emails.length} 个 iCloud 邮箱`);
       return { ok: true };
+    }));
+  }
+  async delete({ emails, operationId = null } = {}) {
+    const addresses = validateDeleteEmails(emails);
+    return this.exclusive("delete", () => this.usingBrowser(operationId, async browser => {
+      if (this.data.pendingCreate || this.data.pendingDelete) throw new IcloudError("validation", "请先同步列表核对上次操作结果，再删除邮箱");
+      let list = await browser.sync(); this.acceptList(list);
+      let count = 0; let skipped = 0;
+      this.data.status = "deleting";
+      this.record("delete", "started", `开始删除 ${addresses.length} 个邮箱`); this.persist();
+      for (const [index, email] of addresses.entries()) {
+        if (this.stopping) throw new IcloudError("cancelled", "批量删除已停止");
+        const row = list.emails.find(item => item.email.toLowerCase() === email);
+        if (!row) {
+          const remaining = this.data.emails.filter(item => item.email.toLowerCase() !== email);
+          if (remaining.length !== this.data.emails.length) {
+            this.data.emails = remaining;
+            count++;
+            this.record("delete", "ok", `已移除本地记录（云端未找到）：${email}（${index + 1} / ${addresses.length}）`);
+          } else {
+            skipped++;
+            this.record("delete", "skipped", `跳过（本地和云端均未找到）：${email}（${index + 1} / ${addresses.length}）`);
+          }
+          this.persist();
+          continue;
+        }
+        this.record("delete", "started", `正在删除 ${index + 1} / ${addresses.length}：${email}`); this.persist();
+        let deletionError;
+        try {
+          await browser.delete(row, () => {
+            if (this.stopping) throw new IcloudError("cancelled", "批量删除已停止");
+            this.data.pendingDelete = { id: row.id, email: row.email }; this.persist();
+          });
+        } catch (error) { deletionError = error; }
+        // Always read a fresh list after either success or an interrupted click.
+        // Only absence in this same account proves permanent deletion.
+        try { list = await browser.sync(); this.acceptList(list); }
+        catch (error) { throw deletionError ?? error; }
+        const remaining = list.emails.some(item => item.id === row.id || item.email.toLowerCase() === email);
+        if (remaining) {
+          // The first list can lag behind a submitted deletion. Keep its intent
+          // so a later sync can remove the local row once absence is confirmed.
+          throw deletionError ?? new IcloudError("service", `未确认删除：${email}，已停止批量删除，请查看云端状态后重试`);
+        }
+        if (deletionError && this.data.emails.some(item => item.id === row.id)) throw deletionError;
+        count++;
+        this.record("delete", "ok", `已删除 ${count} 个（${index + 1} / ${addresses.length}）：${email}`); this.persist();
+      }
+      this.data.status = this.data.cooldownUntil > this.now() ? "cooldown" : "idle"; this.data.failures = 0;
+      this.record("delete", "ok", `删除完成：已删除 ${count} 个，跳过 ${skipped} 个（本地和云端均未找到）`);
+      return { ok: true, count, skipped };
     }));
   }
   async reconcileCreated(browser, creationError) {
@@ -270,6 +340,7 @@ export class IcloudManager {
     const previous = { nextRunAt: this.data.nextRunAt, cooldownUntil: this.data.cooldownUntil, attempts: this.data.attempts };
     let count = 0;
     return this.exclusive("create", async () => {
+      if (this.data.pendingDelete) throw new IcloudError("validation", "删除结果待核对，请先同步列表");
       if (automatic && !this.data.config.enabled) return { ok: true };
       if (automatic) {
         if (this.timer) this.clearTimer(this.timer);

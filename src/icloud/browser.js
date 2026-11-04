@@ -121,7 +121,7 @@ export class IcloudBrowser {
     try { await entry.click({ timeout: 10_000 }); }
     catch (error) {
       const reason = /detached/.test(error.message) ? "页面正在切换" : "入口无法点击";
-      throw new IcloudError("format", `未能打开隐藏邮件地址：${reason}，未提交创建`);
+      throw new IcloudError("format", `未能打开隐藏邮件地址：${reason}，未提交操作`);
     }
   }
   async openLogin() {
@@ -202,6 +202,61 @@ export class IcloudBrowser {
       return false;
     }, 30_000, "未收到创建完成提示，请同步列表核对结果");
     return candidate;
+  }
+  async assertDetailEmail(frame, email) {
+    await this.waitFor(async () => {
+      const address = frame.locator(".EmailDetail-hmeField .LabeledField-value");
+      if (await address.count() !== 1 || !await address.isVisible()) return false;
+      if ((await address.innerText()).trim().toLowerCase() !== email.toLowerCase()) {
+        throw new IcloudError("format", "邮箱详情与待删除地址不一致，未提交操作");
+      }
+      return true;
+    }, 20_000, "未找到待删除邮箱的详情，未提交操作");
+  }
+  async confirmEmailAction(frame, row, action, beforeSubmit = () => {}) {
+    const alert = frame.getByRole("dialog").filter({ has: frame.locator("#alert-panel") });
+    const prompt = action === "deactivate" ? /^(?:是否要停用此电子邮件地址[？?]|停用电子邮件地址[？?]|Deactivate email address\?)$/i : /^(?:是否要删除此电子邮件地址[？?]|删除电子邮件地址[？?]|Delete email address\?)$/i;
+    const name = action === "deactivate" ? /^(停用|Deactivate)$/i : /^(删除|刪除|Delete)$/i;
+    await this.waitFor(async () => await alert.count() === 1 && await alert.isVisible() && await alert.getByText(prompt).count() === 1,
+      15_000, "未找到邮箱操作确认窗口，未提交操作");
+    await this.assertDetailEmail(frame, row.email);
+    beforeSubmit();
+    const [response] = await Promise.all([
+      this.page.waitForResponse(response => {
+        const url = hmeEndpoint(response.url());
+        if (!url || !url.pathname.endsWith(`/hme/${action}`) || response.request().method() !== "POST") return false;
+        try { return response.request().postDataJSON()?.anonymousId === row.id; } catch { return false; }
+      }, { timeout: 30_000 }),
+      alert.getByRole("button", { name }).click({ timeout: 10_000 }),
+    ]);
+    const body = await response.json().catch(() => null);
+    const failure = classifyIcloudFailure({ status: response.status(), body, retryAfter: response.headers()["retry-after"] });
+    if (failure) throw failure;
+    if (body?.success !== true) throw new IcloudError("uncertain", "未收到明确的操作结果，请同步列表核对");
+  }
+  async delete(row, beforeDelete) {
+    this.failure = null;
+    const current = this.latest?.emails.find(item => item.id === row.id && item.email === row.email);
+    if (!current || !["active", "inactive"].includes(current.remoteState)) throw new IcloudError("format", "待删除邮箱不在最新云端列表中，未提交操作");
+    const frame = await this.openManagement();
+    // Match the dedicated address field, never labels or notes containing an address.
+    const findButton = scope => scope.getByRole("button").filter({ has: frame.locator(".searchable-card-subtitle").filter({ hasText: new RegExp(`^${row.email.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") }) });
+    if (current.remoteState === "active") {
+      const active = findButton(frame);
+      await this.waitFor(async () => await active.count() === 1, 20_000, "未找到唯一的待停用邮箱，未提交操作");
+      await active.click({ timeout: 10_000 });
+      await this.assertDetailEmail(frame, row.email);
+      await frame.getByRole("button", { name: /^(停用电子邮件地址|Deactivate email address)$/i }).click({ timeout: 10_000 });
+      await this.confirmEmailAction(frame, row, "deactivate");
+    }
+    const inactive = findButton(frame.locator(".HomePage-inactiveEmailList"));
+    await this.waitFor(async () => await inactive.count() === 1, 20_000, "停用列表中未找到此邮箱，已停止删除，请同步核对");
+    await inactive.scrollIntoViewIfNeeded({ timeout: 10_000 });
+    await inactive.click({ timeout: 10_000 });
+    await this.assertDetailEmail(frame, row.email);
+    await frame.getByRole("button", { name: /^(删除地址|删除电子邮件地址|Delete address)$/i }).click({ timeout: 10_000 });
+    await this.confirmEmailAction(frame, row, "delete", beforeDelete);
+    await this.waitFor(async () => !await frame.locator("#alert-panel").isVisible(), 20_000, "删除已提交，等待页面更新超时，请同步核对");
   }
   async close() {
     this.closing = true;

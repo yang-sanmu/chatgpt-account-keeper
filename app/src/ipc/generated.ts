@@ -70,6 +70,7 @@ export type Method =
   | "icloud.sync"
   | "icloud.create"
   | "icloud.runNow"
+  | "icloud.delete"
   | "icloud.stop"
   | "icloud.updateLocal"
   | "icloud.acknowledge"
@@ -285,6 +286,7 @@ export interface KeeperIPCV1GeneratedSchema {
   icloudConfig?: IcloudConfig;
   icloudEmail?: IcloudEmail;
   icloudState?: IcloudState;
+  icloudDeleteParams?: IcloudDeleteParams;
   icloudLocalParams?: IcloudLocalParams;
   temporaryWindowSaveParams?: TemporaryWindowSaveParams;
   temporaryWindowResult?: TemporaryWindowResult;
@@ -406,7 +408,7 @@ export interface IcloudEmail {
  */
 export interface IcloudState {
   config: IcloudConfig;
-  status: "not_logged_in" | "idle" | "running" | "cooldown" | "needs_login" | "paused" | "uncertain";
+  status: "not_logged_in" | "idle" | "running" | "deleting" | "cooldown" | "needs_login" | "paused" | "uncertain";
   busy: boolean;
   browserOpen: boolean;
   bound: boolean;
@@ -425,6 +427,17 @@ export interface IcloudState {
     outcome: string;
     message: string;
   }[];
+}
+/**
+ * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
+ * via the `definition` "icloudDeleteParams".
+ */
+export interface IcloudDeleteParams {
+  /**
+   * @minItems 1
+   * @maxItems 1000
+   */
+  emails: [string, ...string[]];
 }
 /**
  * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
@@ -1417,6 +1430,7 @@ export interface IpcMethodContracts {
   "icloud.sync": { params: Record<string, never>; result: Operation };
   "icloud.create": { params: Record<string, never>; result: Operation };
   "icloud.runNow": { params: Record<string, never>; result: Operation };
+  "icloud.delete": { params: IcloudDeleteParams; result: Operation };
   "icloud.stop": { params: Record<string, never>; result: IcloudState };
   "icloud.updateLocal": { params: IcloudLocalParams; result: IcloudState };
   "icloud.acknowledge": { params: Record<string, never>; result: IcloudState };
@@ -1502,6 +1516,7 @@ export const OPERATION_METHODS = [
   "icloud.sync",
   "icloud.create",
   "icloud.runNow",
+  "icloud.delete",
   "temporaryWindows.open",
   "temporaryWindows.close",
   "temporaryWindows.remove",

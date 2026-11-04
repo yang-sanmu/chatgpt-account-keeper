@@ -15,21 +15,24 @@ const releaseSource = fs.readFileSync(
 );
 const release = YAML.parse(releaseSource);
 
-test('v0.2.14 direct publication is version scoped, skips Windows signing and retains updater validation', () => {
-  assert.equal(release.on.workflow_dispatch.inputs.publish_v0_2_14.default, false);
-  const request = release.jobs.gate.steps.find(step => step.name === 'Validate the authorized v0.2.14 publication');
-  assert.match(request.run, /test "\$VERSION" = '0\.2\.14'/);
-  assert.match(request.run, /n_minus_one_verified/);
-  const windows = release.jobs.build.steps.find(step => step.name === 'Configure Windows Authenticode signing');
-  assert.match(windows.run, /publish_v0_2_14/);
-  const updater = release.jobs.gate.steps.find(step => step.name === 'Validate release notes and updater signing configuration');
-  assert.equal(updater.if, undefined);
-  assert.match(updater.run, /TAURI_SIGNING_PRIVATE_KEY is required/);
-  const create = release.jobs.aggregate.steps.find(step => step.name === 'Create the single GitHub Draft or one-time public Release');
-  assert.match(create.if, /publish_v0_2_14/);
-  assert.match(create.run, /publish_v0_2_14.*then\n\s+release_visibility=\(--latest\)/);
-  assert.ok(release.jobs.aggregate.steps.some(step => step.name === 'Confirm unsigned Windows asset for v0.2.14'));
-});
+for (const version of ['0.2.14', '0.2.15']) {
+  test(`v${version} direct publication is version scoped, skips Windows signing and retains updater validation`, () => {
+    const input = `publish_v${version.replaceAll('.', '_')}`;
+    assert.equal(release.on.workflow_dispatch.inputs[input].default, false);
+    const request = release.jobs.gate.steps.find(step => step.name === `Validate the authorized v${version} publication`);
+    assert.ok(request.run.includes(`test "$VERSION" = '${version}'`));
+    assert.match(request.run, /n_minus_one_verified/);
+    const windows = release.jobs.build.steps.find(step => step.name === 'Configure Windows Authenticode signing');
+    assert.ok(windows.run.includes(input));
+    const updater = release.jobs.gate.steps.find(step => step.name === 'Validate release notes and updater signing configuration');
+    assert.equal(updater.if, undefined);
+    assert.match(updater.run, /TAURI_SIGNING_PRIVATE_KEY is required/);
+    const create = release.jobs.aggregate.steps.find(step => step.name === 'Create the single GitHub Draft or one-time public Release');
+    assert.ok(create.if.includes(input));
+    assert.match(create.run, new RegExp(`${input}.*then\\n\\s+release_visibility=\\(--latest\\)`));
+    assert.ok(release.jobs.aggregate.steps.some(step => step.name === `Confirm unsigned Windows asset for v${version}`));
+  });
+}
 
 test('v0.2.13 direct publication is version scoped, skips Windows signing and retains updater validation', () => {
   assert.equal(release.on.workflow_dispatch.inputs.publish_v0_2_13.default, false);

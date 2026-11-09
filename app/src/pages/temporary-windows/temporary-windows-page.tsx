@@ -24,6 +24,7 @@ import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { RelativeTime } from "@/components/ui/relative-time";
 import { SearchableSelect } from "@/components/ui/searchable-select";
+import { proxyNodeLabels, proxyNodeOptions } from "@/lib/proxy-node-labels";
 import { StatusDot, type StatusDotProps } from "@/components/ui/status-dot";
 import {
   Dialog,
@@ -139,6 +140,7 @@ export function TemporaryWindowsPage() {
 
   const disabled = !connection.connected || draining;
   const usableNodes = proxies.nodes.filter((node) => node.enabled && !node.missing);
+  const nodeLabels = proxyNodeLabels(proxies);
 
   const activeOp = (windowId: string) =>
     operations.find(
@@ -252,7 +254,7 @@ export function TemporaryWindowsPage() {
     }
     if (!normalizedQuery) return true;
     const nodeName =
-      proxies.nodes.find((node) => node.id === window.proxyId)?.name ??
+      nodeLabels.get(window.proxyId) ??
       window.proxyName ??
       "";
     return [
@@ -457,7 +459,7 @@ export function TemporaryWindowsPage() {
           <div className="grid grid-cols-[repeat(auto-fill,minmax(min(300px,100%),350px))] items-start justify-start gap-3.5">
             {filtered.map((window) => {
               const node = proxies.nodes.find((item) => item.id === window.proxyId);
-              const nodeDisplayName = node?.name || window.proxyName || "节点已丢失";
+              const nodeDisplayName = nodeLabels.get(window.proxyId) ?? `${window.proxyName || "节点已丢失"}（不可用）`;
               const unavailable = !node || node.missing || !node.enabled;
               const isBusy = busy(window);
               const probing = isProbing(window);
@@ -512,12 +514,9 @@ export function TemporaryWindowsPage() {
                               "truncate font-medium",
                               unavailable ? "text-danger" : "text-primary"
                             )}
-                            title={
-                              unavailable ? `${nodeDisplayName}（不可用）` : nodeDisplayName
-                            }
+                            title={nodeDisplayName}
                           >
                             {nodeDisplayName}
-                            {unavailable ? "（不可用）" : ""}
                           </span>
                         </div>
                       </div>
@@ -729,10 +728,7 @@ export function TemporaryWindowsPage() {
                     label="选择出口节点"
                     value={draft.proxyId}
                     onValueChange={(proxyId) => setDraft({ ...draft, proxyId })}
-                    options={usableNodes.map((node) => ({
-                      value: node.id,
-                      label: `${node.name}${node.id.startsWith("custom_") ? " · 自定义" : " · 订阅"}`,
-                    }))}
+                    options={proxyNodeOptions(proxies, draft.proxyId)}
                   />
                   {usableNodes.length === 0 && (
                     <p className="text-xs text-warn">

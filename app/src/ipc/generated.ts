@@ -116,6 +116,10 @@ export type Method =
   | "groups.remove"
   | "proxies.getState"
   | "proxies.importSubscription"
+  | "proxies.addSubscriptions"
+  | "proxies.updateSubscription"
+  | "proxies.refreshSubscriptions"
+  | "proxies.removeSubscription"
   | "proxies.importCustom"
   | "proxies.getCustom"
   | "proxies.saveCustom"
@@ -354,6 +358,9 @@ export interface KeeperIPCV1GeneratedSchema {
   customProxyParams?: CustomProxyParams;
   customProxyDetails?: CustomProxyDetails;
   renameCustomProxyParams?: RenameCustomProxyParams;
+  addSubscriptionsParams?: AddSubscriptionsParams;
+  updateSubscriptionParams?: UpdateSubscriptionParams;
+  refreshSubscriptionsParams?: RefreshSubscriptionsParams;
   subscriptionParams?: SubscriptionParams;
   runtimeDirectoryParams?: RuntimeDirectoryParams;
   nodeEnabledParams?: NodeEnabledParams;
@@ -809,8 +816,20 @@ export interface HistoryAccountResult {
  */
 export interface ProxyStateResult {
   network?: NetworkConfigResult;
+  subscriptions?: {
+    id: string;
+    name: string;
+    configured: boolean;
+    host: string | null;
+    updatedAt: string | null;
+    attemptedAt: string | null;
+    error: string | null;
+    count: number;
+    missingCount: number;
+  }[];
   nodes: {
     id: string;
+    sourceId?: string;
     name: string;
     type: string | null;
     server: string | null;
@@ -1312,6 +1331,37 @@ export interface RenameCustomProxyParams {
 }
 /**
  * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
+ * via the `definition` "addSubscriptionsParams".
+ */
+export interface AddSubscriptionsParams {
+  /**
+   * @minItems 1
+   * @maxItems 32
+   */
+  urls: [string, ...string[]];
+}
+/**
+ * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
+ * via the `definition` "updateSubscriptionParams".
+ */
+export interface UpdateSubscriptionParams {
+  id: string;
+  name?: string;
+  url?: string;
+}
+/**
+ * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
+ * via the `definition` "refreshSubscriptionsParams".
+ */
+export interface RefreshSubscriptionsParams {
+  /**
+   * @minItems 1
+   * @maxItems 32
+   */
+  ids?: [string, ...string[]];
+}
+/**
+ * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
  * via the `definition` "subscriptionParams".
  */
 export interface SubscriptionParams {
@@ -1535,6 +1585,10 @@ export interface IpcMethodContracts {
   "groups.remove": { params: IdParams; result: OkResult };
   "proxies.getState": { params: Record<string, never>; result: ProxyStateResult };
   "proxies.importSubscription": { params: SubscriptionParams; result: Operation };
+  "proxies.addSubscriptions": { params: AddSubscriptionsParams; result: Operation };
+  "proxies.updateSubscription": { params: UpdateSubscriptionParams; result: Operation };
+  "proxies.refreshSubscriptions": { params: RefreshSubscriptionsParams; result: Operation };
+  "proxies.removeSubscription": { params: IdParams; result: Operation };
   "proxies.importCustom": { params: CustomProxyParams; result: Operation };
   "proxies.getCustom": { params: IdParams; result: CustomProxyDetails };
   "proxies.saveCustom": { params: CustomProxyDetails; result: Operation };
@@ -1590,6 +1644,10 @@ export const OPERATION_METHODS = [
   "browser.startLogin",
   "browser.openPage",
   "proxies.importSubscription",
+  "proxies.addSubscriptions",
+  "proxies.updateSubscription",
+  "proxies.refreshSubscriptions",
+  "proxies.removeSubscription",
   "proxies.importCustom",
   "proxies.saveCustom",
   "proxies.renameCustom",

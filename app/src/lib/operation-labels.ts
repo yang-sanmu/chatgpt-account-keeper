@@ -41,6 +41,8 @@ const OPERATIONS: Record<string, OperationMeta> = {
   "proxy-custom-rename": { action: "重命名自定义代理", resource: "global" },
   "proxy-custom-remove": { action: "删除自定义代理", resource: "global" },
   "proxy-refresh": { action: "刷新订阅", resource: "global" },
+  "proxy-subscription-edit": { action: "编辑订阅", resource: "global" },
+  "proxy-subscription-remove": { action: "删除订阅", resource: "global" },
   "proxy-test-all": { action: "全部测速", resource: "global" },
   "proxy-node-test": { action: "节点测速", resource: "proxy" },
   "proxy-node-toggle": { action: "启停节点", resource: "proxy" },

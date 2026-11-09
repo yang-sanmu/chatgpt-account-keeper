@@ -16,7 +16,14 @@ beforeEach(async () => {
   await useKeeperStore.getState().bootstrapApp();
   tauri.emitBootstrap(makeBootstrap({
     accounts: [makeAccount({ id: "one" }), makeAccount({ id: "two" }), makeAccount({ id: "three" })],
-    proxies: { nodes: [{ id: "enabled", name: "查询节点 A", enabled: true }, { id: "disabled", name: "停用节点 B", enabled: false }] },
+    proxies: {
+      subscriptions: [{ id: "source-a", name: "机场 A" }, { id: "source-b", name: "机场 B" }],
+      nodes: [
+        { id: "enabled", sourceId: "source-a", name: "查询节点", enabled: true },
+        { id: "other", sourceId: "source-b", name: "查询节点", enabled: true },
+        { id: "disabled", name: "停用节点 B", enabled: false },
+      ],
+    },
   }));
 });
 
@@ -31,8 +38,9 @@ it("一键查询显式选择节点，显示未取到 Token 的账号", async () 
   expect(start).toBeDisabled();
   fireEvent.click(screen.getByRole("checkbox", { name: /查询全部账号/ }));
   fireEvent.click(screen.getByRole("combobox", { name: "选择节点" }));
-  expect(screen.queryByRole("option", { name: "停用节点 B" })).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("option", { name: "查询节点 A" }));
+  expect(screen.queryByRole("option", { name: /停用节点 B/ })).not.toBeInTheDocument();
+  expect(screen.getByRole("option", { name: "机场 B · 查询节点" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("option", { name: "机场 A · 查询节点" }));
   fireEvent.click(start);
 
   expect(await screen.findByText(/缺少 accessToken，请先巡检/)).toBeInTheDocument();
@@ -44,7 +52,14 @@ it("一键巡检提交筛选结果，批量巡检为勾选账号使用同一个�
   tauri.onMethod("accounts.refreshStatus", call);
   tauri.emitBootstrap(makeBootstrap({
     accounts: [makeAccount({ id: "one", gptName: "可见账号" }), makeAccount({ id: "two" }), makeAccount({ id: "three" })],
-    proxies: { nodes: [{ id: "enabled", name: "巡检节点 A", enabled: true }, { id: "disabled", name: "停用节点 B", enabled: false }] },
+    proxies: {
+      subscriptions: [{ id: "source-a", name: "机场 A" }, { id: "source-b", name: "机场 B" }],
+      nodes: [
+        { id: "enabled", sourceId: "source-a", name: "巡检节点", enabled: true },
+        { id: "other", sourceId: "source-b", name: "巡检节点", enabled: true },
+        { id: "disabled", name: "停用节点 B", enabled: false },
+      ],
+    },
   }));
   useKeeperStore.getState().selectAccounts(["two", "three"]);
   useKeeperStore.getState().setAccountFilter({ keyword: "可见账号" });
@@ -66,11 +81,12 @@ it("一键巡检提交筛选结果，批量巡检为勾选账号使用同一个�
   const start = bulk.getByRole("button", { name: "开始巡检" });
   expect(start).toBeDisabled();
   fireEvent.click(bulk.getByRole("combobox", { name: "选择节点" }));
-  expect(screen.queryByRole("option", { name: "停用节点 B" })).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("option", { name: "巡检节点 A" }));
+  expect(screen.queryByRole("option", { name: /停用节点 B/ })).not.toBeInTheDocument();
+  expect(screen.getByRole("option", { name: "机场 A · 巡检节点" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("option", { name: "机场 B · 巡检节点" }));
   fireEvent.click(start);
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-  expect(call.mock.calls).toEqual([[{ id: "one" }], [{ id: "two", proxyId: "enabled" }], [{ id: "three", proxyId: "enabled" }]]);
+  expect(call.mock.calls).toEqual([[{ id: "one" }], [{ id: "two", proxyId: "other" }], [{ id: "three", proxyId: "other" }]]);
 
   fireEvent.click(screen.getByRole("button", { name: "批量巡检" }));
   expect(screen.getByRole("radio", { name: "账号分组节点" })).toBeChecked();

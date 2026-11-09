@@ -96,7 +96,8 @@ test("network runtime handles failed startup and occupied ports", { skip: !enabl
   // Set the cache root before importing paths/proxyManager, whose roots are immutable.
   const oldCacheRoot = process.env.GPT_ACCOUNT_KEEPER_CACHE_ROOT;
   process.env.GPT_ACCOUNT_KEEPER_CACHE_ROOT = root;
-  const { configureProxyStoreBackend, getNetworkConfig, setNetworkConfig, testNode, stopAll } = await import("../src/proxyManager.js");
+  const { configureProxyStoreBackend, ensureRunning, getNetworkConfig, getNodes, refreshSubscriptions,
+    setNetworkConfig, status, testNode, stopAll } = await import("../src/proxyManager.js");
   const { configureStoreBackend } = await import("../src/store.js");
   const invalid = { id: "invalid", name: "invalid", enabled: true, raw: { name: "invalid", type: "unsupported-fixture", server: "127.0.0.1", port: 1234 } };
   let stored = { nodes: [invalid], mihomoPath: core, network: normalizeNetworkConfig({ mode: "direct" }) };
@@ -160,5 +161,64 @@ test("network runtime handles failed startup and occupied ports", { skip: !enabl
     assert.equal(status().running, true);
     assert.equal(requests, 0);
     assert.equal(server.listening, true);
+  });
+  await t.test("subscription refresh reuses an unchanged runtime and restores it after a failed apply", async (subtest) => {
+    const first = { ...usable, id: "first", sourceId: "source-a", portSlot: 0 };
+    const second = { ...usable, id: "second", sourceId: "source-b", portSlot: 1 };
+    const unavailable = { ...invalid, id: "invalid", sourceId: "source-a", portSlot: 2, missing: true };
+    let feed = [{ ...first.raw, name: "已改名" }];
+    const server = await occupy(subtest, 0, (_request, response) => response.end(YAML.stringify({ proxies: feed })));
+    const url = `http://127.0.0.1:${server.address().port}/`;
+    stored = {
+      subscriptions: [{ id: "source-a", name: "A", url }, { id: "source-b", name: "B", url: null }],
+      nodes: [first, second, unavailable], mihomoPath: core, network: normalizeNetworkConfig({ mode: "direct" }),
+    };
+    groups = [first, second, unavailable].map((node) => ({ proxyId: node.id }));
+    subtest.after(() => { groups = []; return ensureRunning(); });
+    assert.equal((await ensureRunning()).running, true);
+    const portOf = (id) => getNodes().find((node) => node.id === id).localPort;
+    const firstPort = portOf(first.id), secondPort = portOf(second.id);
+    const configPath = path.join(root, "mihomo", "config.yaml");
+    const before = await fs.stat(configPath, { bigint: true });
+    assert.equal((await refreshSubscriptions(["source-a"])).routesChanged, false);
+    assert.equal((await fs.stat(configPath, { bigint: true })).mtimeNs, before.mtimeNs);
+    assert.equal(portOf(first.id), firstPort);
+    assert.equal(portOf(second.id), secondPort);
+
+    feed.push(unavailable.raw);
+    await assert.rejects(refreshSubscriptions(["source-a"]), /已恢复原代理配置/);
+    assert.equal(status().running, true);
+    assert.equal((await ensureRunning()).reused, true);
+    assert.equal(portOf(first.id), firstPort);
+    assert.equal(portOf(second.id), secondPort);
+    assert.equal(getNodes().find((node) => node.id === unavailable.id).missing, true);
+  });
+  await t.test("a returning subscription node can use another range when its old port hosts the system proxy", async (subtest) => {
+    const upstream = await occupy(subtest, 33001, (_request, response) => response.writeHead(204).end());
+    if (!upstream) return;
+    const first = { ...usable, id: "first", portSlot: 0 };
+    const restored = { ...usable, id: "restored", name: "restored", sourceId: "source-a", portSlot: 1, missing: true,
+      raw: { ...usable.raw, name: "restored", port: 1236 } };
+    const feed = await occupy(subtest, 0, (_request, response) => response.end(YAML.stringify({ proxies: [restored.raw] })));
+    stopAll();
+    stored = {
+      subscriptions: [{ id: "source-a", name: "A", url: `http://127.0.0.1:${feed.address().port}/` }],
+      nodes: [first, restored], mihomoPath: core, basePort: 33000,
+      network: normalizeNetworkConfig({ mode: "system", systemProxyUrl: "http://127.0.0.1:33001" }),
+    };
+    groups = [first, restored].map((node) => ({ proxyId: node.id }));
+    subtest.after(() => { groups = []; return ensureRunning(); });
+    assert.equal((await ensureRunning()).running, true);
+    if (status().basePort !== 33000) {
+      subtest.skip("preferred range already occupied");
+      return;
+    }
+
+    assert.equal((await refreshSubscriptions(["source-a"])).routesChanged, true);
+    assert.equal(status().running, true);
+    const node = getNodes().find((item) => item.id === restored.id);
+    assert.equal(node.missing, false);
+    assert.notEqual(node.localPort, 33001);
+    assert.equal(upstream.listening, true);
   });
 });

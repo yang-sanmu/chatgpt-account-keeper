@@ -21,12 +21,12 @@ try {
   // this RID/ABI-specific native dependency; pure migration tests still run.
 }
 
-test("existing v8–v12 databases upgrade without replacing historical migrations or user data", { skip: !Database }, async t => {
+test("existing v8–v13 databases upgrade without replacing historical migrations or user data", { skip: !Database }, async t => {
   assert.equal(MIGRATIONS.find(migration => migration.version === 9)?.checksum,
     "eb3b6db509cffa2c661acff13d1e6caa0507471ffc13f033cd7f0760ee283758");
   assert.equal(MIGRATIONS.find(migration => migration.version === 10)?.checksum,
     "f01f3380bbc6ca6d9090843cd8ee04c3ba7ff5e1d8d9fc45865fad6341c55b16");
-  for (const version of [8, 9, 10, 11, 12]) {
+  for (const version of [8, 9, 10, 11, 12, 13]) {
     await t.test(`version ${version}`, async subtest => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "keeper-existing-schema-"));
       const filePath = path.join(root, "keeper.db");
@@ -47,6 +47,15 @@ test("existing v8–v12 databases upgrade without replacing historical migration
       new KeeperRepository(database).createAccount({ id: "existing-account", profileName: "existing-account", note: "keep me" });
       if (version >= 9) database.prepare("INSERT INTO tool_records VALUES (?, ?, ?, ?)").run("fixture", "existing", '{"keep":true}', "2026-10-17");
       if (version >= 10) database.prepare("INSERT INTO flow_pools VALUES (?, ?, ?, ?, ?)").run("existing-pool", "keep", "sealed-fixture", "2026-10-17", "2026-10-17");
+      if (version === 13) {
+        database.prepare("UPDATE proxy_settings SET subscription_url=?, subscription_updated_at=?, network_config_json=?")
+          .run("https://example.test/sub?token=legacy", "2026-10-17T00:00:00Z", '{"mode":"relay","relayProxyId":"px_legacy"}');
+        database.prepare("INSERT INTO proxy_nodes(id, sort_order, name, raw_json, enabled) VALUES (?, ?, ?, ?, ?)")
+          .run("px_legacy", 12, "原节点", '{"name":"原节点","type":"http","server":"example.test","port":8888}', 0);
+        database.prepare("INSERT INTO groups(id, sort_order, name, proxy_id) VALUES (?, ?, ?, ?)")
+          .run("group-legacy", 0, "原分组", "px_legacy");
+        database.prepare("INSERT INTO temporary_windows(id, proxy_id, config_json) VALUES (?, ?, ?)").run("temp-legacy", "px_legacy", "{}");
+      }
       const ledger = database.prepare("SELECT * FROM schema_migrations ORDER BY version").all();
       database.close();
 
@@ -56,7 +65,17 @@ test("existing v8–v12 databases upgrade without replacing historical migration
       assert.equal(repository.getAccount("existing-account").note, "keep me");
       if (version >= 9) assert.equal(repository.db.prepare("SELECT payload FROM tool_records WHERE id='existing'").get().payload, '{"keep":true}');
       if (version >= 10) assert.equal(repository.db.prepare("SELECT sealed FROM flow_pools WHERE id='existing-pool'").get().sealed, "sealed-fixture");
-      assert.deepEqual(repository.db.prepare("SELECT * FROM temporary_windows").all(), []);
+      if (version === 13) {
+        const state = repository.getProxyState({ includeSecrets: true });
+        assert.equal(state.subscriptions[0].url, "https://example.test/sub?token=legacy");
+        assert.equal(state.nodes[0].id, "px_legacy");
+        assert.equal(state.nodes[0].sourceId, state.subscriptions[0].id);
+        assert.equal(state.nodes[0].portSlot, 0);
+        assert.equal(state.nodes[0].enabled, false);
+        assert.equal(state.network.relayProxyId, "px_legacy");
+        assert.equal(repository.db.prepare("SELECT proxy_id FROM groups WHERE id='group-legacy'").get().proxy_id, "px_legacy");
+        assert.equal(repository.db.prepare("SELECT proxy_id FROM temporary_windows WHERE id='temp-legacy'").get().proxy_id, "px_legacy");
+      } else assert.deepEqual(repository.db.prepare("SELECT * FROM temporary_windows").all(), []);
       assert.deepEqual(repository.db.prepare("SELECT * FROM icloud_state").all(), []);
       assert.deepEqual(repository.db.prepare("SELECT * FROM account_plans").all(), []);
       const backupPath = path.join(root, "backups", fs.readdirSync(path.join(root, "backups"))[0]);

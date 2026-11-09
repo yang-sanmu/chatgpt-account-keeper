@@ -92,6 +92,10 @@ export const MUTATING_METHODS = new Set([
   "groups.update",
   "groups.remove",
   "proxies.importSubscription",
+  "proxies.addSubscriptions",
+  "proxies.updateSubscription",
+  "proxies.refreshSubscriptions",
+  "proxies.removeSubscription",
   "proxies.importCustom",
   "proxies.renameCustom",
   "proxies.saveCustom",
@@ -627,6 +631,14 @@ export class ApplicationServices {
     add("groups.remove", this._groupsRemove);
     add("proxies.getState", this._proxiesGetState);
     add("proxies.importSubscription", this._proxiesImport);
+    add("proxies.addSubscriptions", (params) => this._subscriptionOperation("proxy-import", null,
+      (options) => this.runtime.proxies.addSubscriptions(params.urls, options)));
+    add("proxies.updateSubscription", (params) => this._subscriptionOperation("proxy-subscription-edit", requireId(params),
+      (options) => this.runtime.proxies.updateSubscription(params, options)));
+    add("proxies.refreshSubscriptions", (params) => this._subscriptionOperation("proxy-refresh", params.ids?.[0] ?? null,
+      (options) => this.runtime.proxies.refreshSubscriptions(params.ids, options)));
+    add("proxies.removeSubscription", (params) => this._subscriptionOperation("proxy-subscription-remove", requireId(params),
+      (options) => this.runtime.proxies.removeSubscription(params.id, options)));
     add("proxies.importCustom", this._proxiesImportCustom);
     add("proxies.getCustom", (params) => this.runtime.proxies.getCustom(requireId(params)));
     add("proxies.saveCustom", (params) => this._proxyOperation("proxy-custom-save", params.id ?? null, async () => {
@@ -1429,6 +1441,7 @@ export class ApplicationServices {
       nodes: this.runtime.proxies.getNodes(),
       status: this.runtime.proxies.status(),
       subscription: this.runtime.proxies.getSubscriptionInfo?.() ?? null,
+      ...(this.runtime.proxies.getSubscriptions ? { subscriptions: this.runtime.proxies.getSubscriptions() } : {}),
       runtime: this.runtime.proxies.getMihomoInfo?.() ?? null,
       ...(this.runtime.proxies.getNetworkConfig ? { network: this.runtime.proxies.getNetworkConfig() } : {}),
     };
@@ -1474,6 +1487,44 @@ export class ApplicationServices {
     );
   }
 
+  _subscriptionOptions(update) {
+    return {
+      onApply: () => {
+        assertInput(!this.draining, "Agent 正在退出或更新，请稍后重试");
+        update({ stage: "reconcile", message: "正在应用订阅节点", progress: 0.8 });
+      },
+      assertIdle: () => {
+        const subscriptionKinds = new Set(["proxy-import", "proxy-refresh", "proxy-subscription-edit", "proxy-subscription-remove"]);
+        const busy = this._getActivity().blockers.some((item) =>
+          item.kind !== "operation" || !subscriptionKinds.has(item.detail.kind));
+        if (busy || this.runtime.browserRuns?.listActive?.().length) {
+          fail(ERROR_CODES.RESOURCE_BUSY, "此更新会改变正在使用的代理配置，请关闭浏览器窗口并等待运行任务结束后重试", { retryable: true });
+        }
+      },
+      bindingLabels: (id) => {
+        const labels = this.runtime.store.getGroups().filter((group) => group.proxyId === id).map((group) => `分组「${group.name}」`);
+        for (const window of this.runtime.temporaryWindows?.list() ?? []) {
+          if (window.proxyId === id) labels.push(`临时窗口「${window.name}」`);
+        }
+        const network = this.runtime.proxies.getNetworkConfig?.().config;
+        if (network?.mode === "relay" && network.relayProxyId === id) labels.push("网络中转");
+        return labels;
+      },
+    };
+  }
+
+  _subscriptionOperation(kind, resourceId, action) {
+    return this._proxyOperation(kind, resourceId, async ({ update }) => {
+      update({ stage: "download", message: "正在处理订阅", progress: 0.1 });
+      const result = await action(this._subscriptionOptions(update));
+      if (result.routesChanged) {
+        this.runtime.clearRegionCache();
+        this.runtime.bumpConfigEpoch?.();
+      }
+      return result;
+    }, { stage: "queued", message: "等待处理订阅", blocksUpdate: true });
+  }
+
   _proxiesImport(params) {
     assertInput(typeof params.url === "string" && params.url.trim(), "订阅地址不能为空");
     return this._proxyOperation(
@@ -1482,7 +1533,7 @@ export class ApplicationServices {
       async ({ update }) => {
         update({ stage: "download", message: "正在下载并解析订阅", progress: 0.1 });
         let result;
-        try { result = await this.runtime.proxies.importSubscription(params.url); }
+        try { result = await this.runtime.proxies.importSubscription(params.url, this._subscriptionOptions(update)); }
         finally { this.runtime.clearRegionCache(); }
         update({ stage: "reconcile", message: "正在应用新的节点列表", progress: 0.8 });
         return result;
@@ -1507,7 +1558,7 @@ export class ApplicationServices {
       async ({ update }) => {
         update({ stage: "download", message: "正在刷新订阅", progress: 0.1 });
         let result;
-        try { result = await this.runtime.proxies.refreshSubscription(); }
+        try { result = await this.runtime.proxies.refreshSubscription(this._subscriptionOptions(update)); }
         finally { this.runtime.clearRegionCache(); }
         update({ stage: "reconcile", message: "正在应用新的节点列表", progress: 0.8 });
         return result;

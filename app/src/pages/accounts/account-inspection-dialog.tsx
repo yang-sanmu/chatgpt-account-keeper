@@ -5,6 +5,7 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { SearchableSelect } from "@/components/ui/searchable-select";
+import { proxyNodeOptions } from "@/lib/proxy-node-labels";
 import { useKeeperStore } from "@/store/keeperStore";
 
 interface AccountInspectionDialogProps {
@@ -14,13 +15,12 @@ interface AccountInspectionDialogProps {
 }
 
 export function AccountInspectionDialog({ title, ids, onClose }: AccountInspectionDialogProps) {
-  const nodes = useKeeperStore((s) => s.proxies.nodes);
+  const proxies = useKeeperStore((s) => s.proxies);
   const bulkRefreshStatus = useKeeperStore((s) => s.bulkRefreshStatus);
   const [useSpecifiedNode, setUseSpecifiedNode] = useState(false);
   const [proxyId, setProxyId] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const options = nodes.filter((node) => node.enabled && !node.missing)
-    .map((node) => ({ value: node.id, label: node.name }));
+  const options = proxyNodeOptions(proxies);
   const canSubmit = !submitting && ids.length > 0 &&
     (!useSpecifiedNode || options.some(({ value }) => value === proxyId));
 

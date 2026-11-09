@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import net from "node:net";
+import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import YAML from "yaml";
 import { parseCustomProxies, appendCustomProxies } from "./customProxy.js";
@@ -14,6 +15,7 @@ import { getGroups, effectiveProxyId } from "./store.js";
 import {
   assignStablePorts,
   mergeProxyNodes,
+  normalizeProxyPort,
   selectRuntimeProxyNodes,
 } from "./proxyUtils.js";
 import {
@@ -25,6 +27,9 @@ import * as log from "./logger.js";
 import { normalizeNetworkConfig, resolveSystemProxy, compileConnectionRoutes } from "./network/connectionMode.js";
 import { waitMihomoConfigApplied } from "./network/mihomoReadiness.js";
 import { throwIfCancelled } from "./cancellation.js";
+import {
+  allocateProxySlots, fetchSubscription, mergeSubscriptionNodes, stableJson, subscriptionHost, subscriptionUrl,
+} from "./proxySubscriptions.js";
 
 /**
  * 定向代理：让每个分组可以走指定的代理节点（VPN 节点），
@@ -92,6 +97,7 @@ function readStore() {
     const data = JSON.parse(fs.readFileSync(PROXIES_FILE, "utf8"));
     return {
       subscription: data.subscription ?? null,
+      ...(Array.isArray(data.subscriptions) ? { subscriptions: data.subscriptions } : {}),
       nodes: Array.isArray(data.nodes) ? data.nodes : [],
       mihomoPath: data.mihomoPath ?? null,
       clashVergeDir: data.clashVergeDir ?? DEFAULT_CLASH_VERGE_DIR,
@@ -108,6 +114,7 @@ function readStore() {
 }
 
 function writeStore(data) {
+  if (data.subscriptions) data = { ...data, nodes: allocateProxySlots(data.nodes) };
   if (typeof proxyStoreBackend?.writeProxyStore === "function") {
     return proxyStoreBackend.writeProxyStore(data);
   }
@@ -156,19 +163,20 @@ export function withClashVergeDirectory(store, directory) {
 /**
  * 节点列表。默认隐藏密码等敏感字段（前端用）。
  */
-export function getNodes({ safe = true } = {}) {
-  const { nodes } = readStore();
+export function getNodes({ safe = true, store = readStore() } = {}) {
+  const { nodes } = store;
   if (!safe) return nodes;
   // 端口映射算一次就够：早先每个节点都调 portOf()，
   // 而 portOf 会重新读整个 proxies.json —— 几百个节点的订阅就是几百次全文件解析。
-  const ports = portMapFrom(nodes);
-  const routedIds = referencedProxyIds();
+  const ports = portMapFrom(nodes, activeBasePort ?? configuredBasePort(store));
+  const routedIds = referencedProxyIds(store);
   return nodes.map((n) => ({
     id: n.id,
+    ...(n.sourceId ? { sourceId: n.sourceId } : {}),
     name: n.name,
     type: n.raw?.type ?? null,
     server: n.raw?.server ?? null,
-    port: n.raw?.port ?? null,
+    port: normalizeProxyPort(n.raw?.port),
     enabled: n.enabled !== false,
     missing: !!n.missing,
     // 上次测速结果随节点一起返回，界面无需另外关联 Operation 结果。
@@ -190,7 +198,11 @@ export function getNodes({ safe = true } = {}) {
  * 真实 URL 只留在本地 config/proxies.json。
  */
 export function getSubscriptionInfo() {
-  const { subscription, nodes } = readStore();
+  const { subscription, subscriptions, nodes } = readStore();
+  if (subscriptions?.length > 1) return null;
+  const single = subscriptions?.[0];
+  if (single) return single.url ? { configured: true, host: subscriptionHost(single.url) ?? "（地址无法解析）",
+    updatedAt: single.updatedAt ?? null, count: nodes.filter((node) => node.sourceId === single.id).length } : null;
   if (!subscription?.url) return null;
   let host = "";
   try {
@@ -206,6 +218,22 @@ export function getSubscriptionInfo() {
     updatedAt: subscription.updatedAt ?? null,
     count: nodes.filter((node) => !node.id.startsWith("custom_")).length,
   };
+}
+
+export function getSubscriptions() {
+  const { subscriptions = [], nodes } = readStore();
+  const counts = new Map();
+  for (const node of nodes) {
+    if (!node.sourceId) continue;
+    if (!counts.has(node.sourceId)) counts.set(node.sourceId, { count: 0, missingCount: 0 });
+    const count = counts.get(node.sourceId);
+    if (node.missing) count.missingCount++;
+    else if (node.enabled !== false) count.count++;
+  }
+  return subscriptions.map(({ id, name, url, updatedAt, attemptedAt, error }) => ({
+    id, name, configured: !!url, host: subscriptionHost(url), updatedAt: updatedAt ?? null,
+    attemptedAt: attemptedAt ?? null, error: error ?? null, ...(counts.get(id) ?? { count: 0, missingCount: 0 }),
+  }));
 }
 
 export function getMihomoInfo() {
@@ -294,7 +322,19 @@ function decodeMaybeBase64(text) {
  * 已有绑定通过“同名节点 id 不变”保留；订阅里消失的节点标 missing 而不是直接删，
  * 免得账号的代理配置突然变成空。
  */
-export async function importSubscription(url) {
+export async function importSubscription(url, options) {
+  const managed = readStore().subscriptions;
+  if (managed?.length > 1) throw badRequest("已配置多个订阅，请在订阅源列表中选择要更新的来源");
+  if (managed?.length === 1) {
+    const { results: [result] } = await updateSubscription({ id: managed[0].id, url }, options);
+    if (result.error) throw badRequest(result.error);
+    return { count: getSubscriptions()[0].count, total: getNodes().length };
+  }
+  if (managed && !readStore().subscription) {
+    const { results: [result] } = await addSubscriptions([url], options);
+    if (result.error) throw badRequest(result.error);
+    return { count: getSubscriptions()[0].count, total: getNodes().length };
+  }
   const target = String(url || "").trim();
   if (!/^https?:\/\//i.test(target)) {
     throw badRequest("订阅地址必须是 http(s) 链接");
@@ -356,10 +396,192 @@ export async function importSubscription(url) {
 /**
  * 手动刷新：复用已保存的订阅地址。
  */
-export async function refreshSubscription() {
-  const { subscription } = readStore();
+export async function refreshSubscription(options) {
+  const { subscription, subscriptions } = readStore();
+  if (subscriptions?.length > 1) throw badRequest("已配置多个订阅，请在订阅源列表中选择刷新范围");
+  if (subscriptions?.[0]) {
+    const { results: [result] } = await refreshSubscriptions([subscriptions[0].id], options);
+    if (result.error) throw badRequest(result.error);
+    return { count: getSubscriptions()[0].count, total: getNodes().length };
+  }
   if (!subscription?.url) throw badRequest("尚未配置订阅地址");
   return importSubscription(subscription.url);
+}
+
+const subscriptionDownloads = new Map();
+const linkReplacements = new Map();
+const appliedDownloads = new Map();
+const downloadTail = [Promise.resolve(), Promise.resolve(), Promise.resolve()];
+let nextDownloadSequence = 0;
+
+function downloadSubscription(url) {
+  if (!url) return fetchSubscription(url);
+  if (subscriptionDownloads.has(url)) return subscriptionDownloads.get(url);
+  const sequence = nextDownloadSequence++;
+  const lane = sequence % downloadTail.length;
+  const pending = downloadTail[lane].then(async () => ({ ...await fetchSubscription(url), sequence }))
+    .finally(() => subscriptionDownloads.delete(url));
+  downloadTail[lane] = pending.catch(() => {});
+  subscriptionDownloads.set(url, pending);
+  return pending;
+}
+
+function uniqueSourceName(sources, name) {
+  const used = new Set(sources.map((source) => source.name.toLowerCase()));
+  if (!used.has(name.toLowerCase())) return name;
+  for (let index = 2; ; index++) {
+    const candidate = `${name} (${index})`;
+    if (!used.has(candidate.toLowerCase())) return candidate;
+  }
+}
+
+function requireSource(sources, id) {
+  const source = sources.find((item) => item.id === id);
+  if (!source) throw badRequest("订阅源不存在");
+  return source;
+}
+
+async function commitSubscriptions(requests, { assertIdle = () => {}, onApply = () => {}, bindingLabels = () => [] } = {}) {
+  return runLifecycleTransition(async () => {
+    onApply();
+    const previous = readStore();
+    const references = referencedProxyIds(previous);
+    const sources = [...(previous.subscriptions ?? [])];
+    let nodes = previous.nodes;
+    const results = [];
+    const attempts = new Map();
+    const now = new Date().toISOString();
+    let dirty = false;
+    for (const [index, request] of requests.entries()) {
+      const { url, initial, downloaded, replacement, name, remove } = request;
+      const at = initial ? sources.findIndex((source) => source.id === initial.id) : -1;
+      const current = sources[at];
+      if (initial && (!current || current.url !== initial.url || current.linkRevision !== initial.linkRevision ||
+        (replacement && linkReplacements.get(initial.id) !== replacement))) {
+        results.push({ index, id: initial.id, name: initial.name, error: "订阅源已变更，请重新操作" });
+        continue;
+      }
+      if (current && url === current.url && downloaded?.sequence !== undefined &&
+          downloaded.sequence < (appliedDownloads.get(current.id) ?? -1)) {
+        results.push({ index, id: current.id, name: current.name, error: "已忽略较早的刷新结果" });
+        continue;
+      }
+      if (remove) {
+        const bound = nodes.filter((node) => node.sourceId === current.id && references.has(node.id));
+        if (bound.length) {
+          const labels = bound.flatMap((node) => bindingLabels(node.id));
+          throw badRequest(`此订阅仍被使用，请先更换节点：${[...new Set(labels.length ? labels : bound.map((node) => node.name))].join("、")}`);
+        }
+        sources.splice(at, 1);
+        nodes = nodes.filter((node) => node.sourceId !== current.id);
+        attempts.set(current.id, null);
+        results.push({ index, id: current.id, name: current.name });
+        dirty = true;
+        continue;
+      }
+      const duplicate = url && sources.find((source) => source.id !== current?.id && subscriptionUrl(source.url) === url);
+      if (duplicate) {
+        results.push({ index, id: duplicate.id, name: duplicate.name, duplicate: true, error: "此链接已存在" });
+        continue;
+      }
+      const label = name ?? current?.name ?? uniqueSourceName(sources, subscriptionHost(url)?.slice(0, 180) ?? "订阅");
+      if (name && sources.some((source) => source.id !== current?.id && source.name.toLowerCase() === name.toLowerCase())) {
+        results.push({ index, id: current?.id, name: label, error: "订阅别名已存在" });
+        continue;
+      }
+      const id = current?.id ?? randomUUID();
+      const oldNodes = nodes.filter((node) => node.sourceId === id);
+      const merged = downloaded?.nodes ? mergeSubscriptionNodes(id, downloaded.nodes, oldNodes, references) : null;
+      const error = downloaded?.error ?? (downloaded?.skipped && merged?.missing.length ? "订阅包含无效记录，已保留原有绑定节点" : null);
+      if (downloaded?.sequence !== undefined && (current || merged)) attempts.set(id, downloaded.sequence);
+      if (error) {
+        if (current) {
+          sources[at] = { ...current, attemptedAt: now, error };
+          dirty = true;
+        }
+        results.push({ index, id: current?.id, name: label, host: subscriptionHost(url), error });
+        continue;
+      }
+      if (merged) {
+        const first = nodes.findIndex((node) => node.sourceId === id);
+        const atNode = first < 0 ? nodes.length : first;
+        nodes = [...nodes.slice(0, atNode), ...merged.nodes, ...nodes.slice(atNode).filter((node) => node.sourceId !== id)];
+      }
+      const source = { ...current, id, name: label };
+      if (merged) {
+        Object.assign(source, { url, attemptedAt: now, updatedAt: now, error: null,
+          linkRevision: (current?.linkRevision ?? 0) + Number(!!current && current.url !== url) });
+      }
+      if (current) sources[at] = source;
+      else sources.push(source);
+      results.push({ index, id, name: label, host: subscriptionHost(source.url),
+        ...(merged ? { added: merged.added, updated: merged.updated, removed: merged.removed,
+          skipped: merged.duplicates + downloaded.skipped,
+          missing: merged.missing.map((node) => ({ ...node, bindings: bindingLabels(node.id) })) } : {}) });
+      dirty = true;
+    }
+    if (!dirty) return { results, routesChanged: false };
+    let routesChanged = false;
+    if (nodes === previous.nodes) {
+      writeStore({ ...previous, subscription: null, subscriptions: sources });
+    } else {
+      const candidate = { ...previous, subscription: null, subscriptions: sources, nodes: allocateProxySlots(nodes) };
+      if (Buffer.byteLength(JSON.stringify(getNodes({ store: candidate }))) > 6 * 1024 * 1024) {
+        throw badRequest("订阅节点过多，请减少节点后重试");
+      }
+      routesChanged = await applySubscriptionSnapshot(previous, candidate, references, assertIdle);
+      const live = new Set(candidate.nodes.filter((node) => !node.missing).map((node) => node.id));
+      for (const id of nodeLatency.keys()) if (!live.has(id)) nodeLatency.delete(id);
+    }
+    for (const [id, sequence] of attempts) {
+      if (sequence === null) appliedDownloads.delete(id);
+      else appliedDownloads.set(id, sequence);
+    }
+    return { results, routesChanged };
+  });
+}
+
+export async function addSubscriptions(values, options) {
+  const sources = readStore().subscriptions ?? [];
+  const requests = await Promise.all(values.map(async (value) => {
+    const url = subscriptionUrl(value);
+    const duplicate = url && sources.some((source) => subscriptionUrl(source.url) === url);
+    return { url, downloaded: duplicate ? { error: "此链接已存在" } : await downloadSubscription(url) };
+  }));
+  return commitSubscriptions(requests, options);
+}
+
+export async function updateSubscription({ id, name, url: value }, options) {
+  const initial = requireSource(readStore().subscriptions ?? [], id);
+  if (name !== undefined) {
+    name = name.trim();
+    if (!name || name.length > 200 || /[\x00-\x1f\x7f]/.test(name)) throw badRequest("订阅别名须为 1–200 个字符");
+  }
+  if (value === undefined) return commitSubscriptions([{ initial, name }], options);
+  const replacement = Symbol();
+  linkReplacements.set(id, replacement);
+  try {
+    const url = subscriptionUrl(value);
+    const downloaded = await downloadSubscription(url);
+    return await commitSubscriptions([{ initial, name, url, downloaded, replacement }], options);
+  } finally {
+    if (linkReplacements.get(id) === replacement) linkReplacements.delete(id);
+  }
+}
+
+export async function refreshSubscriptions(ids, options) {
+  const sources = readStore().subscriptions ?? [];
+  const selected = ids ? [...new Set(ids)].map((id) => requireSource(sources, id)) : sources.filter((source) => source.url);
+  if (!selected.length) throw badRequest("尚未配置订阅地址");
+  const requests = await Promise.all(selected.map(async (initial) => {
+    const url = subscriptionUrl(initial.url);
+    return { initial, url, downloaded: await downloadSubscription(url) };
+  }));
+  return commitSubscriptions(requests, options);
+}
+
+export function removeSubscription(id, options) {
+  return commitSubscriptions([{ initial: requireSource(readStore().subscriptions ?? [], id), remove: true }], options);
 }
 
 export async function importCustom(input, protocol = "http") {
@@ -411,6 +633,7 @@ export async function saveCustom(params) {
   const old = id ? requireCustomNode(store, id) : store.nodes.find((node) => node.id === parsed.id);
   const nodeId = old?.id ?? parsed.id;
   const node = { ...parsed, id: nodeId, name, enabled: old ? old.enabled !== false : true,
+    portSlot: old?.portSlot,
     raw: { ...parsed.raw, name: old?.raw.name ?? parsed.raw.name } };
   const connectionChanged = old && JSON.stringify(old.raw) !== JSON.stringify(node.raw);
   const nodes = old ? store.nodes.map((item) => item.id === old.id ? node : item) : [...store.nodes, node];
@@ -437,7 +660,7 @@ export async function removeCustom(id) {
   requireCustomNode(store, id);
   if (referencedProxyIds().has(id)) throw badRequest("该节点正被分组使用、被临时窗口引用或已选为网络中转，请先修改对应配置再删除");
   portMapFrom(store.nodes);
-  const portOrder = portOrderAfterRemoval ?? store.nodes.map((node) => node.id);
+  const portOrder = store.subscriptions ? null : portOrderAfterRemoval ?? store.nodes.map((node) => node.id);
   writeStore({ ...store, nodes: store.nodes.filter((node) => node.id !== id) });
   portOrderAfterRemoval = portOrder;
   nodeLatency.delete(id);
@@ -446,10 +669,13 @@ export async function removeCustom(id) {
 
 export async function clearNodes() {
   const previous = readStore();
+  const references = referencedProxyIds(previous);
   writeStore({
     ...previous,
     subscription: null,
-    nodes: [],
+    ...(previous.subscriptions ? { subscriptions: [] } : {}),
+    nodes: previous.subscriptions ? previous.nodes.filter((node) => references.has(node.id))
+      .map((node) => ({ ...node, sourceId: null, raw: {}, enabled: false, missing: true })) : [],
     mihomoPath: previous.mihomoPath,
     clashVergeDir: previous.clashVergeDir,
   });
@@ -467,8 +693,8 @@ export async function clearNodes() {
 // 边车看到同一批端口，否则浏览器会把流量发到错误的监听口。
 let activeBasePort = null;
 
-function configuredBasePort() {
-  const value = Number(readStore().basePort);
+function configuredBasePort(store = readStore()) {
+  const value = Number(store.basePort);
   return Number.isInteger(value) && value >= 1024 && value <= 60000 ? value : DEFAULT_BASE_PORT;
 }
 
@@ -489,18 +715,19 @@ function apiPortFor(basePort) {
  *
  * 只检查实际要用到的端口，不检查整段：段内零散端口被占用不影响我们。
  */
-async function resolveFreeBasePort() {
-  const preferred = configuredBasePort();
-  for (let attempt = 0; attempt < 12; attempt++) {
-    const base = preferred + attempt * 1000;
-    if (apiPortFor(base) > 65535) break;
+async function resolveFreeBasePort(store, references, preserveCurrentPort) {
+  const preferred = configuredBasePort(store);
+  const bases = Array.from({ length: 12 }, (_, index) => preferred + index * 1000);
+  if (preserveCurrentPort && activeBasePort !== null) bases.unshift(activeBasePort);
+  for (const base of new Set(bases)) {
+    if (apiPortFor(base) > 65535) continue;
     // 先给现有程序让位，再验证最终链路。系统代理本身可能占着首选端口，
     // 此时提前生成配置会把外部代理误判成本工具的循环入口。
-    const { nodes } = readStore();
+    const { nodes } = store;
     const ports = portMapFrom(nodes, base);
     const candidates = [
       apiPortFor(base),
-      ...selectRuntimeProxyNodes(nodes, referencedProxyIds()).map((node) => ports.get(node.id)),
+      ...selectRuntimeProxyNodes(nodes, references).map((node) => ports.get(node.id)),
     ];
     if ((await findOccupiedPorts(candidates)).length === 0) return base;
   }
@@ -508,6 +735,13 @@ async function resolveFreeBasePort() {
 }
 
 function portMapFrom(nodes, basePort = currentBasePort()) {
+  if (nodes.some((node) => Number.isInteger(node.portSlot))) {
+    return new Map(allocateProxySlots(nodes).map(({ id, portSlot }) => {
+      const port = basePort + portSlot + Number(portSlot >= API_PORT_OFFSET);
+      if (port > 65535) throw badRequest("代理节点过多，本地监听端口已用尽");
+      return [id, port];
+    }));
+  }
   if (portOrderAfterRemoval) {
     const known = new Set(portOrderAfterRemoval);
     for (const node of nodes) {
@@ -535,13 +769,13 @@ export function configureTemporaryProxyIds(provider) {
   return () => { temporaryProxyIds = previous; };
 }
 
-function referencedProxyIds() {
+function referencedProxyIds(store = readStore()) {
   const ids = new Set(
     getGroups()
       .map((group) => group.proxyId)
       .filter(Boolean)
   );
-  const network = normalizeNetworkConfig(readStore().network);
+  const network = normalizeNetworkConfig(store.network);
   for (const id of temporaryProxyIds()) if (id) ids.add(id);
   if (network.mode === "relay") ids.add(network.relayProxyId);
   return ids;
@@ -587,10 +821,79 @@ export function waitForNetworkTransition() {
   return lifecycleTail;
 }
 
-export function buildConfig(basePort = currentBasePort()) {
-  const { nodes, network } = readStore();
+function relayUnavailable(store) {
+  const config = normalizeNetworkConfig(store.network);
+  if (config.mode !== "relay") return false;
+  const relay = store.nodes.find((node) => node.id === config.relayProxyId);
+  return !relay || relay.missing || relay.enabled === false || !relay.raw?.type || !relay.raw?.server;
+}
+
+function subscriptionRuntimeSignature(store, references) {
+  if (relayUnavailable(store)) return "relay-unavailable";
+  const cfg = buildConfig(currentBasePort(), store, references);
+  return cfg.listeners.length ? stableJson(cfg) : "idle";
+}
+
+async function applySubscriptionSnapshot(previous, candidate, references, assertIdle) {
+  // Untouched bindings keep their node objects and their allocated port slots.
+  const boundBefore = new Set(previous.nodes.filter((node) => references.has(node.id)));
+  const boundAfter = candidate.nodes.filter((node) => references.has(node.id));
+  if (boundBefore.size === boundAfter.length && boundAfter.every((node) => boundBefore.has(node))) {
+    writeStore(candidate);
+    return false;
+  }
+  let previousRuntime;
+  try {
+    previousRuntime = subscriptionRuntimeSignature(previous, references);
+  } catch {
+    // A refresh can repair an existing invalid configuration.
+  }
+  let nextRuntime;
+  try {
+    nextRuntime = subscriptionRuntimeSignature(candidate, references);
+  } catch (error) {
+    // A restored listener can claim a port that an external system proxy now occupies.
+    if (!previousRuntime || !error.systemProxyPort || !(await findOccupiedPorts([error.systemProxyPort])).length) throw error;
+  }
+  if (nextRuntime === previousRuntime) {
+    writeStore(candidate);
+    return false;
+  }
+  assertIdle();
+  const previousBasePort = activeBasePort;
+  const before = stableJson(previous);
+  const referenceKey = [...references].sort().join("\n");
+  try {
+    if (nextRuntime === "relay-unavailable") await stopAndWait();
+    else await ensureRunningUnlocked(candidate, references, { allowReuse: nextRuntime !== undefined });
+    const latest = readStore();
+    if (stableJson(latest) !== before || [...referencedProxyIds(latest)].sort().join("\n") !== referenceKey) {
+      throw Object.assign(new Error("代理绑定或配置已变更，请重试订阅操作"), { code: "RESOURCE_BUSY" });
+    }
+    writeStore(candidate);
+    return true;
+  } catch (error) {
+    activeBasePort = previousBasePort;
+    try {
+      const saved = readStore();
+      if (relayUnavailable(saved)) await stopAndWait();
+      else await ensureRunningUnlocked(saved);
+    } catch {
+      await stopAndWait();
+      throw Object.assign(new Error("订阅应用失败，原代理配置暂时无法启动"), { code: "PROXY_UNAVAILABLE" });
+    }
+    if (error.code === "RESOURCE_BUSY") throw error;
+    throw Object.assign(new Error("订阅应用失败，已恢复原代理配置"), { code: "PROXY_UNAVAILABLE" });
+  }
+}
+
+export function buildConfig(basePort = currentBasePort(), store = readStore(), references = referencedProxyIds(store)) {
+  const { nodes, network } = store;
   const config = normalizeNetworkConfig(network);
-  const { adapters, targets: active } = compileConnectionRoutes({ nodes, proxyIds: referencedProxyIds(), network: config,
+  const ordered = nodes.some((node) => Number.isInteger(node.portSlot))
+    ? allocateProxySlots(nodes).sort((a, b) => a.portSlot - b.portSlot)
+    : nodes;
+  const { adapters, targets: active } = compileConnectionRoutes({ nodes: ordered, proxyIds: references, network: config,
     systemProxy: config.mode === "system" ? resolveSystemProxy(config) : undefined });
   // 仍按完整订阅中的顺序分配端口，分组引用增减不会改变其它节点的端口。
   const ports = portMapFrom(nodes, basePort);
@@ -598,9 +901,10 @@ export function buildConfig(basePort = currentBasePort()) {
     const server = resolveSystemProxy(config).server;
     if (server) {
       const url = new URL(server);
+      const systemProxyPort = Number(url.port);
       if (["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) &&
-          [...active.map((node) => ports.get(node.id)), apiPortFor(basePort), TEST_API_PORT].includes(Number(url.port))) {
-        throw badRequest("系统代理入口不能指向本工具的代理或控制端口，否则会产生循环转发");
+          [...active.map((node) => ports.get(node.id)), apiPortFor(basePort), TEST_API_PORT].includes(systemProxyPort)) {
+        throw Object.assign(badRequest("系统代理入口不能指向本工具的代理或控制端口，否则会产生循环转发"), { systemProxyPort });
       }
     }
   }
@@ -642,8 +946,9 @@ export function buildConfig(basePort = currentBasePort()) {
  * 这点很重要——每个账号启动浏览器都会调它，若每次都重启边车，
  * 一个账号开浏览器就会掐断其它账号正在进行的请求。
  */
-async function ensureRunningUnlocked() {
-  const store = readStore();
+async function ensureRunningUnlocked(snapshot, snapshotReferences, { allowReuse = true } = {}) {
+  let store = snapshot ?? readStore();
+  let references = snapshotReferences ?? referencedProxyIds(store);
   const network = normalizeNetworkConfig(store.network);
   // 中转失效必须先报告，即使当前已没有可用监听节点，也不能当成无需启动而成功。
   if (network.mode === "relay") {
@@ -653,7 +958,7 @@ async function ensureRunningUnlocked() {
   // 所以这里不能把这份配置当成最终配置使用。
   const routedNodeCount = selectRuntimeProxyNodes(
     store.nodes,
-    referencedProxyIds()
+    references
   ).length;
   if (routedNodeCount === 0) {
     await stopAndWait();
@@ -671,9 +976,9 @@ async function ensureRunningUnlocked() {
   // 复用判定必须基于**正在运行**的那个端口段（activeBasePort），而不是配置里的
   // 首选段。否则一旦发生过让路，每次调用都会认为配置变了而重启边车 —— 每个账号
   // 开浏览器都会掐断其它账号正在进行的请求。
-  if (child && !child.killed) {
-    const reuseFingerprint = JSON.stringify({
-      config: buildConfig(currentBasePort()),
+  if (allowReuse && child && !child.killed) {
+    const reuseFingerprint = stableJson({
+      config: buildConfig(currentBasePort(), store, references),
       executable: executableKey,
     });
     if (currentFingerprint === reuseFingerprint) {
@@ -684,6 +989,13 @@ async function ensureRunningUnlocked() {
   // 先等旧进程真正退出，再起新的：否则旧进程还占着端口，
   // 新进程会绑定失败。
   await stopAndWait();
+  if (!snapshot) {
+    store = readStore();
+    references = referencedProxyIds(store);
+    if (!selectRuntimeProxyNodes(store.nodes, references).length && !relayUnavailable(store)) {
+      return { running: false, reason: "没有启用的代理节点" };
+    }
+  }
 
   // 自己的进程已退出，此时仍被占用的端口一定属于别的程序 —— 通常是用户的
   // Clash Verge，它的入站端口段与本项目默认段（21000+）重叠。
@@ -692,7 +1004,7 @@ async function ensureRunningUnlocked() {
   // 也不能无视冲突继续启动：mihomo 绑定失败会立刻退出，而"端口连得上"的检查
   // 会把 Verge 的监听误判为启动成功，账号流量最终流向另一套路由规则，
   // 表现为 ERR_PROXY_CONNECTION_FAILED。
-  const basePort = await resolveFreeBasePort();
+  const basePort = await resolveFreeBasePort(store, references, !!snapshot);
   if (basePort === null) {
     throw new Error(
       `本地端口段 ${configuredBasePort()} 起连续多段都已被其它程序占用` +
@@ -704,9 +1016,8 @@ async function ensureRunningUnlocked() {
     log.info(`默认端口段被占用，本次改用 ${basePort} 起的空闲端口段`);
   }
   // 端口段确定后再生成最终配置，并让 getNodes/proxyForAccount 看到同一批端口。
-  activeBasePort = basePort;
-  const cfg = buildConfig(basePort);
-  const fingerprint = JSON.stringify({ config: cfg, executable: executableKey });
+  const cfg = buildConfig(basePort, store, references);
+  const fingerprint = stableJson({ config: cfg, executable: executableKey });
 
   ensureDir(RUNTIME_DIR);
   const cfgPath = path.join(RUNTIME_DIR, "config.yaml");
@@ -770,6 +1081,7 @@ async function ensureRunningUnlocked() {
     await stopAndWait();
     throw new Error("mihomo 配置未完成应用，代理转发尚未就绪，请检查内核和控制端口");
   }
+  activeBasePort = basePort;
   currentFingerprint = fingerprint;
   const firstPort = cfg.listeners[0].port;
   log.info(`代理边车已启动：${cfg.listeners.length} 个节点全部就绪，端口 ${firstPort}+`);

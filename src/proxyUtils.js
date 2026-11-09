@@ -1,3 +1,8 @@
+export function normalizeProxyPort(value) {
+  const port = Number(value);
+  return Number.isInteger(port) && port >= 1 && port <= 65535 ? port : null;
+}
+
 /**
  * Normalize one Clash/mihomo proxy node before it is persisted or rendered.
  * In particular, `port` must become a real integer so subscription-controlled
@@ -7,15 +12,13 @@ export function normalizeProxyNode(raw) {
   const name = String(raw?.name ?? "").trim();
   const type = String(raw?.type ?? "").trim();
   const server = String(raw?.server ?? "").trim();
-  const port = Number(raw?.port);
+  const port = normalizeProxyPort(raw?.port);
 
   if (
     !name ||
     !type ||
     !server ||
-    !Number.isInteger(port) ||
-    port < 1 ||
-    port > 65535
+    port === null
   ) {
     return null;
   }

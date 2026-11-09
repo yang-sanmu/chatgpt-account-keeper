@@ -7,11 +7,13 @@ import { Card, CardHeader, CardTitle, CardContent, CardFooter } from "@/componen
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { GroupDialog } from "./group-dialog";
 import { GroupDeleteDialog } from "./group-delete-dialog";
+import { proxyNodeLabels } from "@/lib/proxy-node-labels";
 import type { Group } from "@/ipc/types";
 
 export function GroupsSection() {
   const groups = useKeeperStore((s) => s.groups);
   const proxies = useKeeperStore((s) => s.proxies);
+  const nodeLabels = proxyNodeLabels(proxies);
 
   const [dialogState, setDialogState] = React.useState<
     { mode: "create" } | { mode: "edit"; group: Group } | null
@@ -37,9 +39,9 @@ export function GroupsSection() {
       ) : (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-4 items-start">
           {groups.map((group) => {
-            const proxyNode = group.proxyId 
-              ? proxies.nodes.find((n) => n.id === group.proxyId)
-              : null;
+            const binding = group.proxyId
+              ? nodeLabels.get(group.proxyId) ?? `${group.proxyId}（不可用）`
+              : "跟随网络配置";
 
             return (
               <Card key={group.id} className="flex flex-col transition-colors hover:border-subtle">
@@ -51,8 +53,8 @@ export function GroupsSection() {
                 <CardContent className="flex flex-col gap-2 pb-3 text-sm">
                   <div className="flex justify-between items-center">
                     <span className="text-muted">绑定节点</span>
-                    <span className="text-primary truncate" title={proxyNode?.name || "跟随网络配置"}>
-                      {group.proxyId ? (proxyNode?.name || group.proxyId) : "跟随网络配置"}
+                    <span className="text-primary truncate" title={binding}>
+                      {binding}
                     </span>
                   </div>
                   <div className="flex justify-between items-center">

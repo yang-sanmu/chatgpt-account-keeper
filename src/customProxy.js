@@ -25,7 +25,7 @@ export function appendCustomProxies(previous, imported) {
   const nodes = new Map(previous.map((node) => [node.id, node]));
   for (const node of imported) {
     const old = nodes.get(node.id);
-    nodes.set(node.id, { ...node, name: old?.name ?? node.name, enabled: old ? old.enabled !== false : true });
+    nodes.set(node.id, { ...old, ...node, name: old?.name ?? node.name, enabled: old ? old.enabled !== false : true });
   }
   return [...nodes.values()];
 }

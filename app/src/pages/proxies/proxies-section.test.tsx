@@ -2,6 +2,8 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { beforeEach, expect, it, vi } from "vitest";
 import { __resetKeeperStoreForTests, useKeeperStore } from "@/store/keeperStore";
 import { ProxiesSection } from "./proxies-section";
+import { GroupsSection } from "./groups-section";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import type { ProxyNode } from "@/ipc/types";
 import * as bridge from "@/ipc/bridge";
 import { parseCustomProxyInput } from "../../../../src/customProxyInput.js";
@@ -9,6 +11,52 @@ import { parseCustomProxyInput } from "../../../../src/customProxyInput.js";
 beforeEach(() => {
   vi.restoreAllMocks();
   __resetKeeperStoreForTests();
+});
+
+it("shows the source and availability of the saved group node", () => {
+  const node: ProxyNode = {
+    id: "px_a", sourceId: "a", name: "香港 01", type: "http", server: "a.example.test", port: 443,
+    enabled: true, missing: false, localPort: null, latencyMs: null, latencyOk: null,
+    latencyMessage: null, latencyTestedAt: null,
+  };
+  const source = { id: "a", name: "机场 A", configured: true, host: "a.example.test",
+    updatedAt: null, attemptedAt: null, error: null, count: 1, missingCount: 0 };
+  useKeeperStore.setState((state) => ({
+    groups: [
+      { id: "group-a", name: "分组 A", proxyId: "px_a", timezone: null, locale: null },
+      { id: "group-b", name: "分组 B", proxyId: "px_b", timezone: null, locale: null },
+    ],
+    proxies: {
+      ...state.proxies,
+      subscriptions: [source, { ...source, id: "b", name: "机场 B", count: 0, missingCount: 1 }],
+      nodes: [node, { ...node, id: "px_b", sourceId: "b", missing: true }],
+    },
+  }));
+  render(<TooltipProvider><GroupsSection /></TooltipProvider>);
+  expect(screen.getByText("机场 A · 香港 01")).toBeInTheDocument();
+  expect(screen.getByText("机场 B · 香港 01（不可用）")).toBeInTheDocument();
+});
+
+it("imports several links and retains failed links without retrying duplicates", async () => {
+  const first = "https://a.example.test/sub?token=first";
+  const second = "https://b.example.test/sub?token=second";
+  const runOperation = vi.fn().mockResolvedValue({ result: { results: [
+    { index: 0, name: "机场 A", added: 2, updated: 0, removed: 0, skipped: 0 },
+    { index: 1, name: "机场 B", error: "无法拉取订阅" },
+    { index: 2, name: "机场 A", error: "此链接已存在", duplicate: true },
+  ] } });
+  useKeeperStore.setState({ runOperation });
+  render(<ProxiesSection />);
+  const links = screen.getByLabelText("订阅链接（每行一条）");
+  fireEvent.change(links, { target: { value: `${first}\n${second}\n${first}` } });
+  fireEvent.click(screen.getByRole("button", { name: "导入订阅" }));
+  await waitFor(() => expect(links).toHaveValue(second));
+  expect(runOperation).toHaveBeenCalledWith("proxies.addSubscriptions", { urls: [first, second, first] });
+  const report = screen.getByRole("list", { name: "订阅操作结果" });
+  expect(report).toHaveTextContent("机场 A · 新增 2");
+  expect(report).toHaveTextContent("机场 B · 无法拉取订阅");
+  expect(report).toHaveTextContent("机场 A · 此链接已存在");
+  expect(report).not.toHaveTextContent("token=");
 });
 
 it("collapses subscription nodes and edits custom connection fields without changing the id", async () => {

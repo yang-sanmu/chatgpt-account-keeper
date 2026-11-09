@@ -24,6 +24,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SearchableSelect } from "@/components/ui/searchable-select";
+import { proxyNodeLabels, proxyNodeOptions } from "@/lib/proxy-node-labels";
 import { StatusDot } from "@/components/ui/status-dot";
 import { agentCall, newCommandId } from "@/ipc/bridge";
 import type { NetworkConfigParams, NetworkConfigResult } from "@/ipc/generated";
@@ -218,6 +219,7 @@ export function NetworkPage() {
   const savedRelay = proxies.nodes.find(
     (node) => node.id === current?.config.relayProxyId
   );
+  const nodeLabels = proxyNodeLabels(proxies);
   const unavailableRelay = draft.mode === "relay" && !relay;
 
   const busy = useKeeperStore((state) =>
@@ -352,9 +354,7 @@ export function NetworkPage() {
                           : "text-primary"
                       )}
                     >
-                      {savedRelay
-                        ? `${savedRelay.name}${!savedRelay.enabled || savedRelay.missing ? "（不可用）" : ""}`
-                        : "未找到节点"}
+                      {nodeLabels.get(current.config.relayProxyId ?? "") ?? "未找到节点"}
                     </span>
                   </>
                 )}
@@ -679,10 +679,7 @@ export function NetworkPage() {
                         onValueChange={(value) =>
                           change({ relayProxyId: value })
                         }
-                        options={usableNodes.map((node) => ({
-                          value: node.id,
-                          label: `${node.id.startsWith("custom_") ? "自定义" : "订阅"} · ${node.name} · ${node.type ?? ""} · ${node.server ?? ""}:${node.port ?? ""}`,
-                        }))}
+                        options={proxyNodeOptions(proxies, draft.relayProxyId ?? undefined)}
                       />
                     </div>
 

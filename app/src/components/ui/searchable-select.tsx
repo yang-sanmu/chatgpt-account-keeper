@@ -7,7 +7,7 @@ import { Check, ChevronsUpDown } from "lucide-react";
 interface SearchableSelectProps {
   value: string;
   onValueChange: (value: string) => void;
-  options: { value: string; label: string }[];
+  options: { value: string; label: string; searchText?: string; disabled?: boolean }[];
   label: string;
   id?: string;
   className?: string;
@@ -20,7 +20,8 @@ export function SearchableSelect({ value, onValueChange, options, label, id, cla
   const list = React.useRef<HTMLDivElement>(null);
   const listId = React.useId();
   const keywords = query.trim().toLocaleLowerCase().split(/\s+/);
-  const matches = options.filter((option) => keywords.every((part) => option.label.toLocaleLowerCase().includes(part)));
+  const matches = options.filter((option) => !option.disabled &&
+    keywords.every((part) => `${option.label} ${option.searchText ?? ""}`.toLocaleLowerCase().includes(part)));
 
   const select = (next: string) => {
     onValueChange(next);

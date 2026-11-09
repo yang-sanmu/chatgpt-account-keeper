@@ -437,6 +437,7 @@ export class KeeperRepository {
       "accounts",
       "groups",
       "proxy_nodes",
+      "proxy_subscriptions",
       "conversation_sets",
       "run_history",
       "profile_maintenance_state",
@@ -598,6 +599,14 @@ export class KeeperRepository {
           json(node.legacyExtra)
         )
       );
+      const legacyUrl = proxySettings.subscriptionUrl?.trim() || null;
+      if (legacyUrl || data.proxyNodes.some((node) => !node.id.startsWith("custom_"))) {
+        this.replaceProxySubscriptions([{ id: "legacy-subscription", name: legacyUrl ? "原有订阅" : "旧节点",
+          url: legacyUrl, updatedAt: proxySettings.subscriptionUpdatedAt }]);
+        this.db.prepare("UPDATE proxy_nodes SET source_id='legacy-subscription' WHERE substr(id, 1, 7) <> 'custom_'").run();
+        this.db.prepare("UPDATE proxy_settings SET subscription_url=NULL, subscription_updated_at=NULL").run();
+      }
+      this.db.prepare("UPDATE proxy_nodes SET port_slot=sort_order").run();
 
       const insertGroup = this.db.prepare(
         "INSERT INTO groups(id, sort_order, name, proxy_id, timezone, locale, timezone_manual, legacy_extra_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
@@ -1229,22 +1238,30 @@ export class KeeperRepository {
   getProxyState({ includeSecrets = false } = {}) {
     const settings = this.db.prepare("SELECT * FROM proxy_settings WHERE singleton_id = 1").get();
     const rows = this.db.prepare("SELECT * FROM proxy_nodes ORDER BY sort_order, id").all();
+    const subscriptions = this.db.prepare("SELECT * FROM proxy_subscriptions ORDER BY rowid").all();
+    const single = subscriptions.length === 1 ? subscriptions[0] : null;
+    const subscriptionUrl = subscriptions.length ? single?.url ?? null : settings.subscription_url;
+    const subscriptionUpdatedAt = subscriptions.length ? single?.updated_at ?? null : settings.subscription_updated_at;
     let subscriptionHost = null;
-    if (settings.subscription_url) {
+    if (subscriptionUrl) {
       try {
-        subscriptionHost = new URL(settings.subscription_url).host;
+        subscriptionHost = new URL(subscriptionUrl).host;
       } catch {
         subscriptionHost = null;
       }
     }
     return {
       subscription: includeSecrets
-        ? { url: settings.subscription_url, updatedAt: settings.subscription_updated_at }
+        ? { url: subscriptionUrl, updatedAt: subscriptionUpdatedAt }
         : {
-            configured: !!settings.subscription_url,
+            configured: !!subscriptionUrl,
             host: subscriptionHost,
-            updatedAt: settings.subscription_updated_at,
+            updatedAt: subscriptionUpdatedAt,
           },
+      subscriptions: subscriptions.map((row) => ({
+        id: row.id, name: row.name, updatedAt: row.updated_at, attemptedAt: row.attempted_at, error: row.error,
+        ...(includeSecrets ? { url: row.url, linkRevision: row.link_revision } : {}),
+      })),
       mihomoPath: includeSecrets ? settings.mihomo_path : null,
       clashVergeDir: settings.clash_verge_dir,
       network: parseJson(settings.network_config_json, {}),
@@ -1254,6 +1271,8 @@ export class KeeperRepository {
           id: row.id,
           sortOrder: row.sort_order,
           name: row.name,
+          sourceId: row.source_id,
+          ...(row.port_slot === null ? {} : { portSlot: row.port_slot }),
           enabled: !!row.enabled,
           missing: !!row.missing,
           ...(includeSecrets
@@ -1266,7 +1285,8 @@ export class KeeperRepository {
 
   updateProxySettings(patch = {}) {
     const current = this.getProxyState({ includeSecrets: true });
-    const subscription = patch.subscription ?? current.subscription;
+    const subscription = Object.hasOwn(patch, "subscription") ? patch.subscription
+      : current.subscriptions.length ? null : current.subscription;
     const mihomoPath = patch.mihomoPath !== undefined ? patch.mihomoPath : current.mihomoPath;
     const clashVergeDir =
       patch.clashVergeDir !== undefined ? patch.clashVergeDir : current.clashVergeDir;
@@ -1285,6 +1305,23 @@ export class KeeperRepository {
     return this.getProxyState();
   }
 
+  replaceProxySubscriptions(sources) {
+    const upsert = this.db.prepare(`
+      INSERT INTO proxy_subscriptions(id, name, url, link_revision, updated_at, attempted_at, error) VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET name=excluded.name, url=excluded.url, link_revision=excluded.link_revision, updated_at=excluded.updated_at,
+        attempted_at=excluded.attempted_at, error=excluded.error
+    `);
+    const ids = new Set(sources.map((source) => source.id));
+    const remove = this.db.prepare("DELETE FROM proxy_subscriptions WHERE id=?");
+    for (const row of this.db.prepare("SELECT id FROM proxy_subscriptions").all()) {
+      if (!ids.has(row.id)) remove.run(row.id);
+    }
+    for (const source of sources) {
+      upsert.run(source.id, source.name, source.url ?? null, source.linkRevision ?? 0, source.updatedAt ?? null,
+        source.attemptedAt ?? null, source.error ?? null);
+    }
+  }
+
   replaceProxyNodes(nodes) {
     if (!Array.isArray(nodes)) throw repositoryError("VALIDATION_FAILED", "nodes 必须是数组");
     const ids = new Set();
@@ -1297,10 +1334,11 @@ export class KeeperRepository {
     const network = this.getProxyState().network;
     this.transaction(() => {
       const upsert = this.db.prepare(
-        `INSERT INTO proxy_nodes(id, sort_order, name, raw_json, enabled, missing, legacy_extra_json)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO proxy_nodes(id, sort_order, name, raw_json, enabled, missing, legacy_extra_json, source_id, port_slot)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET sort_order=excluded.sort_order, name=excluded.name,
-           raw_json=excluded.raw_json, enabled=excluded.enabled, missing=excluded.missing`
+           raw_json=excluded.raw_json, enabled=excluded.enabled, missing=excluded.missing,
+           source_id=excluded.source_id, port_slot=excluded.port_slot`
       );
       nodes.forEach((node, index) =>
         upsert.run(
@@ -1310,7 +1348,9 @@ export class KeeperRepository {
           JSON.stringify(node.raw ?? {}),
           bool(node.enabled, true),
           bool(node.missing),
-          json(node.legacyExtra)
+          json(node.legacyExtra),
+          node.sourceId ?? null,
+          node.portSlot ?? null
         )
       );
       const existing = this.db.prepare("SELECT id FROM proxy_nodes").all();

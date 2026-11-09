@@ -9,6 +9,7 @@ import { SearchableSelect } from "@/components/ui/searchable-select";
 import type { AccountPlanCheckResult } from "@/ipc/types";
 import { displayEmail, shortId } from "@/lib/format";
 import { describeError } from "@/lib/notify";
+import { proxyNodeOptions } from "@/lib/proxy-node-labels";
 import { useKeeperStore } from "@/store/keeperStore";
 
 interface Props {
@@ -19,7 +20,7 @@ interface Props {
 }
 
 export function AccountPlanDialog({ title, ids, allIds, onClose }: Props) {
-  const nodes = useKeeperStore((s) => s.proxies.nodes);
+  const proxies = useKeeperStore((s) => s.proxies);
   const active = useKeeperStore((s) => s.operations.find((op) => op.kind === "account-plan-check" &&
     (op.state === "queued" || op.state === "running")));
   const runOperation = useKeeperStore((s) => s.runOperation);
@@ -31,8 +32,7 @@ export function AccountPlanDialog({ title, ids, allIds, onClose }: Props) {
   const [result, setResult] = useState<AccountPlanCheckResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const selected = all && allIds ? allIds : ids;
-  const options = nodes.filter((node) => node.enabled && !node.missing)
-    .map((node) => ({ value: node.id, label: node.name }));
+  const options = proxyNodeOptions(proxies);
 
   const run = async () => {
     const [first, ...rest] = selected;

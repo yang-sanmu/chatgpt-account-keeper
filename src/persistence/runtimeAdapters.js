@@ -157,6 +157,7 @@ export function createSqliteRuntimeAdapters(repository) {
       const state = repository.getProxyState({ includeSecrets: true });
       return {
         subscription: state.subscription?.url ? state.subscription : null,
+        subscriptions: state.subscriptions,
         nodes: state.nodes,
         mihomoPath: state.mihomoPath,
         clashVergeDir: state.clashVergeDir,
@@ -166,13 +167,12 @@ export function createSqliteRuntimeAdapters(repository) {
     writeProxyStore(value) {
       repository.transaction(() => {
         repository.updateProxySettings({
-          subscription: value.subscription ?? null,
+          subscription: value.subscriptions?.length ? null : value.subscription ?? null,
           mihomoPath: value.mihomoPath ?? null,
           clashVergeDir: value.clashVergeDir ?? null,
           network: value.network,
         });
-        // The manager's array order defines local proxy ports. Refreshing a
-        // subscription can move retained custom nodes, so discard stale positions.
+        if (value.subscriptions) repository.replaceProxySubscriptions(value.subscriptions);
         repository.replaceProxyNodes((value.nodes ?? []).map((node, sortOrder) => ({ ...node, sortOrder })));
       });
       return value;

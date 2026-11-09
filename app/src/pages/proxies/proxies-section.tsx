@@ -1,27 +1,23 @@
 import * as React from "react";
 import { useKeeperStore } from "@/store/keeperStore";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { StatusDot } from "@/components/ui/status-dot";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
-import { DownloadCloud, RefreshCw, Activity, Link2, Loader2, Play } from "lucide-react";
+import { Activity, Play } from "lucide-react";
 import { notify } from "@/lib/notify";
 import { cn } from "@/lib/utils";
-import { RelativeTime } from "@/components/ui/relative-time";
 import { formatDateTime } from "@/lib/format";
 import { agentCall, newCommandId } from "@/ipc/bridge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { CustomNodeDialog } from "./custom-node-dialog";
+import { SubscriptionsSection } from "./subscriptions-section";
 import type { ProxyNode } from "@/ipc/types";
 
 export function ProxiesSection() {
   const proxies = useKeeperStore((s) => s.proxies);
   const runOperation = useKeeperStore((s) => s.runOperation);
-  const [subUrl, setSubUrl] = React.useState("");
-  const [importing, setImporting] = React.useState(false);
-  const [refreshing, setRefreshing] = React.useState(false);
   const [testingAll, setTestingAll] = React.useState(false);
   const [editing, setEditing] = React.useState<{ node: ProxyNode; action: "remove" } | null>(null);
   const [nodeEditor, setNodeEditor] = React.useState<{ id?: string } | null>(null);
@@ -30,6 +26,7 @@ export function ProxiesSection() {
   const groups = useKeeperStore((s) => s.groups);
   const customNodes = proxies.nodes.filter((node) => node.id.startsWith("custom_"));
   const subscriptionNodes = proxies.nodes.filter((node) => !node.id.startsWith("custom_"));
+  const sourceNames = new Map(proxies.subscriptions?.map((source) => [source.id, source.name]));
   const referencedGroups = editing ? groups.filter((group) => group.proxyId === editing.node.id) : [];
 
   const handleSaveNode = async () => {
@@ -43,32 +40,6 @@ export function ProxiesSection() {
       notify.error("操作失败", error);
     } finally {
       setSaving(false);
-    }
-  };
-
-  const handleImport = async () => {
-    if (!subUrl.trim()) return notify.warning("URL 不能为空", "请输入订阅链接");
-    setImporting(true);
-    try {
-      await runOperation("proxies.importSubscription", { url: subUrl.trim() });
-      notify.success("导入成功", "已成功拉取代理订阅");
-      setSubUrl("");
-    } catch (error) {
-      notify.error("导入失败", error);
-    } finally {
-      setImporting(false);
-    }
-  };
-
-  const handleRefresh = async () => {
-    setRefreshing(true);
-    try {
-      await runOperation("proxies.refreshSubscription", {});
-      notify.success("刷新成功", "已更新代理订阅");
-    } catch (error) {
-      notify.error("刷新失败", error);
-    } finally {
-      setRefreshing(false);
     }
   };
 
@@ -142,12 +113,15 @@ export function ProxiesSection() {
                       <td className="px-4 py-2">
                         <Switch
                           checked={node.enabled}
+                          disabled={node.missing}
                           onCheckedChange={(c) => handleToggleNode(node.id, c)}
                           aria-label="启用/停用节点"
                         />
                       </td>
                       <td className="px-4 py-2 truncate max-w-[200px]" title={node.name}>
                         {node.name}
+                        {node.sourceId && <span className="ml-2 text-xs text-muted">{sourceNames.get(node.sourceId)}</span>}
+                        {node.missing && <span className="ml-2 text-xs text-warn">失效</span>}
                       </td>
                       <td className="px-4 py-2 truncate text-secondary" title={node.server ? `${node.server}:${node.port}` : ""}>
                         {node.server ? `${node.server}:${node.port}` : "—"}
@@ -165,6 +139,7 @@ export function ProxiesSection() {
                         <Button
                           variant="ghost"
                           size="icon-sm"
+                          disabled={node.missing || !node.enabled}
                           onClick={() => handleTestNode(node.id)}
                           aria-label="测速"
                         >
@@ -202,64 +177,16 @@ export function ProxiesSection() {
 
       <Card>
         <CardContent className="p-4 space-y-4">
-          <div className="flex flex-wrap items-center gap-4">
-            <div className="flex-1 min-w-[300px] flex gap-2">
-              <div className="relative flex-1">
-                <Link2 className="absolute left-2.5 top-2 size-4 text-muted" />
-                <Input
-                  value={subUrl}
-                  onChange={(e) => setSubUrl(e.target.value)}
-                  placeholder="粘贴订阅链接导入..."
-                  className="pl-8"
-                  onKeyDown={(e) => {
-                    if (e.code === "Enter" && subUrl) void handleImport();
-                  }}
-                />
-              </div>
-              <Button onClick={handleImport} disabled={importing || !subUrl.trim()}>
-                {importing ? <Loader2 className="mr-2 size-4 animate-spin" /> : <DownloadCloud className="mr-2 size-4" />}
-                导入
-              </Button>
-            </div>
-
-            <div className="h-8 w-px bg-subtle hidden sm:block" />
-
-            <div className="flex items-center gap-2">
-              {proxies.subscription?.configured ? (
-                <div className="flex flex-col mr-4">
-                  <span className="text-xs text-secondary truncate max-w-[200px]" title={proxies.subscription.host}>
-                    {proxies.subscription.host}
-                  </span>
-                  <span className="text-xs text-muted">
-                    最后更新: <RelativeTime value={proxies.subscription.updatedAt} fallback="—" />
-                  </span>
-                </div>
-              ) : (
-                <span className="text-xs text-muted mr-4">无当前订阅</span>
-              )}
-
-              <Button
-                variant="outline"
-                onClick={handleRefresh}
-                disabled={refreshing || !proxies.subscription?.configured}
-              >
-                <RefreshCw className={cn("mr-2 size-4", refreshing && "animate-spin")} />
-                刷新
-              </Button>
-              <Button
-                variant="outline"
-                onClick={handleTestAll}
-                disabled={testingAll || proxies.nodes.length === 0}
-              >
-                <Activity className={cn("mr-2 size-4", testingAll && "animate-pulse")} />
-                全部测速
-              </Button>
-            </div>
+          <SubscriptionsSection sources={proxies.subscriptions ?? []} />
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <Button variant="outline" aria-expanded={subscriptionOpen} aria-controls="subscription-nodes" onClick={() => setSubscriptionOpen(!subscriptionOpen)}>
+              {subscriptionOpen ? "收起" : "展开"}订阅节点（{subscriptionNodes.length}）
+            </Button>
+            <Button variant="outline" onClick={handleTestAll} disabled={testingAll || proxies.nodes.length === 0}>
+              <Activity className={cn("mr-2 size-4", testingAll && "animate-pulse")} />
+              全部测速
+            </Button>
           </div>
-
-          <Button variant="outline" aria-expanded={subscriptionOpen} aria-controls="subscription-nodes" onClick={() => setSubscriptionOpen(!subscriptionOpen)}>
-            {subscriptionOpen ? "收起" : "展开"}订阅节点（{subscriptionNodes.length}）
-          </Button>
           {subscriptionOpen && <div id="subscription-nodes">{renderNodes(subscriptionNodes, false)}</div>}
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold">自定义节点</h3>

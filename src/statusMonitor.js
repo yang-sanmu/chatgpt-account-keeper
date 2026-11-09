@@ -325,6 +325,19 @@ export function setCachedStatus(accountId, state, email, detail = null, options 
   return next;
 }
 
+export function setCachedPromo(accountId, promo) {
+  const previous = getCachedStatus(accountId);
+  const next = { ...previous, ...mergePromoObservation(previous, { promo }, new Date().toISOString()) };
+  cache.set(accountId, next);
+  persistCache();
+  return next;
+}
+
+function cacheRefreshResult(id, result) {
+  const status = setCachedStatus(id, result.state, result.email, result.detail ?? null, { promo: result.promo });
+  return result.tokenStatus ? { ...status, tokenStatus: result.tokenStatus } : status;
+}
+
 function heldCachedStatus(accountId) {
   const cached = getCachedStatus(accountId);
   return {
@@ -362,11 +375,9 @@ export async function refreshAccount(account, opts = {}) {
         deleted: true,
       };
     }
-    const live = await checkLoggedIn(liveAccount, { page: opts.page });
+    const live = await checkLoggedIn(liveAccount, { page: opts.page, accountPlans: opts.accountPlans });
     if (live.skipped) return live;
-    return setCachedStatus(account.id, live.state, live.email, live.detail ?? null, {
-      promo: live.promo,
-    });
+    return cacheRefreshResult(account.id, live);
   }
   if (isHeld(account.id)) {
     return heldCachedStatus(account.id);
@@ -399,20 +410,14 @@ export async function refreshAccount(account, opts = {}) {
         deleted: true,
       };
     }
-    return checkLoggedIn(liveAccount);
+    return checkLoggedIn(liveAccount, { accountPlans: opts.accountPlans });
   });
   if (result.deleted) {
     deleteCachedStatus(account.id);
     return result;
   }
   if (result.skipped) return result;
-  return setCachedStatus(
-    account.id,
-    result.state,
-    result.email,
-    result.detail ?? null,
-    { promo: result.promo }
-  );
+  return cacheRefreshResult(account.id, result);
 }
 
 export function shouldRunImmediateCheck(settings, isStartup) {

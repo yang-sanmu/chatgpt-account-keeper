@@ -10,6 +10,8 @@ Depending on the features you use, the application stores account labels and ide
 
 Chrome Profile data and proxy credentials are sensitive. Do not publish, share, or attach them to issue reports. Diagnostic logs are designed to redact common secrets, but you should still inspect logs before sharing them.
 
+Manually requested account status checks save the verified ChatGPT access token in the local database using encryption. Removing the account deletes its stored token from the active database. Selecting **Copy accessToken** writes the selected tokens to the system clipboard, where they are available to the clipboard features of your operating system.
+
 If you use iCloud Hide My Email, the application also stores the synchronized addresses, cloud labels and notes, local notes, usage flags, a hashed account identifier, creation scheduling records, and uncertain creation results locally. Apple login cookies remain in a dedicated Chrome Profile; the application does not ask for your Apple password or copy login cookies into its database.
 
 ## Network connections
@@ -17,6 +19,7 @@ If you use iCloud Hide My Email, the application also stores the synchronized ad
 The application makes network connections only to provide requested local features:
 
 - Google Chrome connects to ChatGPT/OpenAI authentication and web endpoints when you log in, open a page, run a check, or enable scheduled work. Page content, prompts, outputs, cookies, IP addresses, and ordinary browser metadata are then processed under the destination service's privacy policy.
+- Account plan queries send the saved access token to ChatGPT over HTTPS through the proxy node you select.
 - When you open or synchronize iCloud Hide My Email, create an address, or enable continuous creation, the dedicated Chrome Profile connects to Apple's iCloud website and authentication services. Fixed labels and cloud notes are submitted to Apple when an address is created. Local notes and usage flags remain in this application.
 - Traffic may pass through proxy servers that you configure. Their operators can observe metadata and, depending on protocol and destination encryption, other traffic.
 - When a proxy-backed group has no manually configured region, the Agent queries `ip-api.com` through that proxy to derive the proxy exit's country and time zone. The service sees the proxy exit IP, not a maintainer-controlled identifier.

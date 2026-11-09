@@ -24,6 +24,7 @@ import {
 import * as log from "./logger.js";
 import { normalizeNetworkConfig, resolveSystemProxy, compileConnectionRoutes } from "./network/connectionMode.js";
 import { waitMihomoConfigApplied } from "./network/mihomoReadiness.js";
+import { throwIfCancelled } from "./cancellation.js";
 
 /**
  * 定向代理：让每个分组可以走指定的代理节点（VPN 节点），
@@ -971,11 +972,12 @@ function runTestLifecycle(fn) {
   return run;
 }
 
-function buildTestConfig(nodes) {
+function buildTestConfig(nodes, listenerPort) {
   const store = readStore();
   const network = normalizeNetworkConfig(store.network);
-  const { adapters } = compileConnectionRoutes({ nodes: store.nodes, proxyIds: nodes.map((node) => node.id), network,
+  const { adapters, targets } = compileConnectionRoutes({ nodes: store.nodes, proxyIds: nodes.map((node) => node.id), network,
     systemProxy: network.mode === "system" ? resolveSystemProxy(network) : undefined });
+  if (listenerPort && !targets.some(({ id }) => id === nodes[0].id)) throw badRequest("所选节点不可用");
   return {
     // 延迟检测直接调用控制接口，不需要额外开放入站代理端口。
     "mixed-port": 0,
@@ -992,7 +994,9 @@ function buildTestConfig(nodes) {
       nameserver: ["223.5.5.5", "1.1.1.1"],
     },
     proxies: adapters,
-    rules: ["MATCH,DIRECT"],
+    ...(listenerPort ? { listeners: [{ name: "account-plan", type: "http", listen: "127.0.0.1",
+      port: listenerPort, proxy: `out-${nodes[0].id}` }] } : {}),
+    rules: [listenerPort ? "MATCH,REJECT" : "MATCH,DIRECT"],
   };
 }
 
@@ -1026,7 +1030,9 @@ async function stopTestAndWait(timeoutMs = 5000) {
   });
 }
 
-async function withTestSidecarUnlocked(nodes, fn) {
+async function withTestSidecarUnlocked(nodes, fn, { listenerPort, signal } = {}) {
+  throwIfCancelled(signal);
+  const purpose = listenerPort ? "套餐查询" : "测速";
   const bin = resolveMihomo();
   if (!bin) {
     throw new Error(
@@ -1036,9 +1042,10 @@ async function withTestSidecarUnlocked(nodes, fn) {
 
   await stopTestAndWait();
   if (!(await isPortAvailable(TEST_API_PORT))) {
-    throw badRequest(`测速控制端口 ${TEST_API_PORT} 已被其它程序占用，请释放该端口后重试`);
+    throw badRequest(`${purpose}控制端口 ${TEST_API_PORT} 已被其它程序占用，请释放该端口后重试`);
   }
-  const cfg = buildTestConfig(nodes);
+  throwIfCancelled(signal);
+  const cfg = buildTestConfig(nodes, listenerPort);
   ensureDir(TEST_RUNTIME_DIR);
   const cfgPath = path.join(TEST_RUNTIME_DIR, "config.yaml");
   fs.writeFileSync(cfgPath, YAML.stringify(cfg), "utf8");
@@ -1051,7 +1058,7 @@ async function withTestSidecarUnlocked(nodes, fn) {
   let spawnError = null;
   proc.once("error", (error) => {
     spawnError = error;
-    log.warn("mihomo 测速进程无法启动: " + String(error?.message || error));
+    log.warn(`mihomo ${purpose}进程无法启动: ` + String(error?.message || error));
     if (testChild === proc) testChild = null;
   });
   proc.stdout.on("data", (b) => {
@@ -1063,23 +1070,28 @@ async function withTestSidecarUnlocked(nodes, fn) {
     if (s) log.warn("[mihomo-test] " + s.split("\n").slice(-1)[0]);
   });
   proc.on("exit", (code) => {
-    if (code !== 0 && code !== null) log.warn(`mihomo 测速进程退出，code=${code}`);
+    if (code !== 0 && code !== null) log.warn(`mihomo ${purpose}进程退出，code=${code}`);
     if (testChild === proc) testChild = null;
   });
 
   try {
-    const ok = await waitPort(TEST_API_PORT, 12000, () => !!spawnError || proc.exitCode !== null || proc.signalCode !== null);
+    const stopped = () => signal?.aborted || !!spawnError || proc.exitCode !== null || proc.signalCode !== null;
+    const ok = await waitPort(TEST_API_PORT, 12000, stopped);
+    throwIfCancelled(signal);
     if (!ok) {
       throw new Error(
         spawnError
-          ? `mihomo 测速进程无法启动：${String(spawnError.message || spawnError)}`
-          : "mihomo 测速进程启动后控制端口未就绪"
+          ? `mihomo ${purpose}进程无法启动：${String(spawnError.message || spawnError)}`
+          : `mihomo ${purpose}进程启动后控制端口未就绪`
       );
     }
     const applied = await waitMihomoConfigApplied(TEST_API_PORT, cfg, {
-      timeoutMs: 12000, shouldStop: () => !!spawnError || proc.exitCode !== null || proc.signalCode !== null,
+      timeoutMs: 12000, shouldStop: stopped,
     });
-    if (!applied.ok) throw new Error("mihomo 测速配置未完成应用");
+    throwIfCancelled(signal);
+    if (!applied.ok) throw new Error(`mihomo ${purpose}配置未完成应用`);
+    if (listenerPort && !(await waitPort(listenerPort, 2000, stopped))) throw new Error("套餐查询节点入口未就绪");
+    throwIfCancelled(signal);
     return await fn();
   } finally {
     await stopTestAndWait();
@@ -1088,6 +1100,21 @@ async function withTestSidecarUnlocked(nodes, fn) {
 
 function withTestSidecar(nodes, fn) {
   return runTestLifecycle(() => withTestSidecarUnlocked(nodes, fn));
+}
+
+export function withPlanProxy(id, signal, action) {
+  return runTestLifecycle(async () => {
+    throwIfCancelled(signal);
+    const node = testableNodeOrThrow(readStore().nodes, id);
+    const listenerPort = await new Promise((resolve, reject) => {
+      const server = net.createServer().once("error", reject);
+      server.listen(0, "127.0.0.1", () => {
+        const { port } = server.address();
+        server.close((error) => error ? reject(error) : resolve(port));
+      });
+    });
+    return withTestSidecarUnlocked([node], () => action(`http://127.0.0.1:${listenerPort}`), { listenerPort, signal });
+  });
 }
 
 function testableNodeOrThrow(nodes, id) {

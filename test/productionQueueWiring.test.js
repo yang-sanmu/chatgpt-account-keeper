@@ -98,7 +98,8 @@ async function composeFake(overrides = {}) {
     checkSelectors: overrides.checkSelectors ?? (async () => ({ ok: true })),
     refreshAccount: overrides.refreshAccount ?? (async () => ({ state: "ok" })),
     recordConversation: overrides.recordConversation,
-    statusMonitor: null,
+    statusMonitor: overrides.statusMonitor ?? null,
+    accountViewRuntime: overrides.accountViewRuntime,
     scheduler: overrides.scheduler ?? fakeScheduler(),
     getProxyNodes: overrides.getProxyNodes ?? healthyNodes,
     requireBroker: true,
@@ -166,6 +167,39 @@ test("后台任务只创建一个 runToken，且关闭时 dispose 的正是启�
   assert.deepEqual(broker.disposed, broker.tokens, "dispose 的必须是启动过的同一个 token");
   assert.equal(seenPages.length, 1);
   assert.ok(seenPages[0], "业务函数必须收到调用方提供的 page");
+});
+
+test("手动巡检获取 accessToken，且不会合并到已排队的自动巡检", async (t) => {
+  const accountPlans = { getPlan: () => ({}) };
+  const seen = [];
+  let enqueueAutomatic;
+  const store = fakeStore();
+  const { background, operations } = await composeFake({
+    store,
+    statusMonitor: { configureEnqueue: (enqueue) => { enqueueAutomatic = enqueue; } },
+    accountViewRuntime: () => ({ accountPlans }),
+    refreshAccount: async (_account, options) => {
+      seen.push(options.accountPlans);
+      return options.accountPlans
+        ? { state: "ok", tokenStatus: "unavailable", lastCheckDetail: "连接已关闭\nCall log" }
+        : { state: "ok" };
+    },
+  });
+  const services = createApplicationServices({ operations, runtime: { store, accountPlans, enqueue: background.enqueue } });
+  t.after(async () => {
+    services.dispose();
+    await background.dispose();
+  });
+
+  enqueueAutomatic("acc-1");
+  const [automatic] = operations.listActive();
+  const manual = await services.invoke("accounts.refreshStatus", { id: "acc-1" });
+  assert.notEqual(manual.id, automatic.id);
+  const [completed] = await Promise.all([manual, automatic].map(({ id }) => operations.waitForTerminal(id)));
+  assert.equal(completed.message, "未获取到 accessToken：连接已关闭");
+  assert.equal(seen.length, 2);
+  assert.ok(seen.includes(undefined));
+  assert.ok(seen.includes(accountPlans));
 });
 
 test("BrowserRun 记录真实 rootPid，而不是 null", async () => {

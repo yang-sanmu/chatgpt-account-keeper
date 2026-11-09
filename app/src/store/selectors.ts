@@ -8,6 +8,7 @@ import { useCallback, useMemo } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useKeeperStore } from "./keeperStore";
 import { displayEmail, shortId } from "@/lib/format";
+import { useTick } from "@/lib/useTick";
 import {
   isFilterActive,
   selectVisibleAccounts,
@@ -24,7 +25,8 @@ export function useVisibleAccounts(): AccountRecord[] {
   const records = useKeeperStore((state) => state.accounts);
   const ids = useKeeperStore((state) => state.accountIds);
   const filter = useKeeperStore((state) => state.accountFilter);
-  return useMemo(() => selectVisibleAccounts(records, ids, filter), [records, ids, filter]);
+  const tokenTick = useTick(filter.tokenStatuses.some((status) => status !== "none"));
+  return useMemo(() => selectVisibleAccounts(records, ids, filter), [records, ids, filter, tokenTick]);
 }
 
 /// 单条账号记录。卡片组件用它，一条事件只唤醒对应的那一张。
@@ -45,13 +47,20 @@ export function useAccountFilter() {
 
 export function useAccountSelection() {
   return useKeeperStore(
-    useShallow((state) => ({
-      selectedIds: state.selectedAccountIds,
-      count: state.selectedAccountIds.size,
-      toggle: state.toggleAccountSelected,
-      select: state.selectAccounts,
-      clear: state.clearAccountSelection,
-    }))
+    useShallow((state) => {
+      let tokenCount = 0;
+      for (const id of state.selectedAccountIds) {
+        if (state.accounts[id]?.effective.hasAccessToken) tokenCount++;
+      }
+      return {
+        selectedIds: state.selectedAccountIds,
+        count: state.selectedAccountIds.size,
+        tokenCount,
+        toggle: state.toggleAccountSelected,
+        select: state.selectAccounts,
+        clear: state.clearAccountSelection,
+      };
+    })
   );
 }
 

@@ -14,11 +14,18 @@
 
 import type { StatusDotProps } from "@/components/ui/status-dot";
 import type { PromoEligibility } from "@/ipc/types";
+import type { AccountTokenStatus } from "@/store/accountModel";
 
 type DotStatus = NonNullable<StatusDotProps["status"]>;
 
 /// Agent 会发的账号状态。
 export const ACCOUNT_STATES = ["ok", "reauth", "out", "unknown"] as const;
+
+export const TOKEN_STATUS_LABELS: Record<AccountTokenStatus, string> = {
+  none: "无 Token",
+  unexpired: "token正常",
+  expired: "Token 已过期",
+};
 
 export type AccountState = (typeof ACCOUNT_STATES)[number];
 

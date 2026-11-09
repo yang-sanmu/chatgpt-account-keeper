@@ -24,6 +24,7 @@ const OPERATIONS: Record<string, OperationMeta> = {
   "account-login": { action: "登录", resource: "account" },
   "account-run": { action: "立即运行", resource: "account" },
   "account-status-refresh": { action: "刷新状态", resource: "account" },
+  "account-plan-check": { action: "查询套餐", resource: "account" },
   "account-selector-check": { action: "检查选择器", resource: "account" },
   "account-busy": { action: "占用中", resource: "account" },
   "open-page": { action: "打开网页", resource: "account" },

@@ -383,14 +383,25 @@ export async function composeBackground({
 
   // 状态检查同样经 withBrowserRun：它自己走账号锁 + launch 的老路会在队列已持锁时
   // 被 isBusy 判为忙碌并直接返回 cached skipped，巡检永远不启动 Chrome。
-  queue.registerHandler(WORK_KINDS.statusCheck, async (context) =>
-    withBrowserRun(context, async ({ signal, page, account }) => {
-      const value = await refreshAccount(account, { page, signal });
+  queue.registerHandler(WORK_KINDS.statusCheck, async (context) => {
+    const result = await withBrowserRun(context, async ({ signal, page, account }) => {
+      const accountPlans = accountViewRuntime?.()?.accountPlans;
+      const value = await refreshAccount(account, {
+        page, signal, accountPlans: context.dedupeParams?.captureAccessToken ? accountPlans : undefined,
+      });
       const latest = store.getAccount(account.id) ?? account;
-      events?.publish("accountStatus.changed", publicStatus(latest, value));
+      events?.publish("accountStatus.changed", publicStatus(latest, value, accountPlans));
       return value;
-    })
-  );
+    });
+    const reason = result?.lastCheckDetail?.split("\n", 1)[0];
+    const tokenMessage = {
+      saved: "巡检完成，已保存 accessToken",
+      unavailable: reason ? `未获取到 accessToken：${reason}` : "巡检完成，未获取到 accessToken",
+      failed: "巡检完成，保存 accessToken 失败",
+    }[result?.tokenStatus];
+    if (tokenMessage) context.setStage("complete", tokenMessage);
+    return result;
+  });
 
   queue.registerHandler(WORK_KINDS.selectorCheck, async (context) => {
     const result = await withBrowserRun(context, async ({ signal, page, account }) => {

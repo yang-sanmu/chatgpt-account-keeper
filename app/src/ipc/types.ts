@@ -63,6 +63,11 @@ export interface Account {
   promoCheckedAt: string | null;
   promoStale: boolean;
   promoCheckDetail: string | null;
+  planType?: string | null;
+  planCheckedAt?: string | null;
+  planCheckDetail?: string | null;
+  hasAccessToken?: boolean;
+  accessTokenExpiresAt?: string | null;
   exitNode: string | null;
   exitNodeMissing: boolean;
   rotationTopic: string | null;
@@ -158,6 +163,12 @@ export interface ApiError {
 }
 
 export type OperationState = Operation["state"];
+
+export interface AccountPlanCheckResult {
+  total: number;
+  succeeded: number;
+  failures: { id: string; detail: string }[];
+}
 
 export type HistoryAccount = HistoryAccountResult;
 export type HistoryEntry = HistoryEntryResult;

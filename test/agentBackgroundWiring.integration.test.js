@@ -193,7 +193,7 @@ test(
       clientVersion: "wiring-test",
       capabilities: ["events"],
     });
-    assert.equal(hello.protocol.maxMinor, 9, output());
+    assert.equal(hello.protocol.maxMinor, 10, output());
 
     // 新方法必须真的接在服务上，而不只是写进契约。
     const snapshot = await client.call("queue.getSnapshot");

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
-import { publicAccount } from "../src/application/services.js";
+import { PROTOCOL_VERSION, publicAccount } from "../src/application/services.js";
 import path from "node:path";
 import {
   ApplicationServices,
@@ -206,7 +206,7 @@ test("hello negotiates major version and bootstrap contains a consistent managem
   });
   // minor 3 新增 queue.getSnapshot / browserRuns.* 与 queue.changed /
   // browserRun.changed；minMinor 仍为 0，旧客户端不受影响。
-  assert.deepEqual(hello.protocol, { major: 1, minMinor: 0, maxMinor: 9 });
+  assert.deepEqual(hello.protocol, { major: 1, minMinor: 0, maxMinor: PROTOCOL_VERSION.minor });
   assert.equal(hello.agentVersion, "test");
   assert.ok(hello.capabilities.includes("operations"));
 
@@ -387,6 +387,60 @@ test("proxy-bound account creation starts mihomo and rechecks the group after aw
     (error) => error.code === ERROR_CODES.PROXY_UNAVAILABLE
   );
   assert.equal(groups.length, 1);
+});
+
+test("批量套餐走指定节点并报告缺少 Token 的账号，显式读取才返回 Token", async () => {
+  const runtime = fakeRuntime({ ipcAuthToken: "test-private-ipc-key" });
+  const account = runtime.store.addAccount({ note: "missing token" });
+  const proxyId = "chosen-node";
+  const proxyUrl = "http://127.0.0.1:30123";
+  const token = "fixture-private-session-token";
+  runtime.proxies.nodes.push({ id: proxyId, enabled: true, missing: false });
+  const visits = [];
+  runtime.proxies.withPlanProxy = async (id, signal, action) => {
+    visits.push(id);
+    assert.equal(signal.aborted, false);
+    return action(proxyUrl);
+  };
+  let storedPlan = null;
+  runtime.accountPlans = {
+    getToken: (id) => id === "acc_1" ? { token, sealed: "encrypted" } : null,
+    getPlan: () => ({ planType: storedPlan, planCheckedAt: null, planCheckDetail: null }),
+    savePlan(id, sealed, result) {
+      assert.equal(id, "acc_1");
+      assert.equal(sealed, "encrypted");
+      storedPlan = result.planType;
+      return true;
+    },
+  };
+  const promo = { ok: true, eligibility: "free_trial" };
+  runtime.setCachedPromo = (id, observation) => {
+    assert.equal(id, "acc_1");
+    assert.deepEqual(observation, promo);
+    return { state: "unknown", email: "unconfirmed@example.test", promoEligibility: "free_trial" };
+  };
+  runtime.createPlanClient = (url) => {
+    assert.equal(url, proxyUrl);
+    return { check: async (value) => { assert.equal(value, token); return { planType: "plus", promo }; }, close() {} };
+  };
+  const services = new ApplicationServices({ runtime });
+  const events = [];
+  services.events.subscribe((event) => events.push(event));
+  const ids = ["acc_1", account.id];
+  const operation = await services.execute(request("accounts.checkPlans", { ids, proxyId }));
+  const completed = await services.operations.waitForTerminal(operation.id);
+  assert.deepEqual(visits, [proxyId]);
+  assert.deepEqual(completed.result, {
+    total: 2, succeeded: 1, failures: [{ id: account.id, detail: "缺少 accessToken，请先巡检" }],
+  });
+  assert.deepEqual(events.find(({ event }) => event === "accountStatus.changed").payload, {
+    id: "acc_1", planType: "plus", planCheckedAt: null, planCheckDetail: null,
+    promoEligibility: "free_trial", promoCheckedAt: null, promoStale: false, promoCheckDetail: null,
+  });
+  assert.ok(!JSON.stringify({ completed, events }).includes(token));
+  assert.deepEqual(await services.execute({ method: "accounts.readAccessTokens", params: { ids } }), { tokens: [token] });
+  services.runtime.ipcAuthToken = null;
+  await assert.rejects(services.execute({ method: "accounts.readAccessTokens", params: { ids } }), /已认证/);
 });
 
 test("command receipts coalesce concurrent requests and replay the same result", async () => {

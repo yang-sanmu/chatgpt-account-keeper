@@ -40,6 +40,8 @@ export const METHOD_CONTRACTS = Object.freeze({
   "accounts.remove": ["accountRemoveParams", "okResult"],
   "accounts.getStatus": ["idParams", "accountStatusResult"],
   "accounts.refreshStatus": ["idParams", "operationResult"],
+  "accounts.checkPlans": ["accountPlanParams", "operationResult"],
+  "accounts.readAccessTokens": ["accountTokenParams", "accountTokenResult"],
   "accounts.runNow": ["idParams", "operationResult"],
   "accounts.checkSelectors": ["selectorCheckParams", "operationResult"],
   "browser.startLogin": ["loginParams", "operationResult"],

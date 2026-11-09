@@ -1,3 +1,5 @@
+import { ACCOUNTS_CHECK_PATH, parseAccountPlan } from "./accountPlanResponse.js";
+
 /**
  * ChatGPT Plus 优惠资格探测。
  *
@@ -63,6 +65,12 @@ export function isPromoEligibility(value) {
   return PROMO_ELIGIBILITIES.includes(value);
 }
 
+export function promoForDiscount(percentage) {
+  if (percentage === 100) return PROMO_FREE_TRIAL;
+  if (percentage === 50) return PROMO_HALF_PRICE;
+  return null;
+}
+
 /**
  * 把一次「部分确认」的观测并回已缓存的资格。
  *
@@ -126,7 +134,9 @@ export async function promoProbeInPage(options = {}) {
     if (typeof token !== "string" || !token.trim()) {
       return { ok: false, detail: "session 未提供 accessToken" };
     }
-    return { ok: true, token };
+    const id = session.account?.id;
+    const accountId = typeof id === "string" && /^[a-z\d_-]{1,128}$/iu.test(id) ? id : null;
+    return { ok: true, token, accountId };
   };
 
   // 光有 token 字符串不够：登录刚完成时后端还不认它，此时查券会得到 200+offline，
@@ -138,6 +148,7 @@ export async function promoProbeInPage(options = {}) {
   // 一次 session，拿到的可能是登录后刚轮换的新 token，与 checkSession 验过的并非同一个。
   // 校验必须针对"接下来真正要用的这个 token"，否则等于没校验。
   let token = null;
+  let accountId = null;
   let lastDetail = "未能读取优惠检查凭据";
   for (let attempt = 0; attempt < readyAttempts; attempt++) {
     // 预算耗尽就停：继续重试只会撞上外层硬截止，把有用的原因换成一句"超时"。
@@ -163,6 +174,7 @@ export async function promoProbeInPage(options = {}) {
       });
       if (me.status === 200) {
         token = candidate.token;
+        accountId = candidate.accountId;
         break;
       }
       lastDetail = `登录凭据尚未生效（鉴权接口返回 ${me.status}），未查询优惠资格`;
@@ -226,10 +238,24 @@ export async function promoProbeInPage(options = {}) {
     }
   };
 
-  const results = await Promise.all(campaigns.map(inspectCampaign));
+  const inspectAccountOffers = async () => {
+    if (!accountId || !options.accountsCheckPath) return null;
+    const path = options.accountsCheckPath;
+    try {
+      const result = await fetchTextWithTimeout(`${path}?timezone_offset_min=${new Date().getTimezoneOffset()}`, {
+        headers: { accept: "application/json", authorization: `Bearer ${token}`, "chatgpt-account-id": accountId,
+          "x-openai-target-path": path, "x-openai-target-route": path },
+      });
+      return result.status === 200 ? JSON.parse(result.text) : null;
+    } catch {
+      return null;
+    }
+  };
+  const [results, offers] = await Promise.all([Promise.all(campaigns.map(inspectCampaign)), inspectAccountOffers()]);
   // 逐券上报，让调用方按维度收敛。整次作废会浪费已经拿到的确定答案。
   return {
     ok: true,
+    ...(offers ? { offers, accountId } : {}),
     campaigns: Object.fromEntries(
       results.map((result) => [
         result.coupon,
@@ -253,7 +279,7 @@ export async function promoProbeInPage(options = {}) {
  *
  * @returns {{ok: true, eligibility: string}|{ok: false, detail: string, eligibility?: string}}
  */
-function classifyCampaigns(campaigns) {
+export function classifyCampaigns(campaigns) {
   const classifyDimension = (eligibility) => {
     const relevant = PROMO_CAMPAIGNS.filter(
       (campaign) => campaign.eligibility === eligibility
@@ -327,6 +353,7 @@ export async function checkPromoEligibility(page, options = {}) {
         ? options.tokenReadyBudgetMs
         : PROMO_TOKEN_READY_BUDGET_MS,
     campaigns: PROMO_CAMPAIGNS.map(({ coupon }) => ({ coupon })),
+    accountsCheckPath: ACCOUNTS_CHECK_PATH,
   };
   let timeout;
   let onPageClose;
@@ -352,6 +379,9 @@ export async function checkPromoEligibility(page, options = {}) {
         detail: String(probe?.detail || "优惠资格检查未返回可信结果"),
       };
     }
+    const promo = promoForDiscount(parseAccountPlan(probe.offers, probe.accountId)?.discountPercentage);
+    const campaign = PROMO_CAMPAIGNS.find(({ eligibility }) => eligibility === promo);
+    if (campaign) probe.campaigns[campaign.coupon] = { ok: true, eligible: true };
     return classifyCampaigns(probe.campaigns);
   } catch (error) {
     return {

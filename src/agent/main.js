@@ -10,6 +10,7 @@ import {
   refreshAccount,
 } from "../statusMonitor.js";
 import { configureStatusBackend } from "../statusCacheStore.js";
+import { AccountPlanStore } from "../persistence/accountPlans.js";
 import { startProfileMaintenance } from "../profileMaintenance.js";
 import { checkSelectors, runOnce, scheduler } from "../scheduler.js";
 import { closeAllBrowserContexts } from "../browser.js";
@@ -81,6 +82,7 @@ async function performShutdown(exitCode, { preserveScheduler }) {
     log,
     beginDraining: () => {
       if (agent?.services) agent.services.draining = true;
+      agent?.services.cancelPlanQuery();
     },
     stopAccepting: () => agent?.started && agent.server.stopAccepting(),
     stopTimers: () => {
@@ -233,6 +235,8 @@ async function main() {
     appVersion: APPLICATION_VERSION,
   });
   const adapters = createSqliteRuntimeAdapters(repository);
+  const ipcAuthToken = process.env.GPT_ACCOUNT_KEEPER_IPC_TOKEN || null;
+  const accountPlans = ipcAuthToken ? new AccountPlanStore(repository.db, ipcAuthToken) : null;
   backendRestorers = [
     store.configureStoreBackend(adapters.store),
     configureHistoryBackend(adapters.history),
@@ -249,7 +253,8 @@ async function main() {
     operationStore: adapters.operations,
     logger: log,
     runtime: {
-      ipcAuthToken: process.env.GPT_ACCOUNT_KEEPER_IPC_TOKEN || null,
+      ipcAuthToken,
+      accountPlans,
       // 仅这个回调负责「关闭失败」的兜底退出。system.shutdown 是 fire-and-forget：
       // 它把 {accepted:true} 先返回给 Desktop，真正的关闭在 setTimeout 里异步跑。
       // 若那条链抛错，没有人会再推进退出，Agent 会留在半关闭状态。

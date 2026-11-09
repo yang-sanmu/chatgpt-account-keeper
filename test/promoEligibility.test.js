@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { ACCOUNTS_CHECK_PATH } from "../src/accountPlanResponse.js";
 import {
   checkPromoEligibility,
   PROMO_BOTH,
@@ -33,7 +34,7 @@ function promoPage(states, overrides = {}, options = {}) {
       const previousFetch = globalThis.fetch;
       globalThis.fetch = async (url, init = {}) => {
         if (url === "/api/auth/session") {
-          return new Response(JSON.stringify({ accessToken: "promo-token" }), {
+          return new Response(JSON.stringify({ accessToken: "promo-token", account: options.account }), {
             status: 200,
           });
         }
@@ -46,6 +47,10 @@ function promoPage(states, overrides = {}, options = {}) {
           });
         }
         const parsed = new URL(String(url), "https://chatgpt.com");
+        if (parsed.pathname === ACCOUNTS_CHECK_PATH) {
+          assert.equal(init.headers["chatgpt-account-id"], options.account.id);
+          return Response.json(options.accountOffers);
+        }
         const coupon = parsed.searchParams.get("coupon");
         assert.equal(parsed.pathname, "/backend-api/promo_campaign/check_coupon");
         assert.equal(parsed.searchParams.get("is_coupon_from_query_param"), "true");
@@ -120,6 +125,17 @@ test("响应 coupon 不回显请求值时拒绝猜测资格", async () => {
   );
   assert.equal(result.ok, false);
   assert.match(result.detail, /结构不符合预期/);
+});
+
+test("查券失败时用同一账号的套餐响应确认免费试用", async () => {
+  const result = await checkPromoEligibility(promoPage(
+    { [HALF_COUPON]: "not_eligible" },
+    { [FREE_COUPON]: { status: 503, body: "unavailable" } },
+    { account: { id: "personal" }, accountOffers: { accounts: { personal: {
+      account: { plan_type: "free" }, eligible_promo_campaigns: { plus: { metadata: { discount: { percentage: 100 } } } },
+    } } } },
+  ), FAST);
+  assert.deepEqual(result, { ok: true, eligibility: PROMO_FREE_TRIAL });
 });
 
 test("某维度的券失败时不能把该维度的 not_eligible 当成无优惠", async () => {

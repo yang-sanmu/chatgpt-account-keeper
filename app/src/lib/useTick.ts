@@ -69,10 +69,12 @@ function subscribe(listener: Listener): () => void {
 /// 订阅心跳。返回值每次心跳递增，用来触发重渲染。
 ///
 /// 只在**真正显示相对时间**的叶子组件里用。放在卡片或页面级别会让心跳重渲染整棵子树。
-export function useTick(): number {
+export function useTick(enabled = true): number {
   const [tick, setTick] = useState(0);
 
-  useEffect(() => subscribe(() => setTick((value) => value + 1)), []);
+  useEffect(() => {
+    if (enabled) return subscribe(() => setTick((value) => value + 1));
+  }, [enabled]);
 
   return tick;
 }

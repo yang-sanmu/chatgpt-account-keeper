@@ -51,6 +51,8 @@ Keeper.Agent
 - 旧 JSON/JSONL/Profile 到 SQLite 的原生预览、空间/运行锁检查、进度显示和校验式复制迁移；失败不修改旧数据。
 - Agent 自行写入用户状态目录的脱敏诊断日志，不依赖 Desktop 输出管道；桌面断线会自动重连并在事件缺口后重新获取完整快照。
 
+账号页的「一键巡检」对当前筛选结果刷新会话。会话身份确认后，Agent 加密保存 `/api/auth/session` 返回的 `accessToken`。可在卡片上查询单个套餐、勾选后批量查询，或使用「一键查套餐」查询当前筛选或全部账号。查询弹窗所选节点用于整批 HTTPS 请求，账号卡片分别显示套餐与优惠资格。勾选账号后可复制已有 `accessToken`，每个账号一行。
+
 优惠检查使用当前账号 `/api/auth/session` 返回的 accessToken，在页面内携带
 `Authorization: Bearer …` 请求 `/backend-api/promo_campaign/check_coupon`，并设置
 `is_coupon_from_query_param=true`。半价券标识分别为 `plus-1-month-50-pct-off`、

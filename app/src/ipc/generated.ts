@@ -98,6 +98,8 @@ export type Method =
   | "accounts.remove"
   | "accounts.getStatus"
   | "accounts.refreshStatus"
+  | "accounts.checkPlans"
+  | "accounts.readAccessTokens"
   | "accounts.runNow"
   | "accounts.checkSelectors"
   | "browser.startLogin"
@@ -320,6 +322,9 @@ export interface KeeperIPCV1GeneratedSchema {
   acceptedResult?: AcceptedResult;
   operationResult?: Operation;
   operationArray?: OperationArray;
+  accountPlanParams?: AccountPlanParams;
+  accountTokenParams?: AccountTokenParams;
+  accountTokenResult?: AccountTokenResult;
   idParams?: IdParams;
   selectorCheckParams?: SelectorCheckParams;
   taskIdParams?: TaskIdParams;
@@ -638,6 +643,11 @@ export interface AccountResult {
   promoCheckedAt: string | null;
   promoStale: boolean;
   promoCheckDetail: string | null;
+  planType?: string | null;
+  planCheckedAt?: string | null;
+  planCheckDetail?: string | null;
+  hasAccessToken?: boolean;
+  accessTokenExpiresAt?: string | null;
   pageOpen: boolean;
   rotationCurrentSet: string | null;
   rotationWindowsDone: number;
@@ -694,6 +704,11 @@ export interface AccountStatusResult {
   promoCheckedAt: string | null;
   promoStale: boolean;
   promoCheckDetail: string | null;
+  planType?: string | null;
+  planCheckedAt?: string | null;
+  planCheckDetail?: string | null;
+  hasAccessToken?: boolean;
+  accessTokenExpiresAt?: string | null;
   skipped: boolean;
   skipKind: string | null;
   skipReason: string | null;
@@ -883,6 +898,38 @@ export interface IpcError {
   message: string;
   retryable: boolean;
   details?: JsonValue;
+}
+/**
+ * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
+ * via the `definition` "accountPlanParams".
+ */
+export interface AccountPlanParams {
+  /**
+   * @minItems 1
+   */
+  ids: [string, ...string[]];
+  proxyId: string;
+}
+/**
+ * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
+ * via the `definition` "accountTokenParams".
+ */
+export interface AccountTokenParams {
+  /**
+   * @minItems 1
+   * @maxItems 100
+   */
+  ids: [string, ...string[]];
+}
+/**
+ * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
+ * via the `definition` "accountTokenResult".
+ */
+export interface AccountTokenResult {
+  /**
+   * @maxItems 100
+   */
+  tokens: string[];
 }
 /**
  * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
@@ -1458,6 +1505,8 @@ export interface IpcMethodContracts {
   "accounts.remove": { params: AccountRemoveParams; result: OkResult };
   "accounts.getStatus": { params: IdParams; result: AccountStatusResult };
   "accounts.refreshStatus": { params: IdParams; result: Operation };
+  "accounts.checkPlans": { params: AccountPlanParams; result: Operation };
+  "accounts.readAccessTokens": { params: AccountTokenParams; result: AccountTokenResult };
   "accounts.runNow": { params: IdParams; result: Operation };
   "accounts.checkSelectors": { params: SelectorCheckParams; result: Operation };
   "browser.startLogin": { params: LoginParams; result: Operation };
@@ -1523,6 +1572,7 @@ export const OPERATION_METHODS = [
   "temporaryWindows.clearData",
   "temporaryWindows.detectRegion",
   "accounts.refreshStatus",
+  "accounts.checkPlans",
   "accounts.runNow",
   "accounts.checkSelectors",
   "browser.startLogin",

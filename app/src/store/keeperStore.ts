@@ -391,6 +391,8 @@ function toStatusPatch(payload: unknown): AccountStatusPatch {
   const status = optionalString(raw.status) ?? optionalString(raw.state);
   if (status !== undefined && status.length > 0) {
     patch.status = status;
+  } else if (raw.state === null) {
+    patch.status = "unknown";
   } else if (typeof raw.loggedIn === "boolean") {
     // 同 normalizeAccount：未登录对应 out，不是界面自造的 needs_login。
     patch.status = raw.loggedIn ? "ok" : "out";
@@ -417,6 +419,10 @@ function toStatusPatch(payload: unknown): AccountStatusPatch {
   if (raw.promoCheckDetail !== undefined) {
     patch.promoCheckDetail = optionalString(raw.promoCheckDetail) ?? null;
   }
+  for (const key of ["planType", "planCheckedAt", "planCheckDetail", "accessTokenExpiresAt"] as const) {
+    if (raw[key] !== undefined) patch[key] = optionalString(raw[key]) ?? null;
+  }
+  if (typeof raw.hasAccessToken === "boolean") patch.hasAccessToken = raw.hasAccessToken;
 
   if (raw.statusCheckedAt !== undefined) {
     patch.statusCheckedAt = optionalString(raw.statusCheckedAt) ?? null;
@@ -569,23 +575,29 @@ export const useKeeperStore = create<KeeperStore>()((set, get) => {
         profileScanFailed: false,
       };
     });
+    // 断线期间的终态可能只出现在重连快照里。
+    for (const operation of snapshot.operations ?? []) settleOperationWaiter(operation);
+  }
+
+  function settleOperationWaiter(operation: Operation): boolean {
+    const waiter = operationWaiters.get(operation.id);
+    if (!waiter) return false;
+
+    if (TERMINAL_OPERATION_STATES.has(operation.state)) {
+      operationWaiters.delete(operation.id);
+      if (operation.state === "succeeded") waiter.resolve(operation);
+      else waiter.reject(operationFailure(operation));
+    } else if (!PENDING_OPERATION_STATES.has(operation.state)) {
+      operationWaiters.delete(operation.id);
+      waiter.reject(new Error(`操作进入未知状态：${operation.state}`));
+    }
+    return true;
   }
 
   function handleOperation(operation: Operation): void {
-    const waiter = operationWaiters.get(operation.id);
-
-    if (TERMINAL_OPERATION_STATES.has(operation.state)) {
-      if (waiter) {
-        operationWaiters.delete(operation.id);
-        if (operation.state === "succeeded") waiter.resolve(operation);
-        else waiter.reject(operationFailure(operation));
-      } else {
-        // 终态早于 agentCall 的响应到达。runOperation 会先来这里查。
-        rememberEarlyTerminal(operation);
-      }
-    } else if (!PENDING_OPERATION_STATES.has(operation.state) && waiter) {
-      operationWaiters.delete(operation.id);
-      waiter.reject(new Error(`操作进入未知状态：${operation.state}`));
+    if (!settleOperationWaiter(operation) && TERMINAL_OPERATION_STATES.has(operation.state)) {
+      // 终态早于 agentCall 的响应到达。runOperation 会先来这里查。
+      rememberEarlyTerminal(operation);
     }
 
     set((state) => {
@@ -1142,7 +1154,7 @@ export const useKeeperStore = create<KeeperStore>()((set, get) => {
     },
 
     bulkRefreshStatus: async (ids) => {
-      await runSequentially("批量刷新状态", ids, async (id) => {
+      await runSequentially("提交批量巡检", ids, async (id) => {
         await agentCall("accounts.refreshStatus", { id }, await newCommandId());
       });
     },
@@ -1376,7 +1388,9 @@ export const useKeeperStore = create<KeeperStore>()((set, get) => {
       }
 
       // 终态可能早于这次响应到达（Agent 很快完成时常见）。
-      const early = earlyTerminalOperations.get(initial.id);
+      const early = earlyTerminalOperations.get(initial.id) ?? get().operations.find(
+        (operation) => operation.id === initial.id && TERMINAL_OPERATION_STATES.has(operation.state)
+      );
       if (early) {
         earlyTerminalOperations.delete(initial.id);
         if (early.state === "succeeded") return early;

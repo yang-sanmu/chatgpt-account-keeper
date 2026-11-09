@@ -1,17 +1,22 @@
+import { useState } from "react";
 import { useAccountSelection, useBulkActions } from "@/store/selectors";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
-import { Play, RefreshCw, Trash2, Power, PowerOff } from "lucide-react";
+import { Play, RefreshCw, Trash2, Power, PowerOff, CreditCard, Copy } from "lucide-react";
+import { agentCall } from "@/ipc/bridge";
+import { notify } from "@/lib/notify";
 
 interface BulkActionBarProps {
   visibleIds: string[];
   onBulkDelete: (ids: string[]) => void;
+  onCheckPlans: (ids: string[]) => void;
 }
 
-export function BulkActionBar({ visibleIds, onBulkDelete }: BulkActionBarProps) {
-  const { selectedIds, count, select, clear } = useAccountSelection();
+export function BulkActionBar({ visibleIds, onBulkDelete, onCheckPlans }: BulkActionBarProps) {
+  const { selectedIds, count, tokenCount, select, clear } = useAccountSelection();
   const bulkActions = useBulkActions();
+  const [copying, setCopying] = useState(false);
 
   if (count === 0) return null;
 
@@ -34,8 +39,32 @@ export function BulkActionBar({ visibleIds, onBulkDelete }: BulkActionBarProps) 
 
   const selectedArray = Array.from(selectedIds);
 
+  const copyTokens = async () => {
+    setCopying(true);
+    try {
+      const tokens: string[] = [];
+      for (let start = 0; start < selectedArray.length; start += 100) {
+        const [first, ...rest] = selectedArray.slice(start, start + 100);
+        if (!first) continue;
+        const result = await agentCall("accounts.readAccessTokens", { ids: [first, ...rest] });
+        tokens.push(...result.tokens);
+      }
+      if (!tokens.length) {
+        notify.info("所选账号暂无 accessToken", "请先巡检所选账号。");
+        return;
+      }
+      await navigator.clipboard.writeText(tokens.join("\n"));
+      const skipped = selectedArray.length - tokens.length;
+      notify.success(`已复制 ${tokens.length} 个 accessToken`, skipped ? `跳过 ${skipped} 个无 Token 的账号` : undefined);
+    } catch {
+      notify.error("复制 accessToken 失败", "请确认 Agent 已连接且剪贴板可用。");
+    } finally {
+      setCopying(false);
+    }
+  };
+
   return (
-    <div className="sticky bottom-0 left-0 right-0 z-10 mt-4 flex animate-in items-center justify-between rounded-t-panel border-t border-line bg-raised p-4 shadow-overlay slide-in-from-bottom-4">
+    <div className="sticky bottom-0 left-0 right-0 z-10 mt-4 flex flex-wrap animate-in items-center justify-between gap-2 rounded-t-panel border-t border-line bg-raised p-4 shadow-overlay slide-in-from-bottom-4">
       <div className="flex items-center gap-4">
         <div className="flex items-center gap-2">
           <Checkbox 
@@ -44,7 +73,7 @@ export function BulkActionBar({ visibleIds, onBulkDelete }: BulkActionBarProps) 
             onCheckedChange={(c) => handleToggleAll(c === true)}
           />
           <Label htmlFor="bulk-select-all" className="cursor-pointer font-medium text-primary">
-            已选 {count} 个
+            已选 {count} 个 · {tokenCount} 个有 Token
           </Label>
         </div>
         <Button variant="ghost" size="sm" onClick={clear} className="text-muted hover:text-primary h-8">
@@ -52,7 +81,7 @@ export function BulkActionBar({ visibleIds, onBulkDelete }: BulkActionBarProps) 
         </Button>
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <Button variant="secondary" size="sm" onClick={() => bulkActions.setEnabled(selectedArray, true)} className="h-8">
           <Power className="mr-1.5 size-4 text-ok" /> 启用
         </Button>
@@ -62,6 +91,12 @@ export function BulkActionBar({ visibleIds, onBulkDelete }: BulkActionBarProps) 
         <div className="w-px h-4 bg-line mx-1" />
         <Button variant="secondary" size="sm" onClick={() => bulkActions.refreshStatus(selectedArray)} className="h-8">
           <RefreshCw className="mr-1.5 size-4" /> 刷新状态
+        </Button>
+        <Button variant="secondary" size="sm" onClick={() => onCheckPlans(selectedArray)} className="h-8">
+          <CreditCard className="mr-1.5 size-4" /> 批量查套餐
+        </Button>
+        <Button variant="secondary" size="sm" disabled={copying} onClick={() => void copyTokens()} className="h-8">
+          <Copy className="mr-1.5 size-4" /> 复制 accessToken
         </Button>
         <Button variant="secondary" size="sm" onClick={() => bulkActions.runNow(selectedArray)} className="h-8">
           <Play className="mr-1.5 size-4" /> 立即运行

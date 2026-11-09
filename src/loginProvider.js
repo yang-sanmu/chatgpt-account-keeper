@@ -435,7 +435,7 @@ export async function checkLoggedIn(account, runtime = {}) {
       page = launched.page;
     }
     await page.goto(selectors.url, { waitUntil: "domcontentloaded" });
-    const health = await inspectSession(page);
+    const health = await inspectSession(page, runtime.accountPlans ? { captureAccessToken: true } : undefined);
     let promo;
     if (promoEnabled) {
       if (health.state === SESSION_OK) {
@@ -455,13 +455,24 @@ export async function checkLoggedIn(account, runtime = {}) {
         };
       }
     }
-    // 只有 /me 已验证且邮箱与 session 一致的 SESSION_OK 才能写回账号资料。
-    // WAF/unknown 响应里的邮箱只是未验证观测，不能永久覆盖绑定信息。
+    // 优惠查询结束后再写回身份与凭据，随后由调用方刷新同一身份的状态缓存。
     if (health.state === SESSION_OK && health.email) {
-      persistAccount(account.id, {
-        email: health.email,
-        gptName: health.name ?? null,
-      });
+      persistAccount(account.id, { email: health.email, gptName: health.name ?? null });
+    }
+    let tokenStatus;
+    if (runtime.accountPlans) {
+      tokenStatus = "unavailable";
+      try {
+        if (health.state === SESSION_OK && health.accessToken) {
+          runtime.accountPlans.saveToken(account.id, health.email, health.accessToken);
+          tokenStatus = "saved";
+        } else if (health.state === SESSION_OUT || health.state === SESSION_REAUTH) {
+          runtime.accountPlans.clearToken(account.id);
+        }
+      } catch {
+        log.warn(`账号 ${account.id} 更新本地 accessToken 失败`);
+        tokenStatus = "failed";
+      }
     }
     return {
       state: health.state,
@@ -469,6 +480,7 @@ export async function checkLoggedIn(account, runtime = {}) {
       email: health.email,
       detail: health.detail,
       promo,
+      ...(tokenStatus ? { tokenStatus } : {}),
     };
   } catch (e) {
     return {
@@ -480,6 +492,7 @@ export async function checkLoggedIn(account, runtime = {}) {
         ok: false,
         detail: "状态检查失败，本次未检查优惠资格",
       } : undefined,
+      ...(runtime.accountPlans ? { tokenStatus: "unavailable" } : {}),
     };
   } finally {
     if (context) await context.close().catch(() => {});

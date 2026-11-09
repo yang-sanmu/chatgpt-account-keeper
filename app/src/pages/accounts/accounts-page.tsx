@@ -10,23 +10,30 @@ import { BulkActionBar } from "./bulk-action-bar";
 import { AccountCreateDialog } from "./account-create-dialog";
 import { AccountDeleteDialog } from "./account-delete-dialog";
 import { AccountHistoryDrawer } from "./account-history-drawer";
+import { AccountPlanDialog } from "./account-plan-dialog";
 import { Users, SearchX } from "lucide-react";
 import { shortId } from "@/lib/format";
 
 export function AccountsPage() {
   const visibleAccounts = useVisibleAccounts();
-  const allAccountsEmpty = useKeeperStore((s) => s.accountIds.length === 0);
+  const accountIds = useKeeperStore((s) => s.accountIds);
+  const bulkRefreshStatus = useKeeperStore((s) => s.bulkRefreshStatus);
   const { reset: resetFilters } = useAccountFilter();
 
   const [createOpen, setCreateOpen] = React.useState(false);
+  const [submittingInspection, setSubmittingInspection] = React.useState(false);
+  const [planTarget, setPlanTarget] = React.useState<{ title: string; ids: string[]; allIds?: string[] } | null>(null);
+  const checkSinglePlan = React.useCallback((id: string) => {
+    setPlanTarget({ title: "查询套餐", ids: [id] });
+  }, []);
   
   const [deleteOpen, setDeleteOpen] = React.useState(false);
   const [deleteTargets, setDeleteTargets] = React.useState<{ id: string; name: string }[]>([]);
 
-  const handleDeleteSingle = (id: string, name: string) => {
+  const handleDeleteSingle = React.useCallback((id: string, name: string) => {
     setDeleteTargets([{ id, name }]);
     setDeleteOpen(true);
-  };
+  }, []);
 
   // 批量删除时把邮箱一并带过去。
   //
@@ -44,6 +51,14 @@ export function AccountsPage() {
   };
 
   const visibleIds = visibleAccounts.map((a) => a.effective.id);
+  const inspectVisible = async () => {
+    setSubmittingInspection(true);
+    try {
+      await bulkRefreshStatus(visibleIds);
+    } finally {
+      setSubmittingInspection(false);
+    }
+  };
 
   return (
     <Page>
@@ -52,10 +67,15 @@ export function AccountsPage() {
         description="管理并监控所有 ChatGPT 账号的轮换与登录状态"
       />
       
-      <AccountsToolbar onCreateClick={() => setCreateOpen(true)} />
+      <AccountsToolbar onCreateClick={() => setCreateOpen(true)}
+        canInspect={visibleIds.length > 0 && !submittingInspection}
+        onInspect={() => void inspectVisible()}
+        canCheckPlans={accountIds.length > 0}
+        onCheckPlans={() => setPlanTarget({ title: "一键查套餐", ids: visibleIds, allIds: accountIds })}
+      />
 
       <PageBody className="pb-20 relative">
-        {allAccountsEmpty ? (
+        {accountIds.length === 0 ? (
           <EmptyState
             icon={<Users />}
             title="暂无账号"
@@ -90,6 +110,7 @@ export function AccountsPage() {
                 key={record.effective.id}
                 id={record.effective.id}
                 onDelete={handleDeleteSingle}
+                onCheckPlan={checkSinglePlan}
               />
             ))}
           </div>
@@ -99,7 +120,10 @@ export function AccountsPage() {
       <BulkActionBar 
         visibleIds={visibleIds} 
         onBulkDelete={handleBulkDelete} 
+        onCheckPlans={(ids) => setPlanTarget({ title: "批量查套餐", ids })}
       />
+
+      {planTarget && <AccountPlanDialog {...planTarget} onClose={() => setPlanTarget(null)} />}
 
       <AccountCreateDialog 
         open={createOpen} 

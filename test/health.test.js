@@ -69,6 +69,20 @@ const healthySession = JSON.stringify({
   accessToken: "test-token",
 });
 
+test("只有请求保存且后端确认身份时才提取 accessToken", async () => {
+  const page = pageRunningProbe({
+    session: { body: healthySession },
+    me: { body: JSON.stringify({ id: "user", email: "person@example.com" }) },
+  });
+  assert.equal((await checkSession(page)).accessToken, undefined);
+  assert.equal((await checkSession(page, { captureAccessToken: true })).accessToken, "test-token");
+  const mismatch = pageRunningProbe({
+    session: { body: healthySession },
+    me: { body: JSON.stringify({ id: "other", email: "other@example.com" }) },
+  });
+  assert.equal((await checkSession(mismatch, { captureAccessToken: true })).accessToken, undefined);
+});
+
 function storageClearingPage(initialUrl = "about:blank") {
   let currentUrl = initialUrl;
   return {

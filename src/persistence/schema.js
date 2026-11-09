@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-export const SCHEMA_VERSION = 12;
+export const SCHEMA_VERSION = 13;
 
 const SCHEMA_V1 = String.raw`
 CREATE TABLE IF NOT EXISTS command_receipts (
@@ -476,6 +476,21 @@ CREATE TABLE icloud_state (
 );
 `;
 
+const SCHEMA_V13 = String.raw`
+CREATE TABLE account_plans (
+  account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
+  sealed_token TEXT,
+  plan_type TEXT,
+  checked_at TEXT,
+  check_detail TEXT
+);
+CREATE TRIGGER clear_plan_on_email_change AFTER UPDATE OF email ON accounts
+WHEN lower(trim(coalesce(OLD.email, ''))) <> lower(trim(coalesce(NEW.email, '')))
+BEGIN
+  DELETE FROM account_plans WHERE account_id = NEW.id;
+END;
+`;
+
 export const MIGRATIONS = Object.freeze([
   Object.freeze({
     version: 1,
@@ -509,6 +524,7 @@ export const MIGRATIONS = Object.freeze([
   Object.freeze({ version: 10, name: "register-flow", sql: SCHEMA_V10, checksum: createHash("sha256").update(SCHEMA_V10).digest("hex") }),
   Object.freeze({ version: 11, name: "temporary-windows", sql: SCHEMA_V11, checksum: createHash("sha256").update(SCHEMA_V11).digest("hex") }),
   Object.freeze({ version: 12, name: "icloud-hide-my-email", sql: SCHEMA_V12, checksum: createHash("sha256").update(SCHEMA_V12).digest("hex") }),
+  Object.freeze({ version: 13, name: "account-plans", sql: SCHEMA_V13, checksum: createHash("sha256").update(SCHEMA_V13).digest("hex") }),
 ]);
 
 export const MIGRATION_LEDGER_SQL = String.raw`

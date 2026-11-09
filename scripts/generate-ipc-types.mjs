@@ -89,8 +89,8 @@ export type AgentEventEnvelope = Event extends infer Envelope
 async function generate() {
   const mainSchema = rewriteRefs(readJson(mainSchemaPath));
   const methodSchema = rewriteRefs(readJson(methodSchemaPath));
-  if (Object.keys(methodSchema.$defs ?? {}).length !== 72) {
-    throw new Error("ipc-v1.methods.schema.json must keep all 72 method DTO definitions");
+  if (Object.keys(methodSchema.$defs ?? {}).length !== 75) {
+    throw new Error("ipc-v1.methods.schema.json must keep all 75 method DTO definitions");
   }
 
   const definitions = {

@@ -268,6 +268,11 @@ export interface AccountStatusPatch {
   promoCheckedAt?: string | null;
   promoStale?: boolean;
   promoCheckDetail?: string | null;
+  planType?: string | null;
+  planCheckedAt?: string | null;
+  planCheckDetail?: string | null;
+  hasAccessToken?: boolean;
+  accessTokenExpiresAt?: string | null;
   nextRunAt?: string | null;
   lastRunAt?: string | null;
   lastRunOk?: boolean | null;
@@ -292,6 +297,11 @@ const STATUS_PATCH_FIELDS = [
   "promoCheckedAt",
   "promoStale",
   "promoCheckDetail",
+  "planType",
+  "planCheckedAt",
+  "planCheckDetail",
+  "hasAccessToken",
+  "accessTokenExpiresAt",
   "nextRunAt",
   "lastRunAt",
   "lastRunOk",
@@ -363,11 +373,25 @@ export type AccountPromoFilter =
   | "none"
   | "unchecked";
 
+export type AccountTokenStatus = "none" | "unexpired" | "expired";
+
+export function accountTokenStatus(
+  account: Pick<Account, "hasAccessToken" | "accessTokenExpiresAt">,
+  now = Date.now()
+): AccountTokenStatus | null {
+  if (account.hasAccessToken === false) return "none";
+  if (!account.hasAccessToken || !account.accessTokenExpiresAt) return null;
+  const expiry = Date.parse(account.accessTokenExpiresAt);
+  if (!Number.isFinite(expiry)) return null;
+  return expiry <= now ? "expired" : "unexpired";
+}
+
 export interface AccountFilter {
   keyword: string;
   groupId: string | "all" | "none";
   status: AccountStatusFilter;
   promo: AccountPromoFilter;
+  tokenStatuses: AccountTokenStatus[];
   switchRule: SwitchRule | "all";
 }
 
@@ -376,6 +400,7 @@ export const DEFAULT_ACCOUNT_FILTER: AccountFilter = {
   groupId: "all",
   status: "all",
   promo: "all",
+  tokenStatuses: [],
   switchRule: "all",
 };
 
@@ -385,6 +410,7 @@ export function isFilterActive(filter: AccountFilter): boolean {
     filter.groupId !== "all" ||
     filter.status !== "all" ||
     filter.promo !== "all" ||
+    filter.tokenStatuses.length > 0 ||
     filter.switchRule !== "all"
   );
 }
@@ -447,7 +473,8 @@ function matchesKeyword(account: Account, keyword: string): boolean {
 export function selectVisibleAccounts(
   records: AccountRecords,
   ids: readonly string[],
-  filter: AccountFilter
+  filter: AccountFilter,
+  now = Date.now()
 ): AccountRecord[] {
   const keyword = filter.keyword.trim().toLowerCase();
   const visible: AccountRecord[] = [];
@@ -460,6 +487,10 @@ export function selectVisibleAccounts(
     if (!matchesKeyword(account, keyword)) continue;
     if (!matchesStatus(account, filter.status)) continue;
     if (!matchesPromo(account, filter.promo)) continue;
+    if (filter.tokenStatuses.length > 0) {
+      const tokenStatus = accountTokenStatus(account, now);
+      if (!tokenStatus || !filter.tokenStatuses.includes(tokenStatus)) continue;
+    }
     if (filter.switchRule !== "all" && account.switchRule !== filter.switchRule) continue;
 
     if (filter.groupId === "none") {

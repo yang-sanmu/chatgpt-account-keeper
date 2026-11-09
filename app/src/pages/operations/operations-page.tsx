@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { EmptyState } from "@/components/ui/empty-state";
+import type { AccountPlanCheckResult } from "@/ipc/types";
 import { ListTodo, Copy } from "lucide-react";
 import { formatDateTime, formatDuration } from "@/lib/format";
 import { notify } from "@/lib/notify";
@@ -107,6 +108,9 @@ export function OperationsPage() {
         ) : (
           filtered.map((op) => {
             const display = normalizeOperationDisplay(op.state, op.stage, op.message);
+            const planFailures = op.kind === "account-plan-check"
+              ? (op.result as AccountPlanCheckResult | null)?.failures
+              : undefined;
             const durationSec = op.finishedAt
               ? (new Date(op.finishedAt).getTime() - new Date(op.startedAt).getTime()) / 1000
               : op.state === "running"
@@ -145,6 +149,17 @@ export function OperationsPage() {
                   {display.stage ? <span className="font-medium text-primary mr-2">[{display.stage}]</span> : null}
                   {display.message || "无详细信息"}
                 </div>
+
+                {planFailures && planFailures.length > 0 && (
+                  <details className="text-sm text-secondary">
+                    <summary className="cursor-pointer">查询失败明细（{planFailures.length} 个账号）</summary>
+                    <ul className="mt-2 max-h-48 space-y-1 overflow-auto">
+                      {planFailures.map(({ id, detail }) => (
+                        <li key={id} className="break-words">{accountLabeler(id).label} · {detail}</li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
 
                 {op.error?.code && (
                   <div className="flex items-center mt-1">

@@ -31,6 +31,7 @@ import {
   getAllCachedStatus as defaultGetAllCachedStatus,
   getCachedStatus as defaultGetCachedStatus,
   deleteCachedStatus as defaultDeleteCachedStatus,
+  setCachedPromo as defaultSetCachedPromo,
   refreshAccount as defaultRefreshAccount,
   restartStatusMonitor as defaultRestartStatusMonitor,
   stopStatusMonitor as defaultStopStatusMonitor,
@@ -62,9 +63,11 @@ import { InMemoryReceiptStore, ReceiptCoordinator } from "./receipts.js";
 import { environmentSnapshot, environmentPending, validateFixedEnvironment } from "../environmentConfig.js";
 import { getBrowserEnvironmentSnapshots } from "../browser.js";
 import { getStrictNetworkCapabilities } from "../network/strictConfig.js";
+import { createPlanClient } from "../accountPlan.js";
+import { cancellableSleep, raceSignal, throwIfCancelled } from "../cancellation.js";
 
-// Minor 9 adds single and batch iCloud address deletion.
-export const PROTOCOL_VERSION = Object.freeze({ major: 1, minor: 9 });
+// Minor 10 adds account plan queries and explicit accessToken export.
+export const PROTOCOL_VERSION = Object.freeze({ major: 1, minor: 10 });
 
 export const MUTATING_METHODS = new Set([
   "icloud.saveConfig", "icloud.open", "icloud.close", "icloud.sync", "icloud.create", "icloud.runNow", "icloud.delete", "icloud.stop", "icloud.updateLocal", "icloud.acknowledge",
@@ -79,6 +82,7 @@ export const MUTATING_METHODS = new Set([
   "accounts.update",
   "accounts.remove",
   "accounts.refreshStatus",
+  "accounts.checkPlans",
   "accounts.runNow",
   "accounts.checkSelectors",
   "browser.startLogin",
@@ -164,6 +168,9 @@ export function createDefaultRuntime(overrides = {}) {
     getAllCachedStatus: defaultGetAllCachedStatus,
     getCachedStatus: defaultGetCachedStatus,
     deleteCachedStatus: defaultDeleteCachedStatus,
+    setCachedPromo: defaultSetCachedPromo,
+    accountPlans: null,
+    createPlanClient,
     refreshAccount: defaultRefreshAccount,
     restartStatusMonitor: defaultRestartStatusMonitor,
     stopStatusMonitor: defaultStopStatusMonitor,
@@ -215,6 +222,12 @@ function requireId(params, key = "id") {
   return value;
 }
 
+function requireAccountIds(ids) {
+  assertInput(Array.isArray(ids) && ids.length > 0 &&
+    ids.every((id) => typeof id === "string" && id.trim()), "请选择要操作的账号");
+  return [...new Set(ids)];
+}
+
 function safeLimit(value, fallback = 50) {
   if (value === undefined || value === null || value === "") return fallback;
   const parsed = Number(value);
@@ -234,6 +247,15 @@ function accountViewContext(runtime) {
     lastResults: schedulerStatus.lastResults ?? {},
     groups: new Map((runtime.store.getGroups() ?? []).map((group) => [group.id, group])),
     nodes: new Map((runtime.proxies.getNodes() ?? []).map((node) => [node.id, node])),
+  };
+}
+
+function publicPromo(status) {
+  return {
+    promoEligibility: status.promoEligibility ?? null,
+    promoCheckedAt: status.promoCheckedAt ?? null,
+    promoStale: !!status.promoStale,
+    promoCheckDetail: status.promoCheckDetail ?? null,
   };
 }
 
@@ -262,10 +284,9 @@ export function publicAccount(account, runtime, context = accountViewContext(run
     confirmedAt: status.confirmedAt ?? null,
     consecutiveUnknowns: status.consecutiveUnknowns ?? 0,
     unknownSince: status.unknownSince ?? null,
-    promoEligibility: status.promoEligibility ?? null,
-    promoCheckedAt: status.promoCheckedAt ?? null,
-    promoStale: !!status.promoStale,
-    promoCheckDetail: status.promoCheckDetail ?? null,
+    ...publicPromo(status),
+    ...runtime.accountPlans?.getPlan(account.id),
+    ...runtime.accountPlans?.getTokenStatus?.(account.id),
     pageOpen: !!openPages[account.id],
     // 轮换进度：界面上"当前主题 + 已完成/目标窗口"直接来自这三项。
     rotationCurrentSet: rotation.currentSet ?? null,
@@ -286,7 +307,7 @@ export function publicAccount(account, runtime, context = accountViewContext(run
 }
 
 /** 同上：accountStatus.changed 的公开 payload。 */
-export function publicStatus(account, status) {
+export function publicStatus(account, status, accountPlans) {
   return {
     id: account.id,
     state: status.state ?? null,
@@ -301,10 +322,9 @@ export function publicStatus(account, status) {
     confirmedAt: status.confirmedAt ?? null,
     consecutiveUnknowns: status.consecutiveUnknowns ?? 0,
     unknownSince: status.unknownSince ?? null,
-    promoEligibility: status.promoEligibility ?? null,
-    promoCheckedAt: status.promoCheckedAt ?? null,
-    promoStale: !!status.promoStale,
-    promoCheckDetail: status.promoCheckDetail ?? null,
+    ...publicPromo(status),
+    ...accountPlans?.getPlan(account.id),
+    ...accountPlans?.getTokenStatus?.(account.id),
     skipped: !!status.skipped,
     skipKind: status.skipKind ?? null,
     skipReason: status.skipReason ?? null,
@@ -490,6 +510,7 @@ export class ApplicationServices {
 
   /** 停止转发运行时事件。测试与 Agent 关闭时调用，避免观察者泄漏。 */
   dispose() {
+    this.cancelPlanQuery();
     for (const unsubscribe of this._subscriptions.splice(0)) {
       try {
         unsubscribe();
@@ -588,6 +609,8 @@ export class ApplicationServices {
     add("accounts.remove", this._accountsRemove);
     add("accounts.getStatus", this._accountsGetStatus);
     add("accounts.refreshStatus", this._accountsRefreshStatus);
+    add("accounts.checkPlans", this._accountsCheckPlans);
+    add("accounts.readAccessTokens", this._accountsReadAccessTokens);
     add("accounts.runNow", this._accountsRunNow);
     add("accounts.checkSelectors", this._accountsCheckSelectors);
     add("accounts.history", this._historyQuery);
@@ -983,7 +1006,7 @@ export class ApplicationServices {
     const id = requireId(params);
     const account = this.runtime.store.getAccount(id);
     if (!account) fail(ERROR_CODES.NOT_FOUND, "账号不存在");
-    return publicStatus(account, this.runtime.getCachedStatus(id));
+    return publicStatus(account, this.runtime.getCachedStatus(id), this.runtime.accountPlans);
   }
 
   _accountsRefreshStatus(params) {
@@ -995,6 +1018,7 @@ export class ApplicationServices {
         accountId: id,
         workKind: "status-check",
         kind: "account-status-refresh",
+        ...(this.runtime.accountPlans ? { dedupeParams: { captureAccessToken: true } } : {}),
         message: "等待状态检查",
       });
     }
@@ -1002,13 +1026,106 @@ export class ApplicationServices {
     return this.operations.create(
       "account-status-refresh",
       async () => {
-        const result = await this.runtime.refreshAccount(account);
-        const value = publicStatus(this.runtime.store.getAccount(id) ?? account, result);
+        const result = await this.runtime.refreshAccount(account, { accountPlans: this.runtime.accountPlans });
+        const value = publicStatus(this.runtime.store.getAccount(id) ?? account, result, this.runtime.accountPlans);
         this.events.publish("accountStatus.changed", value);
         return value;
       },
       { resourceId: id }
     );
+  }
+
+  cancelPlanQuery() {
+    this.planQueryAbort?.abort("Agent 正在退出");
+  }
+
+  _requireAccountPlans() {
+    if (!this.runtime.ipcAuthToken || !this.runtime.accountPlans) {
+      fail(ERROR_CODES.INTERNAL, "请通过桌面应用连接到已认证的 Agent");
+    }
+    return this.runtime.accountPlans;
+  }
+
+  _accountsReadAccessTokens(params) {
+    const plans = this._requireAccountPlans();
+    const ids = requireAccountIds(params.ids);
+    assertInput(ids.length <= 100, "单次读取最多支持 100 个账号");
+    // 只在显式请求时读取。此方法不经过持久化命令回执，也不发布事件。
+    return { tokens: ids.map((id) => plans.getToken(id)?.token).filter(Boolean) };
+  }
+
+  _accountsCheckPlans(params) {
+    const plans = this._requireAccountPlans();
+    const ids = requireAccountIds(params.ids);
+    const proxyId = requireId(params, "proxyId");
+    const node = this.runtime.proxies.getNodes().find(({ id }) => id === proxyId);
+    if (!node || node.enabled === false || node.missing) fail(ERROR_CODES.PROXY_UNAVAILABLE, "所选节点不可用");
+    if (this.planQueryAbort) fail(ERROR_CODES.RESOURCE_BUSY, "已有套餐查询在执行，请等待完成");
+
+    const controller = new AbortController();
+    this.planQueryAbort = controller;
+    return this.operations.create("account-plan-check", async ({ update }) => {
+      const signal = controller.signal;
+      try {
+        let done = 0;
+        const failures = new Map();
+        const report = (id, detail) => {
+          if (detail) failures.set(id, detail);
+          done += 1;
+          update({ stage: "query", progress: done / ids.length,
+            message: `已查询 ${done}/${ids.length} 个账号，成功 ${done - failures.size} 个，失败 ${failures.size} 个` });
+        };
+        const candidates = ids.filter((id) => {
+          if (!this.runtime.store.getAccount(id)) report(id, "账号已删除");
+          else if (!plans.getToken(id)) report(id, "缺少 accessToken，请先巡检");
+          else return true;
+          return false;
+        });
+        if (candidates.length) {
+          const query = this.runtime.proxies.withPlanProxy(proxyId, signal, async (proxyUrl) => {
+            const client = this.runtime.createPlanClient(proxyUrl, signal);
+            let cursor = 0;
+            const worker = async () => {
+              while (cursor < candidates.length) {
+                throwIfCancelled(signal);
+                const id = candidates[cursor++];
+                const credential = plans.getToken(id);
+                if (!credential) {
+                  report(id, "账号或 accessToken 已变更，请重新巡检");
+                  continue;
+                }
+                const result = await client.check(credential.token);
+                throwIfCancelled(signal);
+                if (!plans.savePlan(id, credential.sealed, result)) {
+                  report(id, "账号或 accessToken 已变更，请重新查询");
+                } else {
+                  const promo = result.promo ? this.runtime.setCachedPromo(id, result.promo) : null;
+                  this.events.publish("accountStatus.changed", {
+                    id,
+                    ...plans.getPlan(id),
+                    ...(promo ? publicPromo(promo) : {}),
+                  });
+                  report(id, result.detail);
+                }
+                if (cursor < candidates.length) await cancellableSleep(400, signal);
+              }
+            };
+            try {
+              const workers = await Promise.allSettled(Array.from({ length: Math.min(2, candidates.length) }, worker));
+              const failure = workers.find(({ status }) => status === "rejected");
+              if (failure) throw failure.reason;
+            } finally {
+              client.close();
+            }
+          });
+          await raceSignal(query, signal);
+        }
+        return { total: ids.length, succeeded: done - failures.size,
+          failures: ids.filter((id) => failures.has(id)).map((id) => ({ id, detail: failures.get(id) })) };
+      } finally {
+        this.planQueryAbort = null;
+      }
+    }, { resourceId: ids.length === 1 ? ids[0] : null, stage: "queued", message: "等待套餐查询" });
   }
 
   _accountsRunNow(params) {

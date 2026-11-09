@@ -486,6 +486,23 @@ describe("runOperation 的终态语义", () => {
     await promise;
     expect(settled).toBe(true);
   });
+
+  it.each([true, false])("只从重连快照取得套餐查询终态（快照先于提交响应=%s）", async (early) => {
+    const pending = makeOperation({ id: "op-plan", kind: "account-plan-check", state: "running" });
+    const completed = { ...pending, state: "succeeded", result: { total: 1, succeeded: 1, failures: [] } };
+    const snapshot = makeBootstrap({ operations: [completed] });
+    tauri.onMethod("accounts.checkPlans", () => {
+      if (early) tauri.emitBootstrap(snapshot);
+      return pending;
+    });
+
+    const promise = store().runOperation("accounts.checkPlans", { ids: ["acc-1"], proxyId: "node-1" });
+    if (!early) {
+      await flush();
+      tauri.emitBootstrap(snapshot);
+    }
+    await expect(promise).resolves.toEqual(completed);
+  });
 });
 
 describe("批量操作", () => {
@@ -537,7 +554,7 @@ describe("批量操作", () => {
 
     expect(successSpy).not.toHaveBeenCalled();
     expect(errorSpy).toHaveBeenCalledWith(
-      "批量刷新状态部分失败",
+      "提交批量巡检部分失败",
       expect.stringContaining("失败 1 个")
     );
     expect(errorSpy.mock.calls[0]?.[1]).toContain("RESOURCE_BUSY");

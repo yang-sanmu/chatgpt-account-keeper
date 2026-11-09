@@ -733,6 +733,42 @@ test("状态检查仅在 SESSION_OK 时持久化已验证邮箱", async () => {
   ]);
 });
 
+test("巡检持久化已验证的 Token，返回值只包含保存状态", async () => {
+  const account = { id: "checked-token" };
+  const token = "fixture-token";
+  const writes = [];
+  const result = await checkLoggedIn(account, {
+    page: { goto: async () => {} },
+    getAccount: () => account,
+    getSettings: () => ({ promoCheckEnabled: true }),
+    checkSession: async (_page, options) => {
+      assert.equal(options.captureAccessToken, true);
+      return { state: "ok", email: "verified@example.test", accessToken: token, detail: null };
+    },
+    checkPromoEligibility: async () => {
+      writes.push("promo");
+      return { ok: true, eligibility: "free_trial" };
+    },
+    updateAccount: () => writes.push("email"),
+    accountPlans: { saveToken: (...args) => writes.push(args) },
+  });
+  assert.deepEqual(writes, ["promo", "email", [account.id, "verified@example.test", token]]);
+  assert.equal(result.tokenStatus, "saved");
+  assert.ok(!JSON.stringify(result).includes(token));
+});
+
+test("手动巡检导航失败时明确报告未获取 Token", async () => {
+  const account = { id: "checked-token" };
+  const result = await checkLoggedIn(account, {
+    page: { goto: async () => { throw new Error("net::ERR_CONNECTION_CLOSED"); } },
+    getAccount: () => account,
+    getSettings: () => ({}),
+    accountPlans: { saveToken: () => assert.fail("导航失败不能保存 Token") },
+  });
+  assert.equal(result.tokenStatus, "unavailable");
+  assert.match(result.detail, /ERR_CONNECTION_CLOSED/);
+});
+
 test("已结束登录任务按 TTL 和容量有界清理", async () => {
   const ids = [];
   for (let index = 0; index < 5; index++) {

@@ -39,6 +39,7 @@ import {
   ChevronDown,
   Loader2,
   Copy,
+  CreditCard,
 } from "lucide-react";
 import { notify } from "@/lib/notify";
 import {
@@ -49,12 +50,13 @@ import {
 } from "@/store/selectors";
 import { useKeeperStore } from "@/store/keeperStore";
 import { RelativeTime } from "@/components/ui/relative-time";
-import { displayEmail, shortId } from "@/lib/format";
+import { displayEmail, formatDateTime, shortId } from "@/lib/format";
+import { useTick } from "@/lib/useTick";
 import { describeOperation } from "@/lib/operation-labels";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import type { SwitchRule } from "@/ipc/types";
-import type { AccountDraft } from "@/store/accountModel";
-import { describeAccountStatus, statusNeedsAttention } from "./account-status";
+import type { Account, SwitchRule } from "@/ipc/types";
+import { accountTokenStatus, type AccountDraft } from "@/store/accountModel";
+import { describeAccountStatus, statusNeedsAttention, TOKEN_STATUS_LABELS } from "./account-status";
 import { AccountEnvironmentPanel } from "./account-environment-panel";
 
 /// 卡片内容区的固定高度（未展开「详细配置」时）。
@@ -68,9 +70,35 @@ const CARD_BODY_COLLAPSED_CLASS = "h-[210px]";
 interface AccountCardProps {
   id: string;
   onDelete: (id: string, email: string) => void;
+  onCheckPlan?: (id: string) => void;
 }
 
-export const AccountCard = React.memo(({ id, onDelete }: AccountCardProps) => {
+const PLAN_LABELS = new Map([
+  ["free", "Free"], ["plus", "Plus"], ["pro", "Pro"], ["go", "Go"], ["team", "Team"],
+  ["business", "Business"], ["enterprise", "Enterprise"], ["edu", "Edu"],
+  ["chatgptfreeplan", "Free"], ["chatgptplusplan", "Plus"], ["chatgptproplan", "Pro"],
+]);
+
+function TokenStatus(account: Pick<Account, "hasAccessToken" | "accessTokenExpiresAt">) {
+  useTick(Boolean(account.accessTokenExpiresAt));
+  const status = accountTokenStatus(account);
+  const expiry = status === "unexpired" || status === "expired" ? account.accessTokenExpiresAt : null;
+  const variant = status === "unexpired" ? "ok" : status ? "danger" : "outline";
+  return (
+    <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+      <Badge variant={variant} className="shrink-0 text-2xs">
+        {status ? TOKEN_STATUS_LABELS[status] : "Token 到期时间未知"}
+      </Badge>
+      {expiry && (
+        <time dateTime={expiry} className="text-xs text-muted" title={formatDateTime(expiry, { seconds: true })}>
+          {formatDateTime(expiry)} 到期
+        </time>
+      )}
+    </div>
+  );
+}
+
+export const AccountCard = React.memo(({ id, onDelete, onCheckPlan }: AccountCardProps) => {
   const record = useAccountRecord(id);
   const runningOp = useAccountRunningOperation(id);
   const lastRun = useAccountLastRun(id);
@@ -224,11 +252,21 @@ export const AccountCard = React.memo(({ id, onDelete }: AccountCardProps) => {
             label={status.label}
             className="min-w-0 [&>span]:truncate"
           />
+          {(acc.planType || acc.planCheckDetail) && (
+            <Badge variant="outline" className="max-w-28 shrink-0 truncate text-2xs"
+              title={acc.planCheckDetail ?? (acc.planCheckedAt ? `确认于 ${new Date(acc.planCheckedAt).toLocaleString()}` : undefined)}>
+              {acc.planType ? PLAN_LABELS.get(acc.planType) ?? acc.planType : "套餐未确认"}
+              {acc.planType && acc.planCheckDetail ? " · 待复核" : ""}
+            </Badge>
+          )}
           <RelativeTime
             value={acc.statusCheckedAt}
             className="shrink-0 text-xs text-muted"
           />
         </div>
+        {acc.hasAccessToken !== undefined && (
+          <TokenStatus hasAccessToken={acc.hasAccessToken} accessTokenExpiresAt={acc.accessTokenExpiresAt} />
+        )}
       </CardHeader>
 
       {/* overflow-hidden 是定高的一部分：没有它，任何算漏的内容会直接溢出卡片边框，
@@ -540,6 +578,12 @@ export const AccountCard = React.memo(({ id, onDelete }: AccountCardProps) => {
                   <RefreshCw className="size-4" />
                 )}
               </Button>
+
+              {onCheckPlan && (
+                <Button variant="ghost" size="icon-sm" onClick={() => onCheckPlan(id)} aria-label="查询套餐" title="查询套餐">
+                  <CreditCard className="size-4" />
+                </Button>
+              )}
               
               <Button
                 variant="ghost"

@@ -3,6 +3,7 @@ import { useAccountFilter } from "@/store/selectors";
 import { useKeeperStore } from "@/store/keeperStore";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import {
   Select,
   SelectContent,
@@ -11,15 +12,22 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { Eye, EyeOff, Plus, X } from "lucide-react";
-import { AccountPromoFilter, AccountStatusFilter } from "@/store/accountModel";
+import { ChevronDown, Eye, EyeOff, Plus, X } from "lucide-react";
+import type { AccountPromoFilter, AccountStatusFilter, AccountTokenStatus } from "@/store/accountModel";
 import { SwitchRule } from "@/ipc/types";
+import { TOKEN_STATUS_LABELS } from "./account-status";
+
+const TOKEN_FILTER_OPTIONS: AccountTokenStatus[] = ["none", "unexpired", "expired"];
 
 interface AccountsToolbarProps {
   onCreateClick: () => void;
+  canInspect: boolean;
+  onInspect: () => void;
+  canCheckPlans: boolean;
+  onCheckPlans: () => void;
 }
 
-export function AccountsToolbar({ onCreateClick }: AccountsToolbarProps) {
+export function AccountsToolbar({ onCreateClick, canInspect, onInspect, canCheckPlans, onCheckPlans }: AccountsToolbarProps) {
   const { filter, active, setFilter, reset } = useAccountFilter();
   const emailsRevealed = useKeeperStore((s) => s.emailsRevealed);
   const setEmailsRevealed = useKeeperStore((s) => s.setEmailsRevealed);
@@ -76,6 +84,29 @@ export function AccountsToolbar({ onCreateClick }: AccountsToolbarProps) {
         </SelectContent>
       </Select>
 
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="outline" className="h-9 justify-between">
+            Token 状态{filter.tokenStatuses.length > 0 ? `（${filter.tokenStatuses.length}）` : ""}
+            <ChevronDown className="size-4 text-muted" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start">
+          {TOKEN_FILTER_OPTIONS.map((status) => (
+            <DropdownMenuCheckboxItem
+              key={status}
+              checked={filter.tokenStatuses.includes(status)}
+              onSelect={(event) => event.preventDefault()}
+              onCheckedChange={(checked) => setFilter({
+                tokenStatuses: checked ? [...filter.tokenStatuses, status] : filter.tokenStatuses.filter((item) => item !== status),
+              })}
+            >
+              {TOKEN_STATUS_LABELS[status]}
+            </DropdownMenuCheckboxItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+
       <Select
         value={filter.switchRule}
         onValueChange={(v) => setFilter({ switchRule: v as SwitchRule | "all" })}
@@ -96,7 +127,10 @@ export function AccountsToolbar({ onCreateClick }: AccountsToolbarProps) {
         </Button>
       )}
 
-      <div className="ml-auto flex items-center gap-2">
+      <div className="ml-auto flex flex-wrap items-center gap-2">
+        <Button variant="outline" size="sm" className="h-9" disabled={!canInspect} onClick={onInspect}
+          title="巡检当前筛选的账号并更新 accessToken">一键巡检</Button>
+        <Button variant="outline" size="sm" className="h-9" disabled={!canCheckPlans} onClick={onCheckPlans}>一键查套餐</Button>
         <Tooltip>
           <TooltipTrigger asChild>
             <Button

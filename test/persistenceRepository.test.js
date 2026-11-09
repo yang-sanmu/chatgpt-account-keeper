@@ -21,12 +21,12 @@ try {
   // this RID/ABI-specific native dependency; pure migration tests still run.
 }
 
-test("existing v8/v9/v10/v11 databases upgrade without replacing historical migrations or user data", { skip: !Database }, async t => {
+test("existing v8–v12 databases upgrade without replacing historical migrations or user data", { skip: !Database }, async t => {
   assert.equal(MIGRATIONS.find(migration => migration.version === 9)?.checksum,
     "eb3b6db509cffa2c661acff13d1e6caa0507471ffc13f033cd7f0760ee283758");
   assert.equal(MIGRATIONS.find(migration => migration.version === 10)?.checksum,
     "f01f3380bbc6ca6d9090843cd8ee04c3ba7ff5e1d8d9fc45865fad6341c55b16");
-  for (const version of [8, 9, 10, 11]) {
+  for (const version of [8, 9, 10, 11, 12]) {
     await t.test(`version ${version}`, async subtest => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "keeper-existing-schema-"));
       const filePath = path.join(root, "keeper.db");
@@ -51,13 +51,14 @@ test("existing v8/v9/v10/v11 databases upgrade without replacing historical migr
       database.close();
 
       repository = await openKeeperRepository({ filePath });
-      assert.equal(repository.getSchemaVersion(), 12);
+      assert.equal(repository.getSchemaVersion(), SCHEMA_VERSION);
       assert.deepEqual(repository.db.prepare("SELECT * FROM schema_migrations WHERE version <= ? ORDER BY version").all(version), ledger);
       assert.equal(repository.getAccount("existing-account").note, "keep me");
       if (version >= 9) assert.equal(repository.db.prepare("SELECT payload FROM tool_records WHERE id='existing'").get().payload, '{"keep":true}');
       if (version >= 10) assert.equal(repository.db.prepare("SELECT sealed FROM flow_pools WHERE id='existing-pool'").get().sealed, "sealed-fixture");
       assert.deepEqual(repository.db.prepare("SELECT * FROM temporary_windows").all(), []);
       assert.deepEqual(repository.db.prepare("SELECT * FROM icloud_state").all(), []);
+      assert.deepEqual(repository.db.prepare("SELECT * FROM account_plans").all(), []);
       const backupPath = path.join(root, "backups", fs.readdirSync(path.join(root, "backups"))[0]);
       const backup = new Database(backupPath, { readonly: true });
       assert.equal(backup.pragma("user_version", { simple: true }), version);

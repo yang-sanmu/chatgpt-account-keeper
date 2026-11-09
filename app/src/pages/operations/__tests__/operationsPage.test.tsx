@@ -1,7 +1,7 @@
 import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { makeBootstrap, makeOperation, tauri } from "@/test/harness";
+import { makeAccount, makeBootstrap, makeOperation, tauri } from "@/test/harness";
 import { normalizeOperationDisplay } from "@/lib/operation-labels";
 import { __resetKeeperStoreForTests, useKeeperStore } from "@/store/keeperStore";
 import { OperationsPage } from "../operations-page";
@@ -57,5 +57,22 @@ describe("历史任务的完成态展示", () => {
         message: operation.message,
       });
     }
+  });
+
+  it("关闭套餐弹窗后可在任务记录中查看逐账号失败原因", async () => {
+    tauri.emitBootstrap(makeBootstrap({
+      accounts: [makeAccount({ id: "acct-missing", email: null, note: "待巡检账号" })],
+      operations: [makeOperation({
+        kind: "account-plan-check",
+        state: "succeeded",
+        result: { total: 2, succeeded: 1, failures: [{ id: "acct-missing", detail: "缺少 accessToken，请先巡检" }] },
+      })],
+    }));
+    const user = userEvent.setup();
+    render(<OperationsPage />);
+
+    await user.click(screen.getByRole("tab", { name: "全部" }));
+    await user.click(screen.getByText("查询失败明细（1 个账号）"));
+    expect(screen.getByText("待巡检账号 · 缺少 accessToken，请先巡检")).toBeVisible();
   });
 });

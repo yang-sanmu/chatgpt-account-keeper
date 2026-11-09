@@ -34,6 +34,7 @@ export const SESSION_CHECK_TIMEOUT_MS = 22_000;
 // 同一 Page 在底层探测真正 settle 前必须复用该 Promise，避免轮询不断叠加
 // 永不返回的 CDP 请求。WeakMap 不延长已关闭 Page 的生命周期。
 const sessionProbeFlights = new WeakMap();
+const accessTokenProbeFlights = new WeakMap();
 
 /**
  * 在浏览器页面内部执行的原始探测器。保持函数自包含，便于既交给
@@ -192,7 +193,7 @@ export async function sessionProbeInPage(options = {}) {
     } catch (e) {
       out.sessionError = String(e && e.message ? e.message : e);
     }
-    if (sess?.user?.email) break;
+    if (sess?.user?.email && (!options.captureAccessToken || sess.accessToken)) break;
     out.retried = attempt + 1;
     if (attempt < maxAttempts - 1) await sleep(retryDelayMs);
   }
@@ -245,6 +246,10 @@ export async function sessionProbeInPage(options = {}) {
           meEmail.includes("@") &&
           !!sessionEmail &&
           meEmail.toLowerCase() === sessionEmail.toLowerCase();
+        if (options.captureAccessToken && res.status === 200 && out.meValidUser &&
+            typeof token === "string" && /^[!-~]{1,16384}$/u.test(token)) {
+          out.accessToken = token;
+        }
       } catch {
         out.meParseOk = false;
         out.meValidUser = false;
@@ -274,6 +279,7 @@ export async function checkSession(page, options = {}) {
       ? options.hardTimeoutMs
       : SESSION_CHECK_TIMEOUT_MS;
   const probeOptions = {
+    ...(options.captureAccessToken === true ? { captureAccessToken: true } : {}),
     fetchTimeoutMs:
       Number.isFinite(options.fetchTimeoutMs) && options.fetchTimeoutMs > 0
         ? options.fetchTimeoutMs
@@ -290,8 +296,9 @@ export async function checkSession(page, options = {}) {
   let probe;
   let timeout;
   let flight;
+  const flights = options.captureAccessToken === true ? accessTokenProbeFlights : sessionProbeFlights;
   try {
-    flight = sessionProbeFlights.get(page);
+    flight = flights.get(page);
     if (!flight) {
       flight = {
         promise: Promise.resolve().then(() =>
@@ -299,10 +306,10 @@ export async function checkSession(page, options = {}) {
         ),
         timedOut: false,
       };
-      sessionProbeFlights.set(page, flight);
+      flights.set(page, flight);
       const clearFlight = () => {
-        if (sessionProbeFlights.get(page) === flight) {
-          sessionProbeFlights.delete(page);
+        if (flights.get(page) === flight) {
+          flights.delete(page);
         }
       };
       flight.promise.then(clearFlight, clearFlight);
@@ -347,7 +354,10 @@ export async function checkSession(page, options = {}) {
   // 与 session 身份一致的后端用户 JSON 是最强的可用证据。页面迁移期间，
   // 可见登录入口或弹窗可能与仍可用的认证响应同时存在，不能用 UI 标记覆盖它。
   if (email && probe.meStatus === 200 && probe.meValidUser) {
-    return { state: SESSION_OK, email, name, detail: null };
+    return {
+      state: SESSION_OK, email, name, detail: null,
+      ...(options.captureAccessToken === true && probe.accessToken ? { accessToken: probe.accessToken } : {}),
+    };
   }
 
   // 游客页与登录页现在同样提供可用输入框，只有会话接口而忽略页面强指示，会让

@@ -420,6 +420,11 @@
         "promoCheckedAt": { "type": ["string", "null"], "format": "date-time" },
         "promoStale": { "type": "boolean" },
         "promoCheckDetail": { "type": ["string", "null"] },
+        "planType": { "type": ["string", "null"] },
+        "planCheckedAt": { "type": ["string", "null"], "format": "date-time" },
+        "planCheckDetail": { "type": ["string", "null"] },
+        "hasAccessToken": { "type": "boolean" },
+        "accessTokenExpiresAt": { "type": ["string", "null"], "format": "date-time" },
         "pageOpen": { "type": "boolean" },
         "rotationCurrentSet": { "type": ["string", "null"] },
         "rotationWindowsDone": { "type": "integer", "minimum": 0 },
@@ -504,6 +509,11 @@
         "promoCheckedAt": { "type": ["string", "null"], "format": "date-time" },
         "promoStale": { "type": "boolean" },
         "promoCheckDetail": { "type": ["string", "null"] },
+        "planType": { "type": ["string", "null"] },
+        "planCheckedAt": { "type": ["string", "null"], "format": "date-time" },
+        "planCheckDetail": { "type": ["string", "null"] },
+        "hasAccessToken": { "type": "boolean" },
+        "accessTokenExpiresAt": { "type": ["string", "null"], "format": "date-time" },
         "skipped": { "type": "boolean" },
         "skipKind": { "type": ["string", "null"] },
         "skipReason": { "type": ["string", "null"] }
@@ -753,6 +763,31 @@
     "operationArray": {
       "type": "array",
       "items": { "$ref": "ipc-v1.schema.json#/$defs/operation" }
+    },
+    "accountPlanParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ids", "proxyId"],
+      "properties": {
+        "ids": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+        "proxyId": { "type": "string", "minLength": 1 }
+      }
+    },
+    "accountTokenParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ids"],
+      "properties": {
+        "ids": { "type": "array", "minItems": 1, "maxItems": 100, "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "accountTokenResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tokens"],
+      "properties": {
+        "tokens": { "type": "array", "maxItems": 100, "items": { "type": "string", "minLength": 1, "maxLength": 16384 } }
+      }
     },
     "idParams": {
       "type": "object",

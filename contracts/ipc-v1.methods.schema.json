@@ -795,6 +795,15 @@
       "required": ["id"],
       "properties": { "id": { "type": "string", "minLength": 1 } }
     },
+    "accountRefreshStatusParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "proxyId": { "type": "string", "minLength": 1, "description": "仅覆盖本次巡检的节点，省略时使用账号分组节点" }
+      }
+    },
     "selectorCheckParams": {
       "type": "object",
       "additionalProperties": false,

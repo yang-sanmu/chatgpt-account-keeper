@@ -117,7 +117,7 @@ export async function composeBackground({
   });
 
   // 语义复验：逐条按任务语义判定，计数器只是触发器。
-  queue.configureRevalidate(({ accountId }) => {
+  queue.configureRevalidate(({ accountId, dedupeParams }) => {
     const account = store.getAccount(accountId);
     // 账号停用/删除不是"这一轮自动运行失败"，而是这个账号不再参与调度：写进
     // lastResult 会把账号页的「上次运行」污染成一条用户从未发起的失败。
@@ -127,14 +127,15 @@ export async function composeBackground({
     if (isQuarantined(accountId)) {
       return { ok: false, reason: "该账号的 Chrome 未能回收，已隔离", settlesRun: true };
     }
-    const proxyId = store.effectiveProxyId?.(account) ?? null;
+    const override = dedupeParams.proxyId;
+    const proxyId = override ?? store.effectiveProxyId?.(account);
     if (proxyId) {
       // 只认注入的这一个来源。留 store.getProxyNodes?.() 兜底等于把同一个陷阱
       // 重新装上：store 从来没有这个导出，可选调用会静默退化成空表。
       const node = readProxyNodes().find((candidate) => candidate.id === proxyId);
       if (!node || node.missing || node.enabled === false) {
         // 健康校验失败：这算一次真实的自动运行结果，要落到调度状态里。
-        return { ok: false, reason: "分组绑定的代理节点不可用", settlesRun: true };
+        return { ok: false, reason: override ? "所选巡检节点不可用" : "分组绑定的代理节点不可用", settlesRun: true };
       }
     }
     return { ok: true };
@@ -200,6 +201,7 @@ export async function composeBackground({
           headless: store.getSettings().headless,
           runToken,
           signal,
+          proxyOverrideId: entry.dedupeParams.proxyId,
         });
       } catch (error) {
         // 只有"明确未创建"才能撤回 token 让关闭走 never-launched 快路径；结果不确定

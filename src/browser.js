@@ -9,7 +9,7 @@ import { connectManualBrowser } from "./manualBrowser.js";
 import { fromRoot, ensureDir } from "./paths.js";
 import { proxyForAccount, proxyForNode, ensureRunning, getNetworkConfig, waitForNetworkTransition } from "./proxyManager.js";
 import { getAccount, effectiveProxyId, getAccountEnvironment, getGroup } from "./store.js";
-import { resolveRegionForAccount } from "./geo.js";
+import { previewGroupRegion, resolveRegionForAccount } from "./geo.js";
 import { DEFAULT_BROWSER_LOCALE, environmentSnapshot } from "./environmentConfig.js";
 import { scheduleProfileCacheMaintenance } from "./profileMaintenance.js";
 import { replaceFileSync } from "./atomicFile.js";
@@ -1333,8 +1333,9 @@ async function prepareAccountLaunch(account, opts) {
 
   // 分组节点由网络模式编译前置链路；未绑定节点时使用网络模式的默认出口。
   const networkConfig = getNetworkConfig().config;
-  const selectedProxyId = temporary ? temporary.proxyId : icloud ? null : effectiveProxyId(liveAccount);
-  const getProxy = () => independent ? proxyForNode(selectedProxyId) : proxyForAccount(liveAccount);
+  const { proxyOverrideId } = opts;
+  const selectedProxyId = temporary ? temporary.proxyId : icloud ? null : proxyOverrideId ?? effectiveProxyId(liveAccount);
+  const getProxy = () => independent || proxyOverrideId ? proxyForNode(selectedProxyId) : proxyForAccount(liveAccount);
   if (icloud && icloud.networkMode !== "inherit") {
     if (icloud.networkMode === "direct") launchArgs.args.push("--no-proxy-server");
     else if (icloud.networkMode === "system") {
@@ -1353,7 +1354,8 @@ async function prepareAccountLaunch(account, opts) {
       // 绑了节点却拿不到端口（节点被停用/已从订阅移除）。宁可报错也不静默裸奔，
       // 否则账号会用错误的出口 IP 访问，风险更高。
       throw Object.assign(new Error(
-        `账号所属分组绑定的代理节点不可用（可能已停用或不在订阅中），请到分组管理里重新选择节点`
+        proxyOverrideId ? "所选巡检节点不可用" :
+          "账号所属分组绑定的代理节点不可用（可能已停用或不在订阅中），请到分组管理里重新选择节点"
       ), { code: "PROXY_UNAVAILABLE" });
     }
   } else {
@@ -1364,9 +1366,14 @@ async function prepareAccountLaunch(account, opts) {
 
   // A fixed account environment survives group/output changes. Inheritance keeps
   // the existing manual/automatic group resolver; failed probes remain retryable.
-  const region = environment.mode === "fixed" ? {} : await resolveRegionForAccount(liveAccount);
-  const snapshot = environmentSnapshot({ account: liveAccount, environment,
-    group: liveAccount.groupId ? getGroup(liveAccount.groupId) : null, region });
+  let region = {};
+  if (environment.mode !== "fixed" && !proxyOverrideId) {
+    region = await resolveRegionForAccount(liveAccount);
+  }
+  const group = liveAccount.groupId ? getGroup(liveAccount.groupId) : null;
+  // 临时换出口时沿用已有地区设置，避免探测分组节点或写回分组配置。
+  if (environment.mode !== "fixed" && proxyOverrideId) region = previewGroupRegion(group).region;
+  const snapshot = environmentSnapshot({ account: liveAccount, environment, group, region });
   if (snapshot.timezoneId) launchArgs.timezoneId = snapshot.timezoneId;
   launchArgs.locale = snapshot.locale;
 

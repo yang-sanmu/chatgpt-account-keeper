@@ -11,9 +11,10 @@ interface BulkActionBarProps {
   visibleIds: string[];
   onBulkDelete: (ids: string[]) => void;
   onCheckPlans: (ids: string[]) => void;
+  onInspect: (ids: string[]) => void;
 }
 
-export function BulkActionBar({ visibleIds, onBulkDelete, onCheckPlans }: BulkActionBarProps) {
+export function BulkActionBar({ visibleIds, onBulkDelete, onCheckPlans, onInspect }: BulkActionBarProps) {
   const { selectedIds, count, tokenCount, select, clear } = useAccountSelection();
   const bulkActions = useBulkActions();
   const [copying, setCopying] = useState(false);
@@ -89,8 +90,8 @@ export function BulkActionBar({ visibleIds, onBulkDelete, onCheckPlans }: BulkAc
           <PowerOff className="mr-1.5 size-4 text-muted" /> 停用
         </Button>
         <div className="w-px h-4 bg-line mx-1" />
-        <Button variant="secondary" size="sm" onClick={() => bulkActions.refreshStatus(selectedArray)} className="h-8">
-          <RefreshCw className="mr-1.5 size-4" /> 刷新状态
+        <Button variant="secondary" size="sm" onClick={() => onInspect(selectedArray)} className="h-8">
+          <RefreshCw className="mr-1.5 size-4" /> 批量巡检
         </Button>
         <Button variant="secondary" size="sm" onClick={() => onCheckPlans(selectedArray)} className="h-8">
           <CreditCard className="mr-1.5 size-4" /> 批量查套餐

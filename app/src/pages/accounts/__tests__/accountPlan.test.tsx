@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -39,6 +39,43 @@ it("一键查询显式选择节点，显示未取到 Token 的账号", async () 
   expect(call).toHaveBeenCalledWith({ ids: ["one", "two"], proxyId: "enabled" });
 });
 
+it("一键巡检提交筛选结果，批量巡检为勾选账号使用同一个指定节点", async () => {
+  const call = vi.fn(() => makeOperation({ state: "queued" }));
+  tauri.onMethod("accounts.refreshStatus", call);
+  tauri.emitBootstrap(makeBootstrap({
+    accounts: [makeAccount({ id: "one", gptName: "可见账号" }), makeAccount({ id: "two" }), makeAccount({ id: "three" })],
+    proxies: { nodes: [{ id: "enabled", name: "巡检节点 A", enabled: true }, { id: "disabled", name: "停用节点 B", enabled: false }] },
+  }));
+  useKeeperStore.getState().selectAccounts(["two", "three"]);
+  useKeeperStore.getState().setAccountFilter({ keyword: "可见账号" });
+  render(<TooltipProvider><AccountsPage /></TooltipProvider>);
+
+  fireEvent.click(screen.getByRole("button", { name: "一键巡检" }));
+  const oneClick = within(screen.getByRole("dialog", { name: "一键巡检" }));
+  expect(oneClick.getByText(/本次巡检 1 个账号/)).toBeInTheDocument();
+  expect(oneClick.getByRole("radio", { name: "账号分组节点" })).toBeChecked();
+  expect(call).not.toHaveBeenCalled();
+  fireEvent.click(oneClick.getByRole("button", { name: "开始巡检" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  expect(call.mock.calls).toEqual([[{ id: "one" }]]);
+
+  fireEvent.click(screen.getByRole("button", { name: "批量巡检" }));
+  const bulk = within(screen.getByRole("dialog", { name: "批量巡检" }));
+  expect(bulk.getByText(/本次巡检 2 个账号/)).toBeInTheDocument();
+  fireEvent.click(bulk.getByRole("radio", { name: "指定节点" }));
+  const start = bulk.getByRole("button", { name: "开始巡检" });
+  expect(start).toBeDisabled();
+  fireEvent.click(bulk.getByRole("combobox", { name: "选择节点" }));
+  expect(screen.queryByRole("option", { name: "停用节点 B" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("option", { name: "巡检节点 A" }));
+  fireEvent.click(start);
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  expect(call.mock.calls).toEqual([[{ id: "one" }], [{ id: "two", proxyId: "enabled" }], [{ id: "three", proxyId: "enabled" }]]);
+
+  fireEvent.click(screen.getByRole("button", { name: "批量巡检" }));
+  expect(screen.getByRole("radio", { name: "账号分组节点" })).toBeChecked();
+}, 15_000);
+
 it("只把选中账号的已有 Token 按一行一个复制", async () => {
   const writeText = vi.fn().mockResolvedValue(undefined);
   Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
@@ -50,7 +87,7 @@ it("只把选中账号的已有 Token 按一行一个复制", async () => {
     makeAccount({ id: "three", hasAccessToken: true, accessTokenExpiresAt: "2026-01-01T00:00:00.000Z" }),
   ] }));
   useKeeperStore.getState().selectAccounts(["one", "two", "three"]);
-  render(<BulkActionBar visibleIds={["one", "two"]} onBulkDelete={() => {}} onCheckPlans={() => {}} />);
+  render(<BulkActionBar visibleIds={["one", "two"]} onBulkDelete={() => {}} onCheckPlans={() => {}} onInspect={() => {}} />);
   expect(screen.getByText("已选 3 个 · 2 个有 Token")).toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("button", { name: "复制 accessToken" }));

@@ -326,6 +326,7 @@ export interface KeeperIPCV1GeneratedSchema {
   accountTokenParams?: AccountTokenParams;
   accountTokenResult?: AccountTokenResult;
   idParams?: IdParams;
+  accountRefreshStatusParams?: AccountRefreshStatusParams;
   selectorCheckParams?: SelectorCheckParams;
   taskIdParams?: TaskIdParams;
   operationListParams?: OperationListParams;
@@ -940,6 +941,17 @@ export interface IdParams {
 }
 /**
  * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
+ * via the `definition` "accountRefreshStatusParams".
+ */
+export interface AccountRefreshStatusParams {
+  id: string;
+  /**
+   * 仅覆盖本次巡检的节点，省略时使用账号分组节点
+   */
+  proxyId?: string;
+}
+/**
+ * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
  * via the `definition` "selectorCheckParams".
  */
 export interface SelectorCheckParams {
@@ -1504,7 +1516,7 @@ export interface IpcMethodContracts {
   "accounts.update": { params: AccountUpdateParams; result: AccountResult };
   "accounts.remove": { params: AccountRemoveParams; result: OkResult };
   "accounts.getStatus": { params: IdParams; result: AccountStatusResult };
-  "accounts.refreshStatus": { params: IdParams; result: Operation };
+  "accounts.refreshStatus": { params: AccountRefreshStatusParams; result: Operation };
   "accounts.checkPlans": { params: AccountPlanParams; result: Operation };
   "accounts.readAccessTokens": { params: AccountTokenParams; result: AccountTokenResult };
   "accounts.runNow": { params: IdParams; result: Operation };

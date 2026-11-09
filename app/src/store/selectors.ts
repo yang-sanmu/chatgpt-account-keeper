@@ -88,7 +88,6 @@ export function useBulkActions() {
   return useKeeperStore(
     useShallow((state) => ({
       setEnabled: state.bulkSetEnabled,
-      refreshStatus: state.bulkRefreshStatus,
       runNow: state.bulkRunNow,
       remove: state.bulkRemove,
     }))

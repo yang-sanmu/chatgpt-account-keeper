@@ -276,6 +276,7 @@ export class BackgroundQueue {
         accountId: entry.accountId,
         workKind: entry.workKind,
         effectiveSource: entry.effectiveSource,
+        dedupeParams: entry.dedupeParams,
       });
     } catch (error) {
       return { ok: false, reason: `任务复验失败：${String(error?.message || error)}`, settlesRun: true };
@@ -573,5 +574,15 @@ export class BackgroundQueue {
       if (!this._pendingQueue.includes(entry)) count++;
     }
     return count;
+  }
+
+  inspectionProxyIds() {
+    const ids = new Set();
+    for (const entry of this._entries.values()) {
+      if (entry.workKind === WORK_KINDS.statusCheck && entry.dedupeParams.proxyId) {
+        ids.add(entry.dedupeParams.proxyId);
+      }
+    }
+    return ids;
   }
 }

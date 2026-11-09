@@ -39,7 +39,7 @@ export const METHOD_CONTRACTS = Object.freeze({
   "accounts.update": ["accountUpdateParams", "accountResult"],
   "accounts.remove": ["accountRemoveParams", "okResult"],
   "accounts.getStatus": ["idParams", "accountStatusResult"],
-  "accounts.refreshStatus": ["idParams", "operationResult"],
+  "accounts.refreshStatus": ["accountRefreshStatusParams", "operationResult"],
   "accounts.checkPlans": ["accountPlanParams", "operationResult"],
   "accounts.readAccessTokens": ["accountTokenParams", "accountTokenResult"],
   "accounts.runNow": ["idParams", "operationResult"],

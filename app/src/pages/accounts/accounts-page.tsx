@@ -10,6 +10,7 @@ import { BulkActionBar } from "./bulk-action-bar";
 import { AccountCreateDialog } from "./account-create-dialog";
 import { AccountDeleteDialog } from "./account-delete-dialog";
 import { AccountHistoryDrawer } from "./account-history-drawer";
+import { AccountInspectionDialog } from "./account-inspection-dialog";
 import { AccountPlanDialog } from "./account-plan-dialog";
 import { Users, SearchX } from "lucide-react";
 import { shortId } from "@/lib/format";
@@ -17,11 +18,10 @@ import { shortId } from "@/lib/format";
 export function AccountsPage() {
   const visibleAccounts = useVisibleAccounts();
   const accountIds = useKeeperStore((s) => s.accountIds);
-  const bulkRefreshStatus = useKeeperStore((s) => s.bulkRefreshStatus);
   const { reset: resetFilters } = useAccountFilter();
 
   const [createOpen, setCreateOpen] = React.useState(false);
-  const [submittingInspection, setSubmittingInspection] = React.useState(false);
+  const [inspectionTarget, setInspectionTarget] = React.useState<{ title: string; ids: string[] } | null>(null);
   const [planTarget, setPlanTarget] = React.useState<{ title: string; ids: string[]; allIds?: string[] } | null>(null);
   const checkSinglePlan = React.useCallback((id: string) => {
     setPlanTarget({ title: "查询套餐", ids: [id] });
@@ -51,14 +51,6 @@ export function AccountsPage() {
   };
 
   const visibleIds = visibleAccounts.map((a) => a.effective.id);
-  const inspectVisible = async () => {
-    setSubmittingInspection(true);
-    try {
-      await bulkRefreshStatus(visibleIds);
-    } finally {
-      setSubmittingInspection(false);
-    }
-  };
 
   return (
     <Page>
@@ -68,8 +60,8 @@ export function AccountsPage() {
       />
       
       <AccountsToolbar onCreateClick={() => setCreateOpen(true)}
-        canInspect={visibleIds.length > 0 && !submittingInspection}
-        onInspect={() => void inspectVisible()}
+        canInspect={visibleIds.length > 0}
+        onInspect={() => setInspectionTarget({ title: "一键巡检", ids: visibleIds })}
         canCheckPlans={accountIds.length > 0}
         onCheckPlans={() => setPlanTarget({ title: "一键查套餐", ids: visibleIds, allIds: accountIds })}
       />
@@ -121,8 +113,10 @@ export function AccountsPage() {
         visibleIds={visibleIds} 
         onBulkDelete={handleBulkDelete} 
         onCheckPlans={(ids) => setPlanTarget({ title: "批量查套餐", ids })}
+        onInspect={(ids) => setInspectionTarget({ title: "批量巡检", ids })}
       />
 
+      {inspectionTarget && <AccountInspectionDialog {...inspectionTarget} onClose={() => setInspectionTarget(null)} />}
       {planTarget && <AccountPlanDialog {...planTarget} onClose={() => setPlanTarget(null)} />}
 
       <AccountCreateDialog 

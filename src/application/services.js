@@ -1013,12 +1013,21 @@ export class ApplicationServices {
     const id = requireId(params);
     const account = this.runtime.store.getAccount(id);
     if (!account) fail(ERROR_CODES.NOT_FOUND, "账号不存在");
+    const proxyId = Object.hasOwn(params, "proxyId") ? requireId(params, "proxyId") : null;
+    if (proxyId) {
+      const node = this.runtime.proxies.getNodes().find((item) => item.id === proxyId);
+      if (!node || node.enabled === false || node.missing) fail(ERROR_CODES.PROXY_UNAVAILABLE, "所选巡检节点不可用");
+      if (!this.runtime.enqueue) fail(ERROR_CODES.INTERNAL, "指定节点巡检需要后台队列");
+    }
     if (this.runtime.enqueue) {
       return this.runtime.enqueue({
         accountId: id,
         workKind: "status-check",
         kind: "account-status-refresh",
-        ...(this.runtime.accountPlans ? { dedupeParams: { captureAccessToken: true } } : {}),
+        dedupeParams: {
+          ...(this.runtime.accountPlans ? { captureAccessToken: true } : {}),
+          ...(proxyId ? { proxyId } : {}),
+        },
         message: "等待状态检查",
       });
     }

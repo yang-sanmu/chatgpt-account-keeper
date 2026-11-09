@@ -136,6 +136,52 @@ test("headless readiness distinguishes an absent endpoint file without exposing 
   assert.equal(fixture.elapsed(), 100);
 });
 
+test("headless readiness reports early exit only after the owned job is empty", async (t) => {
+  const fixture = endpointFixture(t);
+  fixture.publish("32122\n/devtools/browser/previous-browser\n", fixture.started - 60_000);
+  const readProcessState = async () => ({
+    ok: true,
+    count: fixture.elapsed() >= 2_000 ? 0 : 1,
+    rootAlive: false,
+    rootExitCode: 21,
+  });
+  await assert.rejects(
+    waitForDevToolsEndpoint(fixture.dir, fixture.started, { timeoutMs: 3_000, readProcessState }),
+    (error) => {
+      assert.equal(error.code, "CHROME_EXITED_BEFORE_DEVTOOLS");
+      assert.match(error.message, /DevToolsActivePort.*旧.*退出码 21.*Job 进程数 0/);
+      assert.ok(error.elapsedMs >= 2_000 && error.elapsedMs < 3_000);
+      return true;
+    }
+  );
+});
+
+test("headless readiness timeout includes the live process snapshot", async (t) => {
+  const fixture = endpointFixture(t);
+  await assert.rejects(
+    waitForDevToolsEndpoint(fixture.dir, fixture.started, {
+      timeoutMs: 1_200,
+      readProcessState: async () => ({ ok: true, count: 2, rootAlive: true }),
+    }),
+    (error) => error.code === "CHROME_DEVTOOLS_TIMEOUT"
+      && /根进程存活，Job 进程数 2/.test(error.message)
+  );
+});
+
+test("headless readiness does not wait for an in-flight process diagnostic", async (t) => {
+  let fixture;
+  fixture = endpointFixture(t, (elapsed) => {
+    if (elapsed === 1_100) fixture.publish("32123\n/devtools/browser/ready\n");
+  });
+  const diagnostic = Promise.withResolvers();
+  t.after(() => diagnostic.resolve(null));
+  const readProcessState = t.mock.fn(() => diagnostic.promise);
+  assert.equal(await waitForDevToolsEndpoint(fixture.dir, fixture.started, {
+    timeoutMs: 1_500, readProcessState,
+  }), "ws://127.0.0.1:32123/devtools/browser/ready");
+  assert.equal(readProcessState.mock.callCount(), 1);
+});
+
 test("headless readiness tolerates a partially-written file until it becomes valid", async (t) => {
   let fixture;
   fixture = endpointFixture(t, (elapsed) => {
@@ -215,6 +261,18 @@ function launcherFixture(overrides = {}) {
   });
   return { events, connections, launch };
 }
+
+test("launcher waits for the new endpoint when the previous file is inside the timestamp tolerance", async (t) => {
+  const fixture = endpointFixture(t, (elapsed) => {
+    if (elapsed === 100) {
+      fixture.publish("32123\n/devtools/browser/new-browser\n", fixture.started - 500);
+    }
+  });
+  fixture.publish("32122\n/devtools/browser/previous-browser\n", fixture.started - 500);
+  const { launch } = launcherFixture();
+  const result = await launch({ userDataDir: fixture.dir });
+  assert.equal(result.endpoint, "http://127.0.0.1:32123");
+});
 
 test("launcher cancellation before launch does not create a broker-owned process", async () => {
   const { events, launch } = launcherFixture({

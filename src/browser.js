@@ -34,6 +34,7 @@ import * as log from "./logger.js";
 const BROWSER_CHANNEL = "chrome";
 const HEADLESS_IDENTITY_CACHE_MS = 5 * 60 * 1000;
 const DEVTOOLS_ENDPOINT_TIMEOUT_MS = 30_000;
+const DEVTOOLS_PROCESS_CHECK_INTERVAL_MS = 1_000;
 const CDP_CONNECTION_TIMEOUT_MS = 10_000;
 const CDP_COMMAND_TIMEOUT_MS = 10_000;
 const INTERACTIVE_CDP_TIMEOUT_MS = 15_000;
@@ -46,6 +47,10 @@ const IDENTITY_TARGET_TYPES = new Set([
   "shared_worker",
   "service_worker",
 ]);
+const IDENTITY_TARGET_FILTER = [
+  ...Array.from(IDENTITY_TARGET_TYPES, (type) => ({ type })),
+  { exclude: true },
+];
 const HEADLESS_UA_HIGH_ENTROPY_HINTS = [
   "architecture",
   "bitness",
@@ -334,26 +339,43 @@ const delay = (ms, signal = null) => new Promise((resolve, reject) => {
 export async function waitForDevToolsEndpoint(
   userDataDir,
   notBefore,
-  { timeoutMs = DEVTOOLS_ENDPOINT_TIMEOUT_MS, signal = null } = {}
+  { timeoutMs = DEVTOOLS_ENDPOINT_TIMEOUT_MS, signal = null, previousPortFile = null, readProcessState = null } = {}
 ) {
   throwIfCancelled(signal);
   const endpointFile = path.join(userDataDir, "DevToolsActivePort");
   const started = Date.now();
   const deadline = started + timeoutMs;
   let lastState = "尚未读取 DevToolsActivePort";
+  let processState = null;
+  let processCheckPending = false;
+  let nextProcessCheck = started + DEVTOOLS_PROCESS_CHECK_INTERVAL_MS;
 
   while (Date.now() < deadline) {
     throwIfCancelled(signal);
+    const now = Date.now();
+    if (readProcessState && !processCheckPending && now >= nextProcessCheck) {
+      processCheckPending = true;
+      nextProcessCheck = now + DEVTOOLS_PROCESS_CHECK_INTERVAL_MS;
+      // 诊断不能阻塞端点发现，慢响应时也只保留一个 broker 请求。
+      Promise.resolve().then(readProcessState).then(
+        (state) => { processState = state; },
+        () => { processState = null; },
+      ).finally(() => { processCheckPending = false; });
+    }
+    if (processState?.ok && processState.count === 0) break;
     try {
       const [content, stats] = await Promise.all([
         fs.readFile(endpointFile, { encoding: "utf8", signal: signal ?? undefined }),
         fs.stat(endpointFile),
       ]);
       throwIfCancelled(signal);
+      if (processState?.ok && processState.count === 0) break;
       // 避免异常退出遗留的旧端口文件被误读。Windows 文件时间粒度保留 2 秒余量。
-      // 慢启动时旧文件会一直存在，不能删 Profile/放宽新鲜度检查来掩盖它。
+      // 即使时间戳在余量内，本次启动也必须写入不同的浏览器端点。
       if (stats.mtimeMs + 2_000 < notBefore) {
         lastState = `DevToolsActivePort 仍是旧文件（早于本次启动 ${Math.round(notBefore - stats.mtimeMs)}ms）`;
+      } else if (content === previousPortFile) {
+        lastState = "DevToolsActivePort 仍是启动前的旧端点";
       } else {
         const [portLine, pathLine] = content.trim().split(/\r?\n/);
         const port = Number(portLine);
@@ -381,10 +403,19 @@ export async function waitForDevToolsEndpoint(
 
   throwIfCancelled(signal);
   const elapsedMs = Date.now() - started;
+  const exited = processState?.ok && processState.count === 0;
+  let processDetail = readProcessState ? "；Chrome 进程状态不可用" : "";
+  if (processState?.ok && Number.isInteger(processState.count)) {
+    const rootState = processState.rootAlive === true ? "存活" : "已退出";
+    const exitCode = Number.isInteger(processState.rootExitCode)
+      ? `，退出码 ${processState.rootExitCode}` : "";
+    processDetail = `；Chrome 根进程${rootState}${exitCode}，Job 进程数 ${processState.count}`;
+  }
   const error = new Error(
-    `无法连接 Headless Chrome 的本地调试端口：等待超时（已等待 ${elapsedMs}ms，限时 ${timeoutMs}ms；${lastState}）`
+    `无法连接 Headless Chrome 的本地调试端口：${exited ? "Chrome 提前退出" : "等待超时"}` +
+    `（已等待 ${elapsedMs}ms，限时 ${timeoutMs}ms；${lastState}${processDetail}）`
   );
-  error.code = "CHROME_DEVTOOLS_TIMEOUT";
+  error.code = exited ? "CHROME_EXITED_BEFORE_DEVTOOLS" : "CHROME_DEVTOOLS_TIMEOUT";
   error.elapsedMs = elapsedMs;
   error.timeoutMs = timeoutMs;
   throw error;
@@ -525,188 +556,20 @@ export function isMissingCdpSessionError(error) {
   );
 }
 
-async function installHeadlessTargetIdentity(
-  context,
-  {
-    userDataDir,
-    notBefore,
-    identity,
-    accountId,
-  }
-) {
+async function installHeadlessTargetIdentity(context, { userDataDir, notBefore, identity, accountId }) {
   const endpoint = await waitForDevToolsEndpoint(userDataDir, notBefore);
-  const connection = await RawCdpConnection.connect(endpoint);
-  const activeJobs = new Set();
-  let installing = true;
-  let installError = null;
-  let contextClosed = false;
-  let shutdownTimer = null;
-
-  const scheduleIdentityShutdown = (message) => {
-    if (contextClosed || shutdownTimer) return;
-    // Playwright 正常关闭 Context 时，原始 CDP socket 往往先于 context 的
-    // close 事件断开。短暂等待事件归位，避免把正常退出误报成保护失效。
-    shutdownTimer = setTimeout(() => {
-      shutdownTimer = null;
-      if (contextClosed) return;
-      log.error(message);
-      context.close().catch(() => {});
-    }, 500);
-  };
-
-  context.once("close", () => {
-    contextClosed = true;
-    if (shutdownTimer) clearTimeout(shutdownTimer);
-    shutdownTimer = null;
-    connection.close();
-  });
-
-  const autoAttach = {
-    autoAttach: true,
-    waitForDebuggerOnStart: true,
-    flatten: true,
-  };
-  const override = {
-    userAgent: identity.userAgent,
-    platform: identity.platform,
-    ...(identity.metadata ? { userAgentMetadata: identity.metadata } : {}),
-  };
-
-  const prepareTarget = async ({ sessionId, targetInfo }) => {
-    // 两条消息按 WebSocket 顺序发出，但一起等待：部分新 renderer 只有恢复
-    // Runtime 后才回送 Emulation 响应。Playwright/启动参数已先保证首包 UA，
-    // 这里在页面脚本执行前把高熵 UA-CH 恢复为探测到的完整原值。
-    //
-    // OOPIF、验证框和页面创建的 Worker 是 page/iframe Target 的子层 Target，
-    // 根 browser session 看不到它们。因此必须先在这两类 session 上继续
-    // auto-attach；消息按序发出，可确保父 Target 恢复前屏障已经安装。
-    const nestedAutoAttachCommand =
-      targetInfo.type === "page" || targetInfo.type === "iframe"
-        ? connection.send(
-            "Target.setAutoAttach",
-            autoAttach,
-            sessionId
-          )
-        : Promise.resolve();
-    const identityCommand = IDENTITY_TARGET_TYPES.has(targetInfo.type)
-      ? connection.send(
-          "Emulation.setUserAgentOverride",
-          override,
-          sessionId
-        )
-      : Promise.resolve();
-    const resumeCommand = connection.send(
-      "Runtime.runIfWaitingForDebugger",
-      {},
-      sessionId
-    );
-    const [nestedAutoAttachResult, identityResult, resumeResult] =
-      await Promise.allSettled([
-        nestedAutoAttachCommand,
-        identityCommand,
-        resumeCommand,
-      ]);
-    if (
-      nestedAutoAttachResult.status === "rejected" &&
-      !isMissingCdpSessionError(nestedAutoAttachResult.reason)
-    ) {
-      throw new Error(
-        `Target ${targetInfo.type} 子层身份屏障安装失败：${String(
-          nestedAutoAttachResult.reason?.message || nestedAutoAttachResult.reason
-        )}`
-      );
-    }
-    if (
-      identityResult.status === "rejected" &&
-      !isMissingCdpSessionError(identityResult.reason)
-    ) {
-      throw new Error(
-        `Target ${targetInfo.type} UA-CH 初始化失败：${String(
-          identityResult.reason?.message || identityResult.reason
-        )}`
-      );
-    }
-    if (
-      resumeResult.status === "rejected" &&
-      !isMissingCdpSessionError(resumeResult.reason)
-    ) {
-      throw new Error(
-        `Target ${targetInfo.type} 恢复运行失败：${String(
-          resumeResult.reason?.message || resumeResult.reason
-        )}`
-      );
-    }
-  };
-
-  const startJob = (event) => {
-    const job = prepareTarget(event);
-    activeJobs.add(job);
-    job
-      .catch((error) => {
-        installError ??= error;
-        if (!installing && !contextClosed) {
-          const message =
-            `账号 ${accountId} 浏览器身份保护失效，关闭本次浏览器：${error.message}`;
-          if (/CDP WebSocket (?:已关闭|当前不可用)/.test(error.message)) {
-            scheduleIdentityShutdown(message);
-          } else {
-            // 明确的协议/参数错误不是正常关闭竞争，立即 fail-closed。
-            log.error(message);
-            context.close().catch(() => {});
-          }
-        }
-      })
-      .finally(() => activeJobs.delete(job));
-  };
-
-  connection.onEvent((message) => {
-    if (message.method === "Target.attachedToTarget") {
-      startJob(message.params);
-    }
-  });
-  connection.onUnexpectedClose((error) => {
-    // 正常 context.close 时两条连接的关闭事件可能有几十毫秒先后，稍等后再判定。
-    scheduleIdentityShutdown(
-      `账号 ${accountId} 浏览器身份保护连接中断，关闭本次浏览器：${error.message}`
-    );
-  });
-
-  try {
-    await connection.send("Target.setAutoAttach", autoAttach);
-    // getTargets 是安装屏障：其响应返回前，已有 Target 的 attached 事件已进入队列。
-    await connection.send("Target.getTargets");
-    do {
-      const snapshot = [...activeJobs];
-      if (!snapshot.length) {
-        await Promise.resolve();
-        if (!activeJobs.size) break;
-      } else {
-        await Promise.allSettled(snapshot);
-      }
-    } while (activeJobs.size);
-
-    if (installError) throw installError;
-    installing = false;
-    return connection;
-  } catch (error) {
-    if (shutdownTimer) clearTimeout(shutdownTimer);
-    shutdownTimer = null;
-    connection.close();
-    throw error;
-  }
+  const barrier = await installIdentityBarrierOnEndpoint({ endpoint, identity, accountId });
+  barrier.attachContext(context);
 }
 
 /**
- * 在 Playwright 接管**之前**安装身份屏障（计划 §9.1 步骤 3 早于步骤 4）。
- *
- * 与 installHeadlessTargetIdentity 的区别：那个版本先有 Context 再装屏障，只适用于
- * launchPersistentContext。broker 路径下 Chrome 由创建时纳管方式启动，必须在
- * connectOverCDP 之前就把 auto-attach 屏障装好并处理完既有 Target，否则 Playwright
- * 自己的 attach 可能让 Target 先跑起来，页面脚本会在完整 UA-CH 恢复前执行。
- *
- * 返回 barrier：attachContext(context) 用于接上 fail-closed 关闭路径，close() 释放连接。
+ * 在 Playwright 接管前安装身份屏障，确保首个页面脚本运行前恢复完整 UA-CH。
+ * CLI 的旧启动路径也通过同一个屏障初始化已有 Context。
  */
-export async function installIdentityBarrierOnEndpoint({ endpoint, identity, accountId, timezoneId, locale }) {
+export async function installIdentityBarrierOnEndpoint(
+  { endpoint, identity, accountId, timezoneId, locale },
+  { connect = (url) => RawCdpConnection.connect(url) } = {},
+) {
   if (endpoint.startsWith("http:")) {
     const address = new URL(endpoint);
     if (address.hostname !== "127.0.0.1") throw new Error("CDP 必须使用本机端点");
@@ -714,7 +577,7 @@ export async function installIdentityBarrierOnEndpoint({ endpoint, identity, acc
     if (!response.ok) throw new Error("无法读取 CDP 端点");
     endpoint = (await response.json()).webSocketDebuggerUrl;
   }
-  const connection = await RawCdpConnection.connect(endpoint);
+  const connection = await connect(endpoint);
   const activeJobs = new Set();
   let installing = true;
   let installError = null;
@@ -739,19 +602,25 @@ export async function installIdentityBarrierOnEndpoint({ endpoint, identity, acc
     shutdownTimer.unref?.();
   };
 
-  const autoAttach = { autoAttach: true, waitForDebuggerOnStart: true, flatten: true };
+  const autoAttach = {
+    autoAttach: true,
+    waitForDebuggerOnStart: true,
+    flatten: true,
+    filter: IDENTITY_TARGET_FILTER,
+  };
   const override = identity ? {
     userAgent: identity.userAgent,
     platform: identity.platform,
     ...(identity.metadata ? { userAgentMetadata: identity.metadata } : {}),
   } : null;
 
-  const prepareTarget = async ({ sessionId, targetInfo }) => {
+  const prepareTarget = async ({ sessionId, targetInfo, waitingForDebugger }) => {
+    // 部分 renderer 只有恢复后才应答初始化命令。按顺序发送，再一起等应答。
     const nestedAutoAttachCommand =
       targetInfo.type === "page" || targetInfo.type === "iframe"
         ? connection.send("Target.setAutoAttach", autoAttach, sessionId)
         : Promise.resolve();
-    const identityCommand = override && IDENTITY_TARGET_TYPES.has(targetInfo.type)
+    const identityCommand = override
       ? connection.send("Emulation.setUserAgentOverride", override, sessionId)
       : Promise.resolve();
     const isFrame = targetInfo.type === "page" || targetInfo.type === "iframe";
@@ -765,7 +634,8 @@ export async function installIdentityBarrierOnEndpoint({ endpoint, identity, acc
         if (error.code === -32000 && error.cdpMessage === "Another locale override is already in effect") return;
         throw error;
       }) : Promise.resolve();
-    const resumeCommand = connection.send("Runtime.runIfWaitingForDebugger", {}, sessionId);
+    const resumeCommand = waitingForDebugger
+      ? connection.send("Runtime.runIfWaitingForDebugger", {}, sessionId) : Promise.resolve();
     const [nested, identityResult, timezoneResult, localeResult, resumeResult] = await Promise.allSettled([
       nestedAutoAttachCommand,
       identityCommand,
@@ -808,7 +678,7 @@ export async function installIdentityBarrierOnEndpoint({ endpoint, identity, acc
   };
 
   connection.onEvent((message) => {
-    if (message.method === "Target.attachedToTarget") startJob(message.params);
+    if (!closed && message.method === "Target.attachedToTarget") startJob(message.params);
   });
   connection.onUnexpectedClose((error) => {
     installError ??= error;

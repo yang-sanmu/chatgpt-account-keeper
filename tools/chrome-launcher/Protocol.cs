@@ -56,6 +56,7 @@ internal sealed class BrokerResponse
     [JsonPropertyName("pids")] public int[]? Pids { get; set; }
     [JsonPropertyName("disposed")] public bool? Disposed { get; set; }
     [JsonPropertyName("rootAlive")] public bool? RootAlive { get; set; }
+    [JsonPropertyName("rootExitCode")] public uint? RootExitCode { get; set; }
 
     // diagnostics
     [JsonPropertyName("activeCount")] public int? ActiveCount { get; set; }

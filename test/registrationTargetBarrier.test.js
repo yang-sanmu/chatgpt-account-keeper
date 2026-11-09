@@ -2,11 +2,15 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { installRegistrationTargetBarrier } from "../scripts/registration-target-barrier.mjs";
+import { installIdentityBarrierOnEndpoint } from "../src/browser.js";
 
 const options = { endpoint: "ws://127.0.0.1:12345/devtools/browser/test", accountId: "fixture",
   timezoneId: "Asia/Tokyo", locale: "en-US", identity: { userAgent: "fixture", platform: "Win32", metadata: { brands: [] } } };
 
-function fixture(targets, failure = () => null) {
+function fixture(targets, failure = () => null, {
+  installBarrier = installRegistrationTargetBarrier,
+  honorFilter = false,
+} = {}) {
   const calls = [];
   let event, unexpectedClose;
   const connection = {
@@ -17,7 +21,10 @@ function fixture(targets, failure = () => null) {
     async send(method, params = {}, sessionId) {
       calls.push({ method, params, sessionId });
       if (method === "Target.setAutoAttach" && !sessionId) {
-        for (const target of targets) this.attach(target);
+        for (const target of targets) {
+          const rule = params.filter?.find(entry => !entry.type || entry.type === target.type);
+          if (!honorFilter || !rule?.exclude) this.attach(target);
+        }
       }
       const error = await failure(method, params, sessionId);
       if (error) throw error;
@@ -32,7 +39,7 @@ function fixture(targets, failure = () => null) {
   const context = new EventEmitter();
   context.closeCount = 0;
   context.close = async () => { context.closeCount++; context.emit("close"); };
-  return { connection, context, calls, install: () => installRegistrationTargetBarrier(options, {
+  return { connection, context, calls, install: () => installBarrier(options, {
     connect: async () => connection, log: { error() {} },
   }) };
 }
@@ -56,6 +63,37 @@ test("internal browser UI cannot block registration readiness or receive Runtime
   assert.equal(f.calls.filter(c => c.method === "Emulation.setTimezoneOverride").length, 2);
   assert.equal(f.calls.filter(c => c.method === "Runtime.runIfWaitingForDebugger").length, 3);
   barrier.close();
+});
+
+test("the shared account barrier excludes internal targets and resumes only paused web targets", async () => {
+  const f = fixture([
+    { type: "browser_ui" },
+    { type: "page", waiting: false },
+    { type: "iframe" },
+    { type: "service_worker" },
+  ], (_method, _params, id) => id === "browser_ui" ? new Error("internal target timeout") : null,
+  { installBarrier: installIdentityBarrierOnEndpoint, honorFilter: true });
+  const barrier = await f.install();
+  barrier.attachContext(f.context);
+  const calls = f.calls.filter(c => c.method === "Target.setAutoAttach");
+  assert.equal(calls.length, 3);
+  for (const { params } of calls) {
+    assert.deepEqual(params.filter, ["page", "iframe", "worker", "shared_worker", "service_worker"]
+      .map(type => ({ type })).concat({ exclude: true }));
+  }
+  assert.equal(f.calls.some(c => c.sessionId === "browser_ui"), false);
+  assert.deepEqual(f.calls.filter(c => c.method === "Runtime.runIfWaitingForDebugger")
+    .map(c => c.sessionId), ["iframe", "service_worker"]);
+  assert.ok(f.calls.some(c => c.method === "Emulation.setUserAgentOverride" && c.sessionId === "page"));
+  barrier.close();
+});
+
+test("the shared account barrier still fails a real page that cannot resume", async () => {
+  const f = fixture([{ type: "page" }], (method, _params, id) =>
+    method === "Runtime.runIfWaitingForDebugger" && id === "page" ? new Error("fixture timeout") : null,
+  { installBarrier: installIdentityBarrierOnEndpoint });
+  await assert.rejects(f.install(), /Target page .*fixture timeout/);
+  assert.equal(f.connection.closed, true);
 });
 
 test("already-running pages are initialized without an unnecessary debugger resume", async () => {

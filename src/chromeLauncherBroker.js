@@ -417,6 +417,7 @@ export class ChromeLauncherBroker {
       pids: response.pids ?? [],
       disposed: response.disposed === true,
       rootAlive: response.rootAlive === true,
+      rootExitCode: Number.isInteger(response.rootExitCode) ? response.rootExitCode : null,
     };
   }
 

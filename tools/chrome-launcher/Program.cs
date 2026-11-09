@@ -277,6 +277,10 @@ internal static class Program
             response.Pids = pids;
             response.Disposed = false;
             response.RootAlive = pids.Contains(entry.RootPid);
+            if (response.RootAlive == false && Win32.GetExitCodeProcess(entry.RootProcess, out var exitCode))
+            {
+                response.RootExitCode = exitCode;
+            }
             return;
         }
         if (Registry.IsTombstoned(token))

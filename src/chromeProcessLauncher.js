@@ -1,3 +1,4 @@
+import fs from "node:fs/promises";
 import path from "node:path";
 import { chromium } from "playwright-core";
 import {
@@ -79,6 +80,7 @@ export class ChromeProcessLauncher {
     signal = null,
   }) {
     let executable, resolvedUserDataDir, debugPort, args, notBefore;
+    let previousPortFile = null;
     try {
       throwIfCancelled(signal);
       if (!this._broker?.running) {
@@ -93,6 +95,18 @@ export class ChromeProcessLauncher {
       // 交互窗口用随机非零端口，避免 port=0 暴露 webdriver；Headless 仍用 0。
       debugPort = headless ? 0 : await this._reserveDebugPort();
       args = buildLaunchArgs({ userDataDir: resolvedUserDataDir, launchArgs, headless, debugPort });
+      if (headless) {
+        try {
+          previousPortFile = await fs.readFile(path.join(resolvedUserDataDir, "DevToolsActivePort"), {
+            encoding: "utf8", signal: signal ?? undefined,
+          });
+        } catch (error) {
+          throwIfCancelled(signal);
+          if (error.code !== "ENOENT") {
+            throw new Error(`无法读取启动前的 DevToolsActivePort（${error.code}）`);
+          }
+        }
+      }
       notBefore = Date.now();
       throwIfCancelled(signal);
     } catch (error) {
@@ -109,7 +123,11 @@ export class ChromeProcessLauncher {
       //    预先分配的非零端口就绪，避免 port=0 暴露 webdriver。
       let endpoint;
       if (headless) {
-        endpoint = await this._waitForDevTools(resolvedUserDataDir, notBefore, { signal });
+        endpoint = await this._waitForDevTools(resolvedUserDataDir, notBefore, {
+          signal,
+          previousPortFile,
+          readProcessState: () => this._broker.enumerate(runToken),
+        });
       } else {
         await this._waitForInteractiveCdp(debugPort);
         endpoint = `http://127.0.0.1:${debugPort}`;

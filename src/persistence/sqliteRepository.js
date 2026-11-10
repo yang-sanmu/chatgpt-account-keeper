@@ -6,6 +6,7 @@ import { inheritedEnvironment, validateFixedEnvironment } from "../environmentCo
 
 const require = createRequire(import.meta.url);
 const DEFAULT_RECEIPT_TTL_MS = 24 * 60 * 60 * 1000;
+const V14_WITH_LINK_REVISION_CHECKSUM = "4656227ad00ca9ab85dede6012b8eb2f7cc0840bb5bd59f44d353f2cfd05918c";
 const LATEST_ACCOUNT_RUN_IDS_SQL = `
   SELECT id FROM (
     SELECT id, ROW_NUMBER() OVER (
@@ -181,10 +182,12 @@ export class KeeperRepository {
     const recordLedger = this.db.prepare(
       "INSERT INTO schema_migrations(version, name, checksum, applied_at, app_version) VALUES (?, ?, ?, ?, ?)"
     );
+    // 一个开发版本曾把 link_revision 直接加进 v14。仅兼容这一条已知的 SQL。
+    const linkRevisionInV14 = findLedger.get(14)?.checksum === V14_WITH_LINK_REVISION_CHECKSUM;
 
     for (const migration of MIGRATIONS) {
       const recorded = findLedger.get(migration.version);
-      if (recorded && recorded.checksum !== migration.checksum) {
+      if (recorded && recorded.checksum !== migration.checksum && !(migration.version === 14 && linkRevisionInV14)) {
         throw repositoryError(
           "MIGRATION_CHECKSUM_MISMATCH",
           `数据库迁移 ${migration.version} 的校验和与程序不一致`
@@ -200,7 +203,7 @@ export class KeeperRepository {
         continue;
       }
       const transaction = this.db.transaction(() => {
-        this.db.exec(migration.sql);
+        if (!(migration.version === 15 && linkRevisionInV14)) this.db.exec(migration.sql);
         recordLedger.run(
           migration.version,
           migration.name,

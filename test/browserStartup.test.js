@@ -274,6 +274,31 @@ test("launcher waits for the new endpoint when the previous file is inside the t
   assert.equal(result.endpoint, "http://127.0.0.1:32123");
 });
 
+test("launcher uses a ready listener when the port file stays stale and rechecks ownership before attach", async (t) => {
+  const fixture = endpointFixture(t);
+  fixture.publish("32122\n/devtools/browser/previous-browser\n", fixture.started - 60_000);
+  const ownedPorts = [[32122], [], [32123], [32123]];
+  const probes = [];
+  t.mock.method(globalThis, "fetch", async url => {
+    probes.push(url);
+    const port = new URL(url).port;
+    return new Response(JSON.stringify({ webSocketDebuggerUrl: `ws://127.0.0.1:${port}/devtools/browser/browser-${port}` }));
+  });
+  const { launch, connections } = launcherFixture({
+    broker: {
+      running: true,
+      launch: async () => ({ rootPid: 123, rootStartTime: 456 }),
+      enumerate: async (_token, { includeDebugPorts }) => ({
+        ok: true, count: 8, rootAlive: true, debugPorts: includeDebugPorts ? ownedPorts.shift() : null,
+      }),
+    },
+  });
+  const result = await launch({ userDataDir: fixture.dir });
+  assert.deepEqual(probes, ["http://127.0.0.1:32122/json/version", "http://127.0.0.1:32123/json/version"]);
+  assert.equal(result.endpoint, "http://127.0.0.1:32123");
+  assert.deepEqual(connections, [["ws://127.0.0.1:32123/devtools/browser/browser-32123", { noDefaults: false }]]);
+});
+
 test("launcher cancellation before launch does not create a broker-owned process", async () => {
   const { events, launch } = launcherFixture({
     waitForDevToolsEndpoint: async () => "ws://127.0.0.1:32123/devtools/browser/ready",
@@ -287,6 +312,27 @@ test("launcher cancellation before launch does not create a broker-owned process
     return true;
   });
   assert.equal(signal.reason.ownershipCertain, undefined);
+  assert.deepEqual(events, []);
+});
+
+test("cancelling while waiting for the broker launch permit leaves no owned process", async () => {
+  const controller = new AbortController();
+  const enteredPermit = Promise.withResolvers();
+  const permit = Promise.withResolvers();
+  const { events, launch } = launcherFixture({
+    awaitLaunchPermit: async (signal) => {
+      assert.equal(signal, controller.signal);
+      enteredPermit.resolve();
+      await permit.promise;
+    },
+    waitForDevToolsEndpoint: async () => "ws://127.0.0.1:32123/devtools/browser/ready",
+  });
+  const launching = launch({ signal: controller.signal });
+  await Promise.race([enteredPermit.promise, launching]);
+  assert.deepEqual(events, []);
+  controller.abort("cancelled while waiting to start Chrome");
+  permit.resolve();
+  await assert.rejects(launching, (error) => error.code === "CANCELLED" && error.ownershipCertain === true);
   assert.deepEqual(events, []);
 });
 
@@ -336,7 +382,7 @@ test("launcher preserves the identity barrier before Playwright attach", async (
   assert.deepEqual(events, ["launch", "barrier", "connect"]);
   assert.equal(result.rootPid, 123);
   assert.equal(result.endpoint, "http://127.0.0.1:32123");
-  assert.deepEqual(connections, [[result.endpoint, { noDefaults: false }]]);
+  assert.deepEqual(connections, [["ws://127.0.0.1:32123/devtools/browser/ready", { noDefaults: false }]]);
 });
 
 test("manual headed windows retain their environment barrier without connecting Playwright", async () => {

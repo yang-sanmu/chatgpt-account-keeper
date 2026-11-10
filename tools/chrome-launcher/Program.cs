@@ -281,6 +281,10 @@ internal static class Program
             {
                 response.RootExitCode = exitCode;
             }
+            if (request.IncludeDebugPorts == true && response.RootAlive == true)
+            {
+                response.DebugPorts = Win32.QueryLoopbackListenerPorts(entry.RootPid);
+            }
             return;
         }
         if (Registry.IsTombstoned(token))

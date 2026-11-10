@@ -102,11 +102,12 @@ async function composeFake(overrides = {}) {
     accountViewRuntime: overrides.accountViewRuntime,
     scheduler: overrides.scheduler ?? fakeScheduler(),
     getProxyNodes: overrides.getProxyNodes ?? healthyNodes,
+    withInspectionProxy: overrides.withInspectionProxy,
     requireBroker: true,
     brokerFactory: () => broker,
     launchChrome: overrides.launchChrome ?? (async (account, opts) => {
       launches.push({ accountId: account.id, runToken: opts.runToken, headless: opts.headless,
-        proxyOverrideId: opts.proxyOverrideId });
+        inspectionProxyUrl: opts.inspectionProxyUrl });
       const context = {
         closed: false,
         async close() {
@@ -203,11 +204,18 @@ test("手动巡检获取 accessToken，且不会合并到已排队的自动巡�
   assert.ok(seen.includes(accountPlans));
 });
 
-test("指定节点巡检独立去重，覆盖分组校验并在队列中保留所选节点", async (t) => {
+test("指定节点巡检独立去重，覆盖分组校验并使用独立代理", async (t) => {
   const accounts = [{ id: "acc-1", enabled: true }, { id: "acc-2", enabled: true }];
   const store = fakeStore(accounts, { proxyId: "missing-group-node" });
   const getNodes = () => [...healthyNodes(), { id: "disabled-node", enabled: false }];
-  const { background, launches, operations } = await composeFake({ store, getProxyNodes: getNodes });
+  const routedIds = [];
+  const { background, launches, operations, closedContexts } = await composeFake({
+    store, getProxyNodes: getNodes,
+    withInspectionProxy: async (proxyId, _signal, action) => {
+      routedIds.push(proxyId);
+      return action("http://127.0.0.1:43221");
+    },
+  });
   const services = createApplicationServices({ operations, runtime: {
     store, proxies: { getNodes }, enqueue: background.enqueue,
   } });
@@ -226,16 +234,16 @@ test("指定节点巡检独立去重，覆盖分组校验并在队列中保留�
   ]);
   assert.equal(first.id, duplicate.id);
   assert.notEqual(first.id, grouped.id);
-  assert.deepEqual([...background.queue.inspectionProxyIds()], ["node-1"]);
 
   const [a, b, c] = await Promise.all([first, second, grouped].map(({ id }) => operations.waitForTerminal(id)));
   assert.equal(a.state, "succeeded");
   assert.equal(b.state, "succeeded");
   assert.equal(c.state, "cancelled");
   assert.match(c.message, /分组绑定的代理节点不可用/);
-  assert.deepEqual(launches.map(({ accountId, proxyOverrideId }) => [accountId, proxyOverrideId]),
-    [["acc-1", "node-1"], ["acc-2", "node-1"]]);
-  assert.equal(background.queue.inspectionProxyIds().size, 0);
+  assert.deepEqual(routedIds, ["node-1", "node-1"]);
+  assert.deepEqual(launches.map(({ accountId, inspectionProxyUrl }) => [accountId, inspectionProxyUrl]),
+    [["acc-1", "http://127.0.0.1:43221"], ["acc-2", "http://127.0.0.1:43221"]]);
+  assert.equal(closedContexts.length, 2);
 });
 
 test("BrowserRun 记录真实 rootPid，而不是 null", async () => {

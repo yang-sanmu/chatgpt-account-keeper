@@ -408,8 +408,8 @@ export class ChromeLauncherBroker {
     };
   }
 
-  async enumerate(runToken) {
-    const response = await this._send("enumerate", { runToken });
+  async enumerate(runToken, { includeDebugPorts = false } = {}) {
+    const response = await this._send("enumerate", { runToken, ...(includeDebugPorts ? { includeDebugPorts } : {}) });
     return {
       ok: response.ok === true,
       code: response.code ?? null,
@@ -418,6 +418,7 @@ export class ChromeLauncherBroker {
       disposed: response.disposed === true,
       rootAlive: response.rootAlive === true,
       rootExitCode: Number.isInteger(response.rootExitCode) ? response.rootExitCode : null,
+      debugPorts: response.debugPorts ?? null,
     };
   }
 

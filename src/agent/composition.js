@@ -34,6 +34,7 @@ export async function composeBackground({
   // 代理节点表由组合根注入。这里不能 import proxyManager：它 import store，而
   // composition 位于两者之下，直连会把依赖拧成环（见文件头）。
   getProxyNodes,
+  withInspectionProxy,
   onFatal,
   requireBroker = process.platform === "win32",
   brokerFactory = (options) => new ChromeLauncherBroker(options),
@@ -81,7 +82,11 @@ export async function composeBackground({
     // 不匹配都必须让 Agent 在接受 IPC 之前 fail-closed，不能退化成每个账号各自失败。
     broker = brokerFactory({ log, onFatal });
     await broker.start();
-    launcher = new ChromeProcessLauncher({ broker, log });
+    launcher = new ChromeProcessLauncher({
+      broker,
+      log,
+      awaitLaunchPermit: (signal) => slots.awaitLaunchPermit(signal),
+    });
     configureChromeLauncher(launcher);
   }
 
@@ -150,10 +155,10 @@ export async function composeBackground({
   });
 
   /**
-   * 后台执行体的公共骨架：取 Chrome 槽 → 启动错峰 → 登记 BrowserRun → 跑业务 →
+   * 后台执行体的公共骨架：取 Chrome 槽 → 登记 BrowserRun → 错峰启动 → 跑业务 →
    * 关闭并等完整 owned 树确认消失。
    */
-  const withBrowserRun = async (context, body) => {
+  const withBrowserRun = async (context, body, inspectionProxyUrl) => {
     const { entry, signal, setStage, attachBrowserRun, attachClose, accountLockHandle } = context;
     setStage(STAGES.waitingChrome, "等待 Chrome 槽");
     const chromeSlot = await slots.acquireChromeSlot({
@@ -165,7 +170,7 @@ export async function composeBackground({
     let value = null;
     let closeOutcome = null;
     try {
-      await slots.awaitLaunchPermit(signal);
+      if (!launcher) await slots.awaitLaunchPermit(signal);
       throwIfCancelled(signal);
       context.revalidate?.();
       setStage(STAGES.launching, "正在启动 Chrome");
@@ -201,7 +206,7 @@ export async function composeBackground({
           headless: store.getSettings().headless,
           runToken,
           signal,
-          proxyOverrideId: entry.dedupeParams.proxyId,
+          inspectionProxyUrl,
         });
       } catch (error) {
         // 只有"明确未创建"才能撤回 token 让关闭走 never-launched 快路径；结果不确定
@@ -272,7 +277,8 @@ export async function composeBackground({
     });
     let run = null;
     try {
-      await slots.awaitLaunchPermit(signal);
+      if (!launcher) await slots.awaitLaunchPermit(signal);
+      throwIfCancelled(signal);
       run = browserRuns.register({
         accountId,
         operationId,
@@ -386,7 +392,7 @@ export async function composeBackground({
   // 状态检查同样经 withBrowserRun：它自己走账号锁 + launch 的老路会在队列已持锁时
   // 被 isBusy 判为忙碌并直接返回 cached skipped，巡检永远不启动 Chrome。
   queue.registerHandler(WORK_KINDS.statusCheck, async (context) => {
-    const result = await withBrowserRun(context, async ({ signal, page, account }) => {
+    const refresh = async ({ signal, page, account }) => {
       const accountPlans = accountViewRuntime?.()?.accountPlans;
       const value = await refreshAccount(account, {
         page, signal, accountPlans: context.dedupeParams?.captureAccessToken ? accountPlans : undefined,
@@ -394,7 +400,11 @@ export async function composeBackground({
       const latest = store.getAccount(account.id) ?? account;
       events?.publish("accountStatus.changed", publicStatus(latest, value, accountPlans));
       return value;
-    });
+    };
+    const proxyId = context.dedupeParams.proxyId;
+    const result = proxyId
+      ? await withInspectionProxy(proxyId, context.signal, (url) => withBrowserRun(context, refresh, url))
+      : await withBrowserRun(context, refresh);
     const reason = result?.lastCheckDetail?.split("\n", 1)[0];
     const tokenMessage = {
       saved: "巡检完成，已保存 accessToken",

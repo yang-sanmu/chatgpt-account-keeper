@@ -1272,7 +1272,7 @@ async function measureTestNode(node) {
   }
 }
 
-let testChild = null;
+const auxiliaryChildren = new Set();
 let testLifecycleTail = Promise.resolve();
 
 function runTestLifecycle(fn) {
@@ -1284,7 +1284,7 @@ function runTestLifecycle(fn) {
   return run;
 }
 
-function buildTestConfig(nodes, listenerPort) {
+function buildAuxiliaryConfig(nodes, listenerPort, controlPort) {
   const store = readStore();
   const network = normalizeNetworkConfig(store.network);
   const { adapters, targets } = compileConnectionRoutes({ nodes: store.nodes, proxyIds: nodes.map((node) => node.id), network,
@@ -1297,7 +1297,7 @@ function buildTestConfig(nodes, listenerPort) {
     mode: "rule",
     "log-level": "warning",
     ipv6: false,
-    "external-controller": `127.0.0.1:${TEST_API_PORT}`,
+    "external-controller": `127.0.0.1:${controlPort}`,
     "unified-delay": true,
     dns: {
       enable: true,
@@ -1312,10 +1312,8 @@ function buildTestConfig(nodes, listenerPort) {
   };
 }
 
-async function stopTestAndWait(timeoutMs = 5000) {
-  const proc = testChild;
-  testChild = null;
-  if (!proc || proc.killed || proc.exitCode !== null) return;
+async function stopAuxiliaryAndWait(proc, timeoutMs = 5000) {
+  if (!proc.pid || proc.exitCode !== null || proc.signalCode !== null) return;
 
   await new Promise((resolve) => {
     let done = false;
@@ -1335,16 +1333,18 @@ async function stopTestAndWait(timeoutMs = 5000) {
     }, timeoutMs);
     proc.once("exit", finish);
     try {
-      proc.kill();
+      if (!proc.killed) proc.kill();
     } catch {
       finish();
     }
   });
 }
 
-async function withTestSidecarUnlocked(nodes, fn, { listenerPort, signal } = {}) {
+async function withAuxiliarySidecar(nodes, fn, {
+  listenerPort, signal, controlPort = TEST_API_PORT, runtimeDir = TEST_RUNTIME_DIR,
+  purpose = listenerPort ? "套餐查询" : "测速",
+} = {}) {
   throwIfCancelled(signal);
-  const purpose = listenerPort ? "套餐查询" : "测速";
   const bin = resolveMihomo();
   if (!bin) {
     throw new Error(
@@ -1352,26 +1352,24 @@ async function withTestSidecarUnlocked(nodes, fn, { listenerPort, signal } = {})
     );
   }
 
-  await stopTestAndWait();
-  if (!(await isPortAvailable(TEST_API_PORT))) {
-    throw badRequest(`${purpose}控制端口 ${TEST_API_PORT} 已被其它程序占用，请释放该端口后重试`);
+  if (!(await isPortAvailable(controlPort))) {
+    throw badRequest(`${purpose}控制端口 ${controlPort} 已被其它程序占用，请释放该端口后重试`);
   }
   throwIfCancelled(signal);
-  const cfg = buildTestConfig(nodes, listenerPort);
-  ensureDir(TEST_RUNTIME_DIR);
-  const cfgPath = path.join(TEST_RUNTIME_DIR, "config.yaml");
+  const cfg = buildAuxiliaryConfig(nodes, listenerPort, controlPort);
+  const cfgPath = path.join(ensureDir(runtimeDir), "config.yaml");
   fs.writeFileSync(cfgPath, YAML.stringify(cfg), "utf8");
 
-  const proc = spawn(bin, ["-d", TEST_RUNTIME_DIR, "-f", cfgPath], {
+  const proc = spawn(bin, ["-d", runtimeDir, "-f", cfgPath], {
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
   });
-  testChild = proc;
+  auxiliaryChildren.add(proc);
+  proc.once("close", () => auxiliaryChildren.delete(proc));
   let spawnError = null;
   proc.once("error", (error) => {
     spawnError = error;
     log.warn(`mihomo ${purpose}进程无法启动: ` + String(error?.message || error));
-    if (testChild === proc) testChild = null;
   });
   proc.stdout.on("data", (b) => {
     const s = String(b).trim();
@@ -1383,12 +1381,11 @@ async function withTestSidecarUnlocked(nodes, fn, { listenerPort, signal } = {})
   });
   proc.on("exit", (code) => {
     if (code !== 0 && code !== null) log.warn(`mihomo ${purpose}进程退出，code=${code}`);
-    if (testChild === proc) testChild = null;
   });
 
   try {
     const stopped = () => signal?.aborted || !!spawnError || proc.exitCode !== null || proc.signalCode !== null;
-    const ok = await waitPort(TEST_API_PORT, 12000, stopped);
+    const ok = await waitPort(controlPort, 12000, stopped);
     throwIfCancelled(signal);
     if (!ok) {
       throw new Error(
@@ -1397,36 +1394,61 @@ async function withTestSidecarUnlocked(nodes, fn, { listenerPort, signal } = {})
           : `mihomo ${purpose}进程启动后控制端口未就绪`
       );
     }
-    const applied = await waitMihomoConfigApplied(TEST_API_PORT, cfg, {
+    const applied = await waitMihomoConfigApplied(controlPort, cfg, {
       timeoutMs: 12000, shouldStop: stopped,
     });
     throwIfCancelled(signal);
     if (!applied.ok) throw new Error(`mihomo ${purpose}配置未完成应用`);
-    if (listenerPort && !(await waitPort(listenerPort, 2000, stopped))) throw new Error("套餐查询节点入口未就绪");
+    if (listenerPort && !(await waitPort(listenerPort, 2000, stopped))) throw new Error(`${purpose}节点入口未就绪`);
     throwIfCancelled(signal);
     return await fn();
   } finally {
-    await stopTestAndWait();
+    await stopAuxiliaryAndWait(proc);
   }
 }
 
 function withTestSidecar(nodes, fn) {
-  return runTestLifecycle(() => withTestSidecarUnlocked(nodes, fn));
+  return runTestLifecycle(() => withAuxiliarySidecar(nodes, fn));
+}
+
+async function reserveLoopbackPorts(count) {
+  const servers = [];
+  try {
+    for (let i = 0; i < count; i++) {
+      const server = net.createServer();
+      await new Promise((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(0, "127.0.0.1", resolve);
+      });
+      servers.push(server);
+    }
+    return servers.map((server) => server.address().port);
+  } finally {
+    await Promise.all(servers.map((server) => new Promise((resolve) => server.close(resolve))));
+  }
 }
 
 export function withPlanProxy(id, signal, action) {
   return runTestLifecycle(async () => {
     throwIfCancelled(signal);
     const node = testableNodeOrThrow(readStore().nodes, id);
-    const listenerPort = await new Promise((resolve, reject) => {
-      const server = net.createServer().once("error", reject);
-      server.listen(0, "127.0.0.1", () => {
-        const { port } = server.address();
-        server.close((error) => error ? reject(error) : resolve(port));
-      });
-    });
-    return withTestSidecarUnlocked([node], () => action(`http://127.0.0.1:${listenerPort}`), { listenerPort, signal });
+    const [listenerPort] = await reserveLoopbackPorts(1);
+    return withAuxiliarySidecar([node], () => action(`http://127.0.0.1:${listenerPort}`), { listenerPort, signal });
   });
+}
+
+export async function withInspectionProxy(id, signal, action) {
+  throwIfCancelled(signal);
+  const node = testableNodeOrThrow(readStore().nodes, id);
+  const [controlPort, listenerPort] = await reserveLoopbackPorts(2);
+  const runtimeDir = fs.mkdtempSync(path.join(ensureDir(fromCacheRoot("mihomo-inspection")), "run-"));
+  try {
+    return await withAuxiliarySidecar([node], () => action(`http://127.0.0.1:${listenerPort}`), {
+      listenerPort, controlPort, runtimeDir, signal, purpose: "巡检",
+    });
+  } finally {
+    await fs.promises.rm(runtimeDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 150 });
+  }
 }
 
 function testableNodeOrThrow(nodes, id) {
@@ -1492,20 +1514,15 @@ export async function testAllNodes({ onProgress } = {}) {
   });
 }
 
-function stopTest() {
-  if (testChild && !testChild.killed) {
+export function stopAll() {
+  stop();
+  for (const proc of auxiliaryChildren) {
     try {
-      testChild.kill();
+      if (!proc.killed) proc.kill();
     } catch {
       // 进程可能已退出
     }
   }
-  testChild = null;
-}
-
-export function stopAll() {
-  stop();
-  stopTest();
 }
 
 // exit 事件不能执行异步工作，但同步发出终止信号仍可避免边车变成孤儿进程。

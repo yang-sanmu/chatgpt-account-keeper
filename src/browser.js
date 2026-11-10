@@ -35,6 +35,7 @@ const BROWSER_CHANNEL = "chrome";
 const HEADLESS_IDENTITY_CACHE_MS = 5 * 60 * 1000;
 const DEVTOOLS_ENDPOINT_TIMEOUT_MS = 30_000;
 const DEVTOOLS_PROCESS_CHECK_INTERVAL_MS = 1_000;
+const DEVTOOLS_LISTENER_FALLBACK_AFTER_MS = 3_000;
 const CDP_CONNECTION_TIMEOUT_MS = 10_000;
 const CDP_COMMAND_TIMEOUT_MS = 10_000;
 const INTERACTIVE_CDP_TIMEOUT_MS = 15_000;
@@ -357,12 +358,16 @@ export async function waitForDevToolsEndpoint(
       processCheckPending = true;
       nextProcessCheck = now + DEVTOOLS_PROCESS_CHECK_INTERVAL_MS;
       // 诊断不能阻塞端点发现，慢响应时也只保留一个 broker 请求。
-      Promise.resolve().then(readProcessState).then(
+      Promise.resolve().then(() => readProcessState(now - started >= DEVTOOLS_LISTENER_FALLBACK_AFTER_MS)).then(
         (state) => { processState = state; },
         () => { processState = null; },
       ).finally(() => { processCheckPending = false; });
     }
     if (processState?.ok && processState.count === 0) break;
+    if (processState?.endpoint) {
+      log.info("Headless Chrome 端点文件未就绪，已从本次进程的本地监听端口发现 CDP 端点");
+      return processState.endpoint;
+    }
     try {
       const [content, stats] = await Promise.all([
         fs.readFile(endpointFile, { encoding: "utf8", signal: signal ?? undefined }),
@@ -410,6 +415,7 @@ export async function waitForDevToolsEndpoint(
     const exitCode = Number.isInteger(processState.rootExitCode)
       ? `，退出码 ${processState.rootExitCode}` : "";
     processDetail = `；Chrome 根进程${rootState}${exitCode}，Job 进程数 ${processState.count}`;
+    if (processState.debugPorts) processDetail += `，本地监听端口数 ${processState.debugPorts.length}`;
   }
   const error = new Error(
     `无法连接 Headless Chrome 的本地调试端口：${exited ? "Chrome 提前退出" : "等待超时"}` +
@@ -1313,7 +1319,8 @@ export function getChromeLauncher() {
 }
 
 async function prepareAccountLaunch(account, opts) {
-  await waitForNetworkTransition();
+  const { inspectionProxyUrl } = opts;
+  if (!inspectionProxyUrl) await waitForNetworkTransition();
   if (browserShutdownRequested) throw new Error("Agent 正在退出，已取消启动 Chrome");
 
   // 调用可能在账号锁后排队很久（例如用户一直开着“打开网页”窗口）。
@@ -1332,11 +1339,12 @@ async function prepareAccountLaunch(account, opts) {
   let headlessIdentity = null;
 
   // 分组节点由网络模式编译前置链路；未绑定节点时使用网络模式的默认出口。
-  const networkConfig = getNetworkConfig().config;
-  const { proxyOverrideId } = opts;
-  const selectedProxyId = temporary ? temporary.proxyId : icloud ? null : proxyOverrideId ?? effectiveProxyId(liveAccount);
-  const getProxy = () => independent || proxyOverrideId ? proxyForNode(selectedProxyId) : proxyForAccount(liveAccount);
-  if (icloud && icloud.networkMode !== "inherit") {
+  const networkConfig = inspectionProxyUrl ? null : getNetworkConfig().config;
+  const selectedProxyId = temporary ? temporary.proxyId : icloud || inspectionProxyUrl ? null : effectiveProxyId(liveAccount);
+  const getProxy = () => independent ? proxyForNode(selectedProxyId) : proxyForAccount(liveAccount);
+  if (inspectionProxyUrl) {
+    launchArgs.proxy = applyProxyBypass({ server: inspectionProxyUrl }, opts.proxyBypass);
+  } else if (icloud && icloud.networkMode !== "inherit") {
     if (icloud.networkMode === "direct") launchArgs.args.push("--no-proxy-server");
     else if (icloud.networkMode === "system") {
       const system = resolveSystemProxy({ systemProxyUrl: null });
@@ -1354,8 +1362,7 @@ async function prepareAccountLaunch(account, opts) {
       // 绑了节点却拿不到端口（节点被停用/已从订阅移除）。宁可报错也不静默裸奔，
       // 否则账号会用错误的出口 IP 访问，风险更高。
       throw Object.assign(new Error(
-        proxyOverrideId ? "所选巡检节点不可用" :
-          "账号所属分组绑定的代理节点不可用（可能已停用或不在订阅中），请到分组管理里重新选择节点"
+        "账号所属分组绑定的代理节点不可用（可能已停用或不在订阅中），请到分组管理里重新选择节点"
       ), { code: "PROXY_UNAVAILABLE" });
     }
   } else {
@@ -1367,12 +1374,12 @@ async function prepareAccountLaunch(account, opts) {
   // A fixed account environment survives group/output changes. Inheritance keeps
   // the existing manual/automatic group resolver; failed probes remain retryable.
   let region = {};
-  if (environment.mode !== "fixed" && !proxyOverrideId) {
+  if (environment.mode !== "fixed" && !inspectionProxyUrl) {
     region = await resolveRegionForAccount(liveAccount);
   }
   const group = liveAccount.groupId ? getGroup(liveAccount.groupId) : null;
   // 临时换出口时沿用已有地区设置，避免探测分组节点或写回分组配置。
-  if (environment.mode !== "fixed" && proxyOverrideId) region = previewGroupRegion(group).region;
+  if (environment.mode !== "fixed" && inspectionProxyUrl) region = previewGroupRegion(group).region;
   const snapshot = environmentSnapshot({ account: liveAccount, environment, group, region });
   if (snapshot.timezoneId) launchArgs.timezoneId = snapshot.timezoneId;
   launchArgs.locale = snapshot.locale;

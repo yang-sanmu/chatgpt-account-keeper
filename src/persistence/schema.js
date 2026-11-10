@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-export const SCHEMA_VERSION = 14;
+export const SCHEMA_VERSION = 15;
 
 const SCHEMA_V1 = String.raw`
 CREATE TABLE IF NOT EXISTS command_receipts (
@@ -496,7 +496,6 @@ CREATE TABLE proxy_subscriptions (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   url TEXT UNIQUE,
-  link_revision INTEGER NOT NULL DEFAULT 0,
   updated_at TEXT,
   attempted_at TEXT,
   error TEXT
@@ -516,6 +515,10 @@ UPDATE proxy_nodes SET source_id = 'legacy-subscription' WHERE substr(id, 1, 7) 
 WITH slots AS (SELECT id, row_number() OVER (ORDER BY sort_order, id) - 1 AS slot FROM proxy_nodes)
 UPDATE proxy_nodes SET port_slot = (SELECT slot FROM slots WHERE slots.id = proxy_nodes.id);
 UPDATE proxy_settings SET subscription_url = NULL, subscription_updated_at = NULL;
+`;
+
+const SCHEMA_V15 = String.raw`
+ALTER TABLE proxy_subscriptions ADD COLUMN link_revision INTEGER NOT NULL DEFAULT 0;
 `;
 
 export const MIGRATIONS = Object.freeze([
@@ -553,6 +556,7 @@ export const MIGRATIONS = Object.freeze([
   Object.freeze({ version: 12, name: "icloud-hide-my-email", sql: SCHEMA_V12, checksum: createHash("sha256").update(SCHEMA_V12).digest("hex") }),
   Object.freeze({ version: 13, name: "account-plans", sql: SCHEMA_V13, checksum: createHash("sha256").update(SCHEMA_V13).digest("hex") }),
   Object.freeze({ version: 14, name: "proxy-subscriptions", sql: SCHEMA_V14, checksum: createHash("sha256").update(SCHEMA_V14).digest("hex") }),
+  Object.freeze({ version: 15, name: "proxy-subscription-link-revision", sql: SCHEMA_V15, checksum: createHash("sha256").update(SCHEMA_V15).digest("hex") }),
 ]);
 
 export const MIGRATION_LEDGER_SQL = String.raw`

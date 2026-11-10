@@ -44,6 +44,7 @@ export class ChromeProcessLauncher {
       options.waitForInteractiveCdp ?? waitForInteractiveCdp;
     this._findChrome = options.findChromeExecutable ?? findChromeExecutable;
     this._installBarrier = options.installIdentityBarrier ?? installIdentityBarrierOnEndpoint;
+    this._awaitLaunchPermit = options.awaitLaunchPermit ?? null;
   }
 
   configureBroker(broker) {
@@ -92,9 +93,6 @@ export class ChromeProcessLauncher {
       if (!executable) throw new ChromeNotFoundError(new Error("Google Chrome executable not found"));
 
       resolvedUserDataDir = path.resolve(userDataDir);
-      // 交互窗口用随机非零端口，避免 port=0 暴露 webdriver；Headless 仍用 0。
-      debugPort = headless ? 0 : await this._reserveDebugPort();
-      args = buildLaunchArgs({ userDataDir: resolvedUserDataDir, launchArgs, headless, debugPort });
       if (headless) {
         try {
           previousPortFile = await fs.readFile(path.join(resolvedUserDataDir, "DevToolsActivePort"), {
@@ -107,6 +105,12 @@ export class ChromeProcessLauncher {
           }
         }
       }
+      // 账号准备可能同时结束。把错峰放到 broker 创建进程前，避免积攒许可后扎堆启动。
+      if (this._awaitLaunchPermit) await this._awaitLaunchPermit(signal);
+      throwIfCancelled(signal);
+      // 交互窗口在许可到手后才预留非零端口；Headless 仍由 Chrome 分配端口。
+      debugPort = headless ? 0 : await this._reserveDebugPort();
+      args = buildLaunchArgs({ userDataDir: resolvedUserDataDir, launchArgs, headless, debugPort });
       notBefore = Date.now();
       throwIfCancelled(signal);
     } catch (error) {
@@ -126,7 +130,7 @@ export class ChromeProcessLauncher {
         endpoint = await this._waitForDevTools(resolvedUserDataDir, notBefore, {
           signal,
           previousPortFile,
-          readProcessState: () => this._broker.enumerate(runToken),
+          readProcessState: (includeDebugPorts) => this._readHeadlessProcessState(runToken, includeDebugPorts, signal),
         });
       } else {
         await this._waitForInteractiveCdp(debugPort);
@@ -153,7 +157,7 @@ export class ChromeProcessLauncher {
       // downloads. Keep Playwright's defaults for background automation only.
       browser = manual && !headless
         ? await this._connectManual(httpEndpoint)
-        : await this._connectOverCDP(httpEndpoint, { noDefaults: !headless });
+        : await this._connectOverCDP(endpoint, { noDefaults: !headless });
       throwIfCancelled(signal);
       const context = browser.contexts()[0];
       if (!context) throw new Error("Chrome 没有默认浏览器上下文");
@@ -190,6 +194,34 @@ export class ChromeProcessLauncher {
       // terminate 拿到 UNKNOWN_TOKEN，把一次成功回收误判成 close_failed 并错误隔离账号。
       throw normalizeChromeLaunchError(error);
     }
+  }
+
+  async _readHeadlessProcessState(runToken, includeDebugPorts, signal) {
+    const state = await this._broker.enumerate(runToken, { includeDebugPorts });
+    for (const port of state.debugPorts ?? []) {
+      if (signal?.aborted) break;
+      let endpoint;
+      try {
+        const timeout = AbortSignal.timeout(750);
+        const response = await fetch(`http://127.0.0.1:${port}/json/version`, {
+          redirect: "error",
+          signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+        });
+        if (!response.ok) continue;
+        endpoint = (await response.json()).webSocketDebuggerUrl;
+        const prefix = `ws://127.0.0.1:${port}/devtools/browser/`;
+        if (typeof endpoint !== "string" || !endpoint.startsWith(prefix) || endpoint === prefix) continue;
+      } catch {
+        continue;
+      }
+      // HTTP 探测前后端口都须属于本次 Chrome。后续使用同一个带浏览器 ID 的 WS 地址。
+      const confirmed = await this._broker.enumerate(runToken, { includeDebugPorts: true });
+      if (confirmed.ok && confirmed.rootAlive && confirmed.debugPorts?.includes(port)) {
+        return { ...confirmed, endpoint };
+      }
+      return confirmed;
+    }
+    return state;
   }
 }
 

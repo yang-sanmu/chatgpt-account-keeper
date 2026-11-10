@@ -97,7 +97,7 @@ test("network runtime handles failed startup and occupied ports", { skip: !enabl
   const oldCacheRoot = process.env.GPT_ACCOUNT_KEEPER_CACHE_ROOT;
   process.env.GPT_ACCOUNT_KEEPER_CACHE_ROOT = root;
   const { configureProxyStoreBackend, ensureRunning, getNetworkConfig, getNodes, refreshSubscriptions,
-    setNetworkConfig, status, testNode, stopAll } = await import("../src/proxyManager.js");
+    setNetworkConfig, status, testNode, stopAll, withInspectionProxy } = await import("../src/proxyManager.js");
   const { configureStoreBackend } = await import("../src/store.js");
   const invalid = { id: "invalid", name: "invalid", enabled: true, raw: { name: "invalid", type: "unsupported-fixture", server: "127.0.0.1", port: 1234 } };
   let stored = { nodes: [invalid], mihomoPath: core, network: normalizeNetworkConfig({ mode: "direct" }) };
@@ -121,6 +121,24 @@ test("network runtime handles failed startup and occupied ports", { skip: !enabl
   });
 
   const usable = { id: "usable", name: "usable", enabled: true, raw: { name: "usable", type: "http", server: "127.0.0.1", port: 1235 } };
+  await t.test("parallel inspections leave the group proxy running", async (subtest) => {
+    const selected = { ...usable, id: "inspection", raw: { ...usable.raw, port: 1236 } };
+    stored = { nodes: [usable, selected], mihomoPath: core, network: normalizeNetworkConfig({ mode: "direct" }) };
+    groups = [{ proxyId: usable.id }];
+    subtest.after(() => { groups = []; return ensureRunning(); });
+
+    assert.equal((await ensureRunning()).running, true);
+    const configPath = path.join(root, "mihomo", "config.yaml");
+    const before = (await fs.stat(configPath, { bigint: true })).mtimeNs;
+    const inspect = () => withInspectionProxy(selected.id, null, async (url) => {
+      assert.equal((await ensureRunning()).reused, true);
+      return url;
+    });
+    const [first, second] = await Promise.all([inspect(), inspect()]);
+    assert.notEqual(first, second);
+    assert.equal((await fs.stat(configPath, { bigint: true })).mtimeNs, before);
+  });
+
   const occupy = async (subtest, port, onRequest) => {
     const server = http.createServer(onRequest);
     try {

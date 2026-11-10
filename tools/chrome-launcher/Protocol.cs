@@ -28,6 +28,8 @@ internal sealed class BrokerRequest
     [JsonPropertyName("executable")] public string? Executable { get; set; }
     [JsonPropertyName("args")] public string[]? Args { get; set; }
     [JsonPropertyName("workingDirectory")] public string? WorkingDirectory { get; set; }
+
+    [JsonPropertyName("includeDebugPorts")] public bool? IncludeDebugPorts { get; set; }
 }
 
 internal sealed class BrokerResponse
@@ -57,6 +59,7 @@ internal sealed class BrokerResponse
     [JsonPropertyName("disposed")] public bool? Disposed { get; set; }
     [JsonPropertyName("rootAlive")] public bool? RootAlive { get; set; }
     [JsonPropertyName("rootExitCode")] public uint? RootExitCode { get; set; }
+    [JsonPropertyName("debugPorts")] public int[]? DebugPorts { get; set; }
 
     // diagnostics
     [JsonPropertyName("activeCount")] public int? ActiveCount { get; set; }

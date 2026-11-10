@@ -303,6 +303,7 @@ async function main() {
     // {safe} 选项，裸引用会把它的形参变成这里的契约。safe 投影已含
     // id / enabled / missing，复验不需要凭证字段。
     getProxyNodes: () => proxies.getNodes(),
+    withInspectionProxy: proxies.withInspectionProxy,
     // 原服务层后处理：写历史，以及构造与 IPC 完全一致的账号/状态事件 payload。
     recordConversation: (accountId, result) =>
       agent.services.runtime.recordConversation(accountId, result),
@@ -339,10 +340,7 @@ async function main() {
     canRun: () => !agent.services.draining && !shuttingDown,
     onChanged: state => agent.services.events.publish("icloud.changed", state),
   });
-  backendRestorers.push(proxies.configureTemporaryProxyIds(() => [
-    ...temporaryWindows.proxyIds(),
-    ...background.queue.inspectionProxyIds(),
-  ]));
+  backendRestorers.push(proxies.configureTemporaryProxyIds(() => temporaryWindows.proxyIds()));
   backendRestorers.push(agent.services.events.subscribe((event) => {
     if (event.event === "browserRun.changed") temporaryWindows.browserRunChanged(event.payload);
   }));

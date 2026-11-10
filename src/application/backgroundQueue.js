@@ -575,14 +575,4 @@ export class BackgroundQueue {
     }
     return count;
   }
-
-  inspectionProxyIds() {
-    const ids = new Set();
-    for (const entry of this._entries.values()) {
-      if (entry.workKind === WORK_KINDS.statusCheck && entry.dedupeParams.proxyId) {
-        ids.add(entry.dedupeParams.proxyId);
-      }
-    }
-    return ids;
-  }
 }

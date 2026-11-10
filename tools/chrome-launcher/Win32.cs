@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Net;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 
@@ -293,6 +294,10 @@ internal static partial class Win32
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static partial bool GetExitCodeProcess(SafeProcessHandle process, out uint exitCode);
 
+    [LibraryImport("iphlpapi.dll")]
+    private static partial uint GetExtendedTcpTable(
+        IntPtr table, ref uint size, int order, uint family, int tableClass, uint reserved);
+
     [LibraryImport("kernel32.dll", SetLastError = true)]
     internal static partial uint ResumeThread(SafeThreadHandle thread);
 
@@ -308,6 +313,38 @@ internal static partial class Win32
         int desiredAccess,
         [MarshalAs(UnmanagedType.Bool)] bool inheritHandle,
         int processId);
+
+    public static int[] QueryLoopbackListenerPorts(int processId)
+    {
+        const uint afInet = 2;
+        const int tcpTableOwnerPidListener = 3;
+        const int loopback = 0x0100007f; // The network bytes of 127.0.0.1 as a Windows DWORD.
+        uint size = 0;
+        if (GetExtendedTcpTable(IntPtr.Zero, ref size, 0, afInet, tcpTableOwnerPidListener, 0)
+            != ErrorInsufficientBuffer) return [];
+        var table = Marshal.AllocHGlobal(checked((int)size));
+        try
+        {
+            // Socket churn can outgrow the buffer. The next startup poll will query again.
+            if (GetExtendedTcpTable(table, ref size, 0, afInet, tcpTableOwnerPidListener, 0) != 0) return [];
+            var ports = new List<int>();
+            var count = Marshal.ReadInt32(table);
+            // MIB_TCPTABLE_OWNER_PID: count, then rows of six DWORDs.
+            for (var i = 0; i < count; i++)
+            {
+                var row = sizeof(uint) + i * 6 * sizeof(uint);
+                if (Marshal.ReadInt32(table, row + 5 * sizeof(uint)) != processId
+                    || Marshal.ReadInt32(table, row + sizeof(uint)) != loopback) continue;
+                var networkPort = unchecked((short)Marshal.ReadInt32(table, row + 2 * sizeof(uint)));
+                ports.Add(unchecked((ushort)IPAddress.NetworkToHostOrder(networkPort)));
+            }
+            return ports.ToArray();
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(table);
+        }
+    }
 
     /// <summary>
     /// Creates a job whose KILL_ON_JOB_CLOSE limit is set BEFORE any process joins it.

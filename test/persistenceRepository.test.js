@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { KeeperRepository, openKeeperRepository } from "../src/persistence/sqliteRepository.js";
 import { MIGRATIONS, MIGRATION_LEDGER_SQL, SCHEMA_VERSION } from "../src/persistence/schema.js";
@@ -21,12 +22,14 @@ try {
   // this RID/ABI-specific native dependency; pure migration tests still run.
 }
 
-test("existing v8–v13 databases upgrade without replacing historical migrations or user data", { skip: !Database }, async t => {
+test("existing v8–v14 databases upgrade without replacing historical migrations or user data", { skip: !Database }, async t => {
   assert.equal(MIGRATIONS.find(migration => migration.version === 9)?.checksum,
     "eb3b6db509cffa2c661acff13d1e6caa0507471ffc13f033cd7f0760ee283758");
   assert.equal(MIGRATIONS.find(migration => migration.version === 10)?.checksum,
     "f01f3380bbc6ca6d9090843cd8ee04c3ba7ff5e1d8d9fc45865fad6341c55b16");
-  for (const version of [8, 9, 10, 11, 12, 13]) {
+  assert.equal(MIGRATIONS.find(migration => migration.version === 14)?.checksum,
+    "11c0db614348e1490e8614bd5ecfc91473d5096934ae0d49183791d9878b1a0c");
+  for (const version of [8, 9, 10, 11, 12, 13, 14]) {
     await t.test(`version ${version}`, async subtest => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "keeper-existing-schema-"));
       const filePath = path.join(root, "keeper.db");
@@ -56,6 +59,7 @@ test("existing v8–v13 databases upgrade without replacing historical migration
           .run("group-legacy", 0, "原分组", "px_legacy");
         database.prepare("INSERT INTO temporary_windows(id, proxy_id, config_json) VALUES (?, ?, ?)").run("temp-legacy", "px_legacy", "{}");
       }
+      if (version === 14) database.prepare("INSERT INTO proxy_subscriptions(id, name) VALUES (?, ?)").run("existing-subscription", "keep");
       const ledger = database.prepare("SELECT * FROM schema_migrations ORDER BY version").all();
       database.close();
 
@@ -65,6 +69,7 @@ test("existing v8–v13 databases upgrade without replacing historical migration
       assert.equal(repository.getAccount("existing-account").note, "keep me");
       if (version >= 9) assert.equal(repository.db.prepare("SELECT payload FROM tool_records WHERE id='existing'").get().payload, '{"keep":true}');
       if (version >= 10) assert.equal(repository.db.prepare("SELECT sealed FROM flow_pools WHERE id='existing-pool'").get().sealed, "sealed-fixture");
+      if (version === 14) assert.equal(repository.getProxyState({ includeSecrets: true }).subscriptions[0].linkRevision, 0);
       if (version === 13) {
         const state = repository.getProxyState({ includeSecrets: true });
         assert.equal(state.subscriptions[0].url, "https://example.test/sub?token=legacy");
@@ -84,6 +89,32 @@ test("existing v8–v13 databases upgrade without replacing historical migration
       backup.close();
     });
   }
+});
+
+test("v14 with link_revision already present keeps its revision and ledger on upgrade", { skip: !Database }, t => {
+  const database = new Database(":memory:");
+  t.after(() => database.close());
+  database.exec(MIGRATION_LEDGER_SQL);
+  const record = database.prepare("INSERT INTO schema_migrations VALUES (?, ?, ?, ?, ?)");
+  for (const migration of MIGRATIONS.filter(migration => migration.version <= 14)) {
+    const sql = migration.version === 14
+      ? migration.sql.replace("  url TEXT UNIQUE,\n", "  url TEXT UNIQUE,\n  link_revision INTEGER NOT NULL DEFAULT 0,\n")
+      : migration.sql;
+    database.exec(sql);
+    record.run(migration.version, migration.name, createHash("sha256").update(sql).digest("hex"), "2026-11-09T00:00:00Z", "previous");
+  }
+  database.pragma("user_version = 14");
+  database.prepare("INSERT INTO proxy_subscriptions(id, name, link_revision) VALUES (?, ?, ?)").run("existing", "keep", 7);
+  const original = database.prepare("SELECT * FROM schema_migrations WHERE version = 14").get();
+  assert.equal(original.checksum, "4656227ad00ca9ab85dede6012b8eb2f7cc0840bb5bd59f44d353f2cfd05918c");
+  const repository = new KeeperRepository(database);
+  repository.applyMigrations();
+  repository.applyMigrations();
+  assert.equal(repository.getSchemaVersion(), SCHEMA_VERSION);
+  assert.equal(repository.getProxyState({ includeSecrets: true }).subscriptions[0].linkRevision, 7);
+  assert.deepEqual(database.prepare("SELECT * FROM schema_migrations WHERE version = 14").get(), original);
+  database.prepare("UPDATE schema_migrations SET checksum = 'unknown' WHERE version = 14").run();
+  assert.throws(() => repository.applyMigrations(), { code: "MIGRATION_CHECKSUM_MISMATCH" });
 });
 
 test("custom proxy order and credentials survive subscription refresh through SQLite", { skip: !Database }, async () => {

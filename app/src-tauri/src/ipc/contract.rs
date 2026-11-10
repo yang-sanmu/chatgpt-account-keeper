@@ -197,7 +197,7 @@ mod tests {
 
         // 数量固定，防止有人一边加一边删还让上面两条都过。
         assert_eq!(INTERNAL_METHODS.len(), 5);
-        assert_eq!(UI_METHODS.len(), 78);
+        assert_eq!(UI_METHODS.len(), 82);
     }
 
     #[test]

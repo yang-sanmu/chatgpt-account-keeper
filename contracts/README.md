@@ -13,6 +13,8 @@ Compatibility rules:
 - v1.5 adds `network.getConfig/updateConfig` and an optional `proxies.network` snapshot for ordinary direct, system-proxy, and relay modes. The paired Desktop requires Agent 1.5; strict network isolation remains unavailable. Database schema 8 persists the network configuration and backs up older databases before upgrade.
 - v1.6 adds `temporaryWindows.list/save/open/close/remove/clearData/detectRegion`, the optional `bootstrap.temporaryWindows` snapshot and `temporaryWindows.changed` event. Independent windows bind a proxy node directly, retain their profiles on close, and participate in browser ownership and update blockers. Schema 9 adds their configurations and protects proxy references. The paired Desktop requires Agent 1.6.
 - v1.10 adds `accounts.checkPlans`, `accounts.readAccessTokens`, and optional token presence and expiration fields on account views. Plan queries publish progress through operations. Token reads require authenticated IPC and are excluded from command receipts. The paired Desktop requires Agent 1.10.
+- v1.11 adds `accounts.inspect` for tracked batch inspections and records successful and failed account IDs in batch operation results. The paired Desktop requires Agent 1.11.
+- v1.12 adds `accounts.checkPromos` for batch Plus promotion checks using saved access tokens. The paired Desktop requires Agent 1.12.
 - v1.9 adds `icloud.delete` for an explicit list of email addresses and the iCloud `deleting` status. Deletion runs as an idempotent operation and blocks updates while active. The paired Desktop requires Agent 1.9.
 - Mutating requests carry a UUID `commandId` and are idempotent.
 - The first request on every connection is `system.hello`.

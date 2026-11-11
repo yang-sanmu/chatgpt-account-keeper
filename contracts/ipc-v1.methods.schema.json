@@ -790,7 +790,26 @@
       "required": ["ids", "proxyId"],
       "properties": {
         "ids": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+        "proxyId": { "type": "string", "minLength": 1 },
+        "single": { "type": "boolean", "description": "账号卡片发起的单账号查询，独立于批量任务" }
+      }
+    },
+    "accountPromoParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ids", "proxyId"],
+      "properties": {
+        "ids": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
         "proxyId": { "type": "string", "minLength": 1 }
+      }
+    },
+    "accountInspectParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ids"],
+      "properties": {
+        "ids": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+        "proxyId": { "type": "string", "minLength": 1, "description": "省略时使用各账号的分组节点" }
       }
     },
     "accountTokenParams": {

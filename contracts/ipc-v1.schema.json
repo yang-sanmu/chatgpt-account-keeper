@@ -27,7 +27,7 @@
         "temporaryWindows.list", "temporaryWindows.save", "temporaryWindows.open", "temporaryWindows.close", "temporaryWindows.remove", "temporaryWindows.detectRegion", "temporaryWindows.clearData",
         "environments.get", "environments.update", "environments.reset", "network.getCapabilities", "network.getConfig", "network.updateConfig",
         "system.hello", "system.bootstrap", "system.getActivity", "system.prepareUpdate", "system.shutdown",
-        "accounts.list", "accounts.create", "accounts.update", "accounts.remove", "accounts.getStatus", "accounts.refreshStatus", "accounts.checkPlans", "accounts.readAccessTokens", "accounts.runNow", "accounts.checkSelectors",
+        "accounts.list", "accounts.create", "accounts.update", "accounts.remove", "accounts.getStatus", "accounts.refreshStatus", "accounts.inspect", "accounts.checkPlans", "accounts.checkPromos", "accounts.readAccessTokens", "accounts.runNow", "accounts.checkSelectors",
         "browser.startLogin", "browser.getTask", "browser.openPage", "browser.closePage", "browser.listOpenPages",
         "accounts.history", "history.query", "history.listAccounts",
         "groups.list", "groups.create", "groups.update", "groups.remove",

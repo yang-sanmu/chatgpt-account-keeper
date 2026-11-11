@@ -1,6 +1,6 @@
 import { Agent, request } from "node:https";
 import { cancellableSleep, throwIfCancelled } from "./cancellation.js";
-import { classifyCampaigns, promoForDiscount, PROMO_CAMPAIGNS } from "./promoEligibility.js";
+import { classifyCampaigns, promoForDiscount, PROMO_CAMPAIGNS, PROMO_NONE } from "./promoEligibility.js";
 import { ACCOUNTS_CHECK_PATH, parseAccountPlan } from "./accountPlanResponse.js";
 import { readAccessTokenClaims } from "./accessToken.js";
 
@@ -45,19 +45,19 @@ function retryDelay(response) {
   return Number.isFinite(ms) ? Math.max(0, ms) : 1_200;
 }
 
-function responseDetail(status) {
+function responseDetail(status, subject = "套餐") {
   if (status === 401) return "accessToken 已失效或鉴权失败，请刷新状态获取新 Token";
-  if (status === 403) return "套餐接口拒绝请求（HTTP 403），请检查所选节点";
-  if (status === 429) return "套餐接口限流（HTTP 429），请稍后重试";
-  return status ? `套餐接口返回 HTTP ${status}` : "节点连接失败或套餐接口超时";
+  if (status === 403) return `${subject}接口拒绝请求（HTTP 403），请检查所选节点`;
+  if (status === 429) return `${subject}接口限流（HTTP 429），请稍后重试`;
+  return status ? `${subject}接口返回 HTTP ${status}` : `节点连接失败或${subject}接口超时`;
 }
 
 export function createPlanClient(proxyUrl, signal, fetchJson = get) {
   // 旧 Node 会忽略 proxyEnv。显式拒绝，避免请求意外直连。
   const [major, minor] = process.versions.node.split(".").map(Number);
-  if (major < 24 || (major === 24 && minor < 5)) throw new Error("套餐查询需要 Node.js 24.5 或更新版本");
+  if (major < 24 || (major === 24 && minor < 5)) throw new Error("账号查询需要 Node.js 24.5 或更新版本");
   const proxy = new URL(proxyUrl);
-  if (!["http:", "https:"].includes(proxy.protocol)) throw new Error("套餐查询代理地址无效");
+  if (!["http:", "https:"].includes(proxy.protocol)) throw new Error("账号查询代理地址无效");
   const agent = new Agent({
     keepAlive: true,
     maxSockets: 4,
@@ -84,7 +84,7 @@ export function createPlanClient(proxyUrl, signal, fetchJson = get) {
 
   return {
     close: () => agent.destroy(),
-    async check(token) {
+    async check(token, { promoOnly = false } = {}) {
       const accountId = accountIdFromToken(token);
       const headers = { accept: "application/json", authorization: `Bearer ${token}`, referer: `${ORIGIN}/` };
       if (accountId) headers["chatgpt-account-id"] = accountId;
@@ -104,11 +104,27 @@ export function createPlanClient(proxyUrl, signal, fetchJson = get) {
         if (wait > 0) await cancellableSleep(wait, signal);
         response = await requestJson(path, accountHeaders);
       }
-      if (response?.status !== 200) return { detail: responseDetail(response?.status) };
-      const plan = parseAccountPlan(response.payload, accountId);
-      if (!plan) return { detail: "套餐接口未返回可确认的账号套餐" };
+      const plan = response?.status === 200
+        ? parseAccountPlan(response.payload, accountId, { allowMissingPlan: promoOnly })
+        : null;
+      const knownPromo = promoForDiscount(plan?.discountPercentage);
+      if (promoOnly) {
+        const listed = plan?.listedPlusCampaign;
+        const advertised = knownPromo ?? PROMO_CAMPAIGNS.find(({ coupon }) => coupon === listed?.id)?.eligibility;
+        // 已认证工作区的活动列表可以直接判定，不让无法确认的券接口覆盖结果。
+        if (advertised || listed === null) {
+          return { promo: { ok: true, eligibility: advertised ?? PROMO_NONE } };
+        }
+        if (!plan || plan.planType === "guest") {
+          const verified = [401, 429].includes(response?.status)
+            ? response : await requestJson("/backend-api/me", headers);
+          if (verified?.status !== 200) return { detail: responseDetail(verified?.status, "优惠") };
+        }
+      } else {
+        if (response?.status !== 200) return { detail: responseDetail(response?.status) };
+        if (!plan) return { detail: "套餐接口未返回可确认的账号套餐" };
+      }
 
-      const knownPromo = promoForDiscount(plan.discountPercentage);
       const campaigns = await Promise.all(PROMO_CAMPAIGNS.map(async ({ coupon, eligibility }) => {
         if (knownPromo === eligibility) return [coupon, { ok: true, eligible: true }];
         const path = `/backend-api/promo_campaign/check_coupon?coupon=${encodeURIComponent(coupon)}&is_coupon_from_query_param=true`;
@@ -117,10 +133,11 @@ export function createPlanClient(proxyUrl, signal, fetchJson = get) {
             ["eligible", "not_eligible"].includes(result.payload.state)) {
           return [coupon, { ok: true, eligible: result.payload.state === "eligible" }];
         }
-        const detail = result?.status === 200 ? "优惠资格未确认" : responseDetail(result?.status);
+        const detail = result?.status === 200 ? "优惠资格未确认" : responseDetail(result?.status, "优惠");
         return [coupon, { ok: false, detail: `${coupon}：${detail}` }];
       }));
-      return { planType: plan.planType, promo: classifyCampaigns(Object.fromEntries(campaigns)) };
+      const promo = classifyCampaigns(Object.fromEntries(campaigns));
+      return promoOnly ? { promo } : { planType: plan.planType, promo };
     },
   };
 }

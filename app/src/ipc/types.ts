@@ -164,9 +164,11 @@ export interface ApiError {
 
 export type OperationState = Operation["state"];
 
-export interface AccountPlanCheckResult {
+export interface AccountCheckResult {
   total: number;
   succeeded: number;
+  successIds?: string[];
+  promoResults?: Record<string, PromoEligibility>;
   failures: { id: string; detail: string }[];
 }
 

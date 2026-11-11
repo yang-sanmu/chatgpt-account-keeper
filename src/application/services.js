@@ -66,8 +66,8 @@ import { getStrictNetworkCapabilities } from "../network/strictConfig.js";
 import { createPlanClient } from "../accountPlan.js";
 import { cancellableSleep, raceSignal, throwIfCancelled } from "../cancellation.js";
 
-// Minor 10 adds account plan queries and explicit accessToken export.
-export const PROTOCOL_VERSION = Object.freeze({ major: 1, minor: 10 });
+// Minor 12 adds protocol-based batch promotion checks.
+export const PROTOCOL_VERSION = Object.freeze({ major: 1, minor: 12 });
 
 export const MUTATING_METHODS = new Set([
   "icloud.saveConfig", "icloud.open", "icloud.close", "icloud.sync", "icloud.create", "icloud.runNow", "icloud.delete", "icloud.stop", "icloud.updateLocal", "icloud.acknowledge",
@@ -82,7 +82,9 @@ export const MUTATING_METHODS = new Set([
   "accounts.update",
   "accounts.remove",
   "accounts.refreshStatus",
+  "accounts.inspect",
   "accounts.checkPlans",
+  "accounts.checkPromos",
   "accounts.runNow",
   "accounts.checkSelectors",
   "browser.startLogin",
@@ -230,6 +232,46 @@ function requireAccountIds(ids) {
   assertInput(Array.isArray(ids) && ids.length > 0 &&
     ids.every((id) => typeof id === "string" && id.trim()), "请选择要操作的账号");
   return [...new Set(ids)];
+}
+
+function accountCheckReporter(ids, update, verb) {
+  const successes = new Set();
+  const failures = new Map();
+  const promoResults = new Map();
+  return {
+    report(id, detail, eligibility) {
+      if (detail) failures.set(id, String(detail).slice(0, 500));
+      else {
+        successes.add(id);
+        if (eligibility) promoResults.set(id, eligibility);
+      }
+      const done = successes.size + failures.size;
+      update({ stage: "processing", progress: done / ids.length,
+        message: `已${verb} ${done}/${ids.length} 个账号，成功 ${successes.size} 个，失败 ${failures.size} 个` });
+    },
+    pending: () => ids.filter((id) => !successes.has(id) && !failures.has(id)),
+    result: () => ({
+      total: ids.length,
+      succeeded: successes.size,
+      successIds: ids.filter((id) => successes.has(id)),
+      failures: ids.filter((id) => failures.has(id)).map((id) => ({ id, detail: failures.get(id) })),
+      ...(promoResults.size ? { promoResults: Object.fromEntries(promoResults) } : {}),
+    }),
+  };
+}
+
+function inspectionFailure(operation) {
+  if (operation?.state !== "succeeded") {
+    return operation?.error?.message || operation?.message || "巡检未完成";
+  }
+  const status = operation.result;
+  if (status?.skipped) return status.skipReason || status.detail || "账号已跳过";
+  if ((status?.lastCheckState ?? status?.state) !== "ok") {
+    return status?.lastCheckDetail || status?.detail || "未确认账号登录状态";
+  }
+  if (status.tokenStatus === "failed") return "保存 accessToken 失败";
+  if (status.tokenStatus === "unavailable") return "未获取到 accessToken";
+  return null;
 }
 
 function safeLimit(value, fallback = 50) {
@@ -514,7 +556,7 @@ export class ApplicationServices {
 
   /** 停止转发运行时事件。测试与 Agent 关闭时调用，避免观察者泄漏。 */
   dispose() {
-    this.cancelPlanQuery();
+    this.cancelAccountQuery();
     for (const unsubscribe of this._subscriptions.splice(0)) {
       try {
         unsubscribe();
@@ -613,7 +655,9 @@ export class ApplicationServices {
     add("accounts.remove", this._accountsRemove);
     add("accounts.getStatus", this._accountsGetStatus);
     add("accounts.refreshStatus", this._accountsRefreshStatus);
+    add("accounts.inspect", this._accountsInspect);
     add("accounts.checkPlans", this._accountsCheckPlans);
+    add("accounts.checkPromos", (params) => this._accountsQuery(params, true));
     add("accounts.readAccessTokens", this._accountsReadAccessTokens);
     add("accounts.runNow", this._accountsRunNow);
     add("accounts.checkSelectors", this._accountsCheckSelectors);
@@ -753,10 +797,16 @@ export class ApplicationServices {
 
   _bootstrap() {
     const context = accountViewContext(this.runtime);
+    const activeOperations = this.operations.listActive();
     const operations = new Map(this.operations.list({ limit: 100, includeTerminal: true })
       .map((operation) => [operation.id, operation]));
     // 启动阶段失败不一定产生对话历史，不能被后续大量巡检挤出重连快照。
-    for (const operation of this.operations.listLatestAccountRuns?.() ?? []) {
+    for (const operation of [
+      ...(this.operations.listLatestAccountRuns?.() ?? []),
+      ...(this.operations.listLatestAccountChecks?.() ?? []),
+      ...activeOperations.filter(({ kind }) =>
+        ["account-inspection", "account-plan-check", "account-plan-check-single", "account-promo-check"].includes(kind)),
+    ]) {
       operations.set(operation.id, operation);
     }
     return {
@@ -776,7 +826,7 @@ export class ApplicationServices {
       // 带上最近的已结束任务：重连或重启后错误详情不该消失。
       operations: [...operations.values()]
         .sort((a, b) => String(b.startedAt).localeCompare(String(a.startedAt))),
-      activeOperations: this.operations.listActive(),
+      activeOperations,
       historyAccounts: this.runtime.listHistoryAccounts?.() ?? [],
       draining: this.draining,
     };
@@ -1027,21 +1077,11 @@ export class ApplicationServices {
     if (!account) fail(ERROR_CODES.NOT_FOUND, "账号不存在");
     const proxyId = Object.hasOwn(params, "proxyId") ? requireId(params, "proxyId") : null;
     if (proxyId) {
-      const node = this.runtime.proxies.getNodes().find((item) => item.id === proxyId);
-      if (!node || node.enabled === false || node.missing) fail(ERROR_CODES.PROXY_UNAVAILABLE, "所选巡检节点不可用");
+      this._requireCheckProxy(proxyId);
       if (!this.runtime.enqueue) fail(ERROR_CODES.INTERNAL, "指定节点巡检需要后台队列");
     }
     if (this.runtime.enqueue) {
-      return this.runtime.enqueue({
-        accountId: id,
-        workKind: "status-check",
-        kind: "account-status-refresh",
-        dedupeParams: {
-          ...(this.runtime.accountPlans ? { captureAccessToken: true } : {}),
-          ...(proxyId ? { proxyId } : {}),
-        },
-        message: "等待状态检查",
-      });
+      return this._enqueueInspection(id, proxyId);
     }
     // 没有后台队列的入口（旧 CLI / 测试替身）保留直连路径。
     return this.operations.create(
@@ -1056,8 +1096,60 @@ export class ApplicationServices {
     );
   }
 
-  cancelPlanQuery() {
-    this.planQueryAbort?.abort("Agent 正在退出");
+  _requireCheckProxy(proxyId) {
+    const node = this.runtime.proxies.getNodes().find(({ id }) => id === proxyId);
+    if (!node || node.enabled === false || node.missing) fail(ERROR_CODES.PROXY_UNAVAILABLE, "所选节点不可用");
+  }
+
+  _enqueueInspection(id, proxyId) {
+    return this.runtime.enqueue({
+      accountId: id,
+      workKind: "status-check",
+      kind: "account-status-refresh",
+      dedupeParams: {
+        ...(this.runtime.accountPlans ? { captureAccessToken: true } : {}),
+        ...(proxyId ? { proxyId } : {}),
+      },
+      message: "等待状态检查",
+    });
+  }
+
+  _accountsInspect(params) {
+    const ids = requireAccountIds(params.ids);
+    const proxyId = Object.hasOwn(params, "proxyId") ? requireId(params, "proxyId") : null;
+    if (proxyId) this._requireCheckProxy(proxyId);
+    if (!this.runtime.enqueue) fail(ERROR_CODES.INTERNAL, "批量巡检需要后台队列");
+    if (this.operations.listActive().some(({ kind }) => kind === "account-inspection")) {
+      fail(ERROR_CODES.RESOURCE_BUSY, "已有巡检任务在执行，请等待完成");
+    }
+
+    return this.operations.create("account-inspection", async ({ update }) => {
+      const batch = accountCheckReporter(ids, update, "巡检");
+      await Promise.all(ids.map(async (id) => {
+        let detail;
+        try {
+          if (!this.runtime.store.getAccount(id)) {
+            detail = "账号已删除";
+          } else {
+            const operation = this._enqueueInspection(id, proxyId);
+            const settled = await this.operations.waitForTerminal(operation.id);
+            detail = inspectionFailure(settled ?? operation);
+          }
+        } catch (error) {
+          detail = normalizeApplicationError(error).message;
+        }
+        batch.report(id, detail);
+      }));
+      if (this.draining) {
+        update({ state: "cancelled", stage: null, message: "Agent 正在退出，巡检已中断", blocksUpdate: false });
+        return;
+      }
+      return batch.result();
+    }, { stage: "queued", message: `等待巡检 ${ids.length} 个账号`, progress: 0 });
+  }
+
+  cancelAccountQuery() {
+    this.accountQueryAbort?.abort("Agent 正在退出");
   }
 
   _requireAccountPlans() {
@@ -1076,29 +1168,30 @@ export class ApplicationServices {
   }
 
   _accountsCheckPlans(params) {
+    return this._accountsQuery(params, false);
+  }
+
+  _accountsQuery(params, promoOnly) {
     const plans = this._requireAccountPlans();
     const ids = requireAccountIds(params.ids);
     const proxyId = requireId(params, "proxyId");
-    const node = this.runtime.proxies.getNodes().find(({ id }) => id === proxyId);
-    if (!node || node.enabled === false || node.missing) fail(ERROR_CODES.PROXY_UNAVAILABLE, "所选节点不可用");
-    if (this.planQueryAbort) fail(ERROR_CODES.RESOURCE_BUSY, "已有套餐查询在执行，请等待完成");
+    this._requireCheckProxy(proxyId);
+    const single = !promoOnly && params.single === true;
+    if (single) assertInput(ids.length === 1, "单账号查询只能选择一个账号");
+    if (this.accountQueryAbort) fail(ERROR_CODES.RESOURCE_BUSY, "已有账号查询在执行，请等待完成");
 
+    const subject = promoOnly ? "优惠" : "套餐";
+    const kind = promoOnly ? "account-promo-check" : single ? "account-plan-check-single" : "account-plan-check";
     const controller = new AbortController();
-    this.planQueryAbort = controller;
-    return this.operations.create("account-plan-check", async ({ update }) => {
+    this.accountQueryAbort = controller;
+    return this.operations.create(kind, async ({ update }) => {
       const signal = controller.signal;
+      const batch = accountCheckReporter(ids, update, "查询");
       try {
-        let done = 0;
-        const failures = new Map();
-        const report = (id, detail) => {
-          if (detail) failures.set(id, detail);
-          done += 1;
-          update({ stage: "query", progress: done / ids.length,
-            message: `已查询 ${done}/${ids.length} 个账号，成功 ${done - failures.size} 个，失败 ${failures.size} 个` });
-        };
+        throwIfCancelled(signal);
         const candidates = ids.filter((id) => {
-          if (!this.runtime.store.getAccount(id)) report(id, "账号已删除");
-          else if (!plans.getToken(id)) report(id, "缺少 accessToken，请先巡检");
+          if (!this.runtime.store.getAccount(id)) batch.report(id, "账号已删除");
+          else if (!plans.getToken(id)) batch.report(id, "缺少 accessToken，请先巡检");
           else return true;
           return false;
         });
@@ -1110,24 +1203,43 @@ export class ApplicationServices {
               while (cursor < candidates.length) {
                 throwIfCancelled(signal);
                 const id = candidates[cursor++];
-                const credential = plans.getToken(id);
-                if (!credential) {
-                  report(id, "账号或 accessToken 已变更，请重新巡检");
-                  continue;
+                let detail;
+                let eligibility;
+                try {
+                  const credential = plans.getToken(id);
+                  if (!credential) {
+                    detail = "账号或 accessToken 已变更，请重新巡检";
+                  } else {
+                    const result = await client.check(credential.token, { promoOnly });
+                    throwIfCancelled(signal);
+                    if (promoOnly) {
+                      if (plans.getToken(id)?.sealed !== credential.sealed) {
+                        detail = "账号或 accessToken 已变更，请重新查询";
+                      } else {
+                        const promo = result.promo ?? { ok: false, detail: result.detail };
+                        this.events.publish("accountStatus.changed", {
+                          id, ...publicPromo(this.runtime.setCachedPromo(id, promo)),
+                        });
+                        if (promo.ok) eligibility = promo.eligibility;
+                        else detail = promo.detail || "未能确认优惠资格";
+                      }
+                    } else if (!plans.savePlan(id, credential.sealed, result)) {
+                      detail = "账号或 accessToken 已变更，请重新查询";
+                    } else {
+                      const promo = result.promo ? this.runtime.setCachedPromo(id, result.promo) : null;
+                      this.events.publish("accountStatus.changed", {
+                        id,
+                        ...plans.getPlan(id),
+                        ...(promo ? publicPromo(promo) : {}),
+                      });
+                      detail = result.detail;
+                    }
+                  }
+                } catch {
+                  throwIfCancelled(signal);
+                  detail = `${subject}查询或保存结果失败`;
                 }
-                const result = await client.check(credential.token);
-                throwIfCancelled(signal);
-                if (!plans.savePlan(id, credential.sealed, result)) {
-                  report(id, "账号或 accessToken 已变更，请重新查询");
-                } else {
-                  const promo = result.promo ? this.runtime.setCachedPromo(id, result.promo) : null;
-                  this.events.publish("accountStatus.changed", {
-                    id,
-                    ...plans.getPlan(id),
-                    ...(promo ? publicPromo(promo) : {}),
-                  });
-                  report(id, result.detail);
-                }
+                batch.report(id, detail, eligibility);
                 if (cursor < candidates.length) await cancellableSleep(400, signal);
               }
             };
@@ -1141,12 +1253,21 @@ export class ApplicationServices {
           });
           await raceSignal(query, signal);
         }
-        return { total: ids.length, succeeded: done - failures.size,
-          failures: ids.filter((id) => failures.has(id)).map((id) => ({ id, detail: failures.get(id) })) };
+        return batch.result();
+      } catch (error) {
+        if (signal.aborted) {
+          update({ state: "cancelled", stage: null, message: signal.reason, blocksUpdate: false });
+          return;
+        }
+        const pending = batch.pending();
+        if (pending.length === 0) throw error;
+        const detail = normalizeApplicationError(error).message;
+        for (const id of pending) batch.report(id, detail);
+        return batch.result();
       } finally {
-        this.planQueryAbort = null;
+        this.accountQueryAbort = null;
       }
-    }, { resourceId: ids.length === 1 ? ids[0] : null, stage: "queued", message: "等待套餐查询" });
+    }, { resourceId: ids.length === 1 ? ids[0] : null, stage: "queued", message: `等待查询 ${ids.length} 个账号的${subject}`, progress: 0 });
   }
 
   _accountsRunNow(params) {

@@ -98,7 +98,9 @@ export type Method =
   | "accounts.remove"
   | "accounts.getStatus"
   | "accounts.refreshStatus"
+  | "accounts.inspect"
   | "accounts.checkPlans"
+  | "accounts.checkPromos"
   | "accounts.readAccessTokens"
   | "accounts.runNow"
   | "accounts.checkSelectors"
@@ -327,6 +329,8 @@ export interface KeeperIPCV1GeneratedSchema {
   operationResult?: Operation;
   operationArray?: OperationArray;
   accountPlanParams?: AccountPlanParams;
+  accountPromoParams?: AccountPromoParams;
+  accountInspectParams?: AccountInspectParams;
   accountTokenParams?: AccountTokenParams;
   accountTokenResult?: AccountTokenResult;
   idParams?: IdParams;
@@ -929,6 +933,35 @@ export interface AccountPlanParams {
    */
   ids: [string, ...string[]];
   proxyId: string;
+  /**
+   * 账号卡片发起的单账号查询，独立于批量任务
+   */
+  single?: boolean;
+}
+/**
+ * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
+ * via the `definition` "accountPromoParams".
+ */
+export interface AccountPromoParams {
+  /**
+   * @minItems 1
+   */
+  ids: [string, ...string[]];
+  proxyId: string;
+}
+/**
+ * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
+ * via the `definition` "accountInspectParams".
+ */
+export interface AccountInspectParams {
+  /**
+   * @minItems 1
+   */
+  ids: [string, ...string[]];
+  /**
+   * 省略时使用各账号的分组节点
+   */
+  proxyId?: string;
 }
 /**
  * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
@@ -1567,7 +1600,9 @@ export interface IpcMethodContracts {
   "accounts.remove": { params: AccountRemoveParams; result: OkResult };
   "accounts.getStatus": { params: IdParams; result: AccountStatusResult };
   "accounts.refreshStatus": { params: AccountRefreshStatusParams; result: Operation };
+  "accounts.inspect": { params: AccountInspectParams; result: Operation };
   "accounts.checkPlans": { params: AccountPlanParams; result: Operation };
+  "accounts.checkPromos": { params: AccountPromoParams; result: Operation };
   "accounts.readAccessTokens": { params: AccountTokenParams; result: AccountTokenResult };
   "accounts.runNow": { params: IdParams; result: Operation };
   "accounts.checkSelectors": { params: SelectorCheckParams; result: Operation };
@@ -1638,7 +1673,9 @@ export const OPERATION_METHODS = [
   "temporaryWindows.clearData",
   "temporaryWindows.detectRegion",
   "accounts.refreshStatus",
+  "accounts.inspect",
   "accounts.checkPlans",
+  "accounts.checkPromos",
   "accounts.runNow",
   "accounts.checkSelectors",
   "browser.startLogin",

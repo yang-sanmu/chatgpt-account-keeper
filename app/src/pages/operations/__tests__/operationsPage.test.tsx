@@ -71,8 +71,8 @@ describe("历史任务的完成态展示", () => {
     const user = userEvent.setup();
     render(<OperationsPage />);
 
-    await user.click(screen.getByRole("tab", { name: "全部" }));
-    await user.click(screen.getByText("查询失败明细（1 个账号）"));
+    await user.click(screen.getByRole("tab", { name: "失败" }));
+    await user.click(screen.getByText("失败明细（1 个账号）"));
     expect(screen.getByText("待巡检账号 · 缺少 accessToken，请先巡检")).toBeVisible();
   });
 });

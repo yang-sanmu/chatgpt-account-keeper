@@ -82,7 +82,7 @@ async function performShutdown(exitCode, { preserveScheduler }) {
     log,
     beginDraining: () => {
       if (agent?.services) agent.services.draining = true;
-      agent?.services.cancelPlanQuery();
+      agent?.services.cancelAccountQuery();
     },
     stopAccepting: () => agent?.started && agent.server.stopAccepting(),
     stopTimers: () => {

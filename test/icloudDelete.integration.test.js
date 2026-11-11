@@ -21,6 +21,21 @@ for (const language of ["en", "zh"]) {
     t.after(() => browser.close());
     const context = await browser.newContext();
     const endpoint = "https://p203-maildomainws.icloud.com.cn/v1/hme/";
+    const title = language === "en" ? "Hide My Email" : "隐藏邮件地址";
+    const landing = `<meta charset="utf-8"><article aria-label="${title}" style="position:relative">
+      <h2>${title}</h2><button id="manage" aria-haspopup="dialog" style="position:absolute;inset:0;width:100%"></button>
+      </article><script>
+      manage.onclick = async () => {
+        const modal = document.createElement('div');
+        modal.style = 'position:fixed;inset:0;background:white';
+        document.body.append(modal);
+        // The landing card can complete its list fetch while management is opening.
+        await fetch('${endpoint}list?dsid=123');
+        setTimeout(() => {
+          modal.innerHTML = '<iframe src="/applications/hidemyemail/current/index.html" style="height:700px;width:800px"></iframe>';
+        }, 500);
+      };
+    </script>`;
     const html = `<meta charset="utf-8"><div id="view"></div><script>
       const api = ${JSON.stringify(endpoint)}, words = ${JSON.stringify(words)};
       let rows;
@@ -51,7 +66,7 @@ for (const language of ["en", "zh"]) {
     </script>`;
     await context.route("**/*", async route => {
       const url = new URL(route.request().url());
-      if (url.pathname === "/icloudplus/") return route.fulfill({ contentType: "text/html", body: '<iframe src="/applications/hidemyemail/current/index.html" style="height:700px;width:800px"></iframe>' });
+      if (url.pathname === "/icloudplus/") return route.fulfill({ contentType: "text/html", body: landing });
       if (url.pathname.includes("/applications/hidemyemail/")) return route.fulfill({ contentType: "text/html", body: html.replace("home();\n    </script>", `window.mismatch = ${mismatchedDetail}; home();\n    </script>`) });
       const headers = { "access-control-allow-origin": "*", "content-type": "application/json" };
       if (url.pathname.endsWith("/list")) return route.fulfill({ headers, body: JSON.stringify({ success: true, result: { hmeEmails: remote } }) });

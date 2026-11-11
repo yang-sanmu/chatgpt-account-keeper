@@ -3,18 +3,18 @@ import { useAccountSelection, useBulkActions } from "@/store/selectors";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
-import { Play, RefreshCw, Trash2, Power, PowerOff, CreditCard, Copy } from "lucide-react";
+import { Play, RefreshCw, Trash2, Power, PowerOff, Tag, Copy } from "lucide-react";
 import { agentCall } from "@/ipc/bridge";
 import { notify } from "@/lib/notify";
 
 interface BulkActionBarProps {
   visibleIds: string[];
   onBulkDelete: (ids: string[]) => void;
-  onCheckPlans: (ids: string[]) => void;
+  onCheckPromos: (ids: string[]) => void;
   onInspect: (ids: string[]) => void;
 }
 
-export function BulkActionBar({ visibleIds, onBulkDelete, onCheckPlans, onInspect }: BulkActionBarProps) {
+export function BulkActionBar({ visibleIds, onBulkDelete, onCheckPromos, onInspect }: BulkActionBarProps) {
   const { selectedIds, count, tokenCount, select, clear } = useAccountSelection();
   const bulkActions = useBulkActions();
   const [copying, setCopying] = useState(false);
@@ -93,8 +93,8 @@ export function BulkActionBar({ visibleIds, onBulkDelete, onCheckPlans, onInspec
         <Button variant="secondary" size="sm" onClick={() => onInspect(selectedArray)} className="h-8">
           <RefreshCw className="mr-1.5 size-4" /> 批量巡检
         </Button>
-        <Button variant="secondary" size="sm" onClick={() => onCheckPlans(selectedArray)} className="h-8">
-          <CreditCard className="mr-1.5 size-4" /> 批量查套餐
+        <Button variant="secondary" size="sm" onClick={() => onCheckPromos(selectedArray)} className="h-8">
+          <Tag className="mr-1.5 size-4" /> 批量查优惠
         </Button>
         <Button variant="secondary" size="sm" disabled={copying} onClick={() => void copyTokens()} className="h-8">
           <Copy className="mr-1.5 size-4" /> 复制 accessToken

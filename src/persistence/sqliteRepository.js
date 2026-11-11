@@ -16,6 +16,17 @@ const LATEST_ACCOUNT_RUN_IDS_SQL = `
     WHERE kind = 'account-run' AND resource_id IS NOT NULL AND finished_at IS NOT NULL
       AND state IN ('succeeded', 'failed', 'timed_out')
   ) WHERE account_rank = 1`;
+const LATEST_ACCOUNT_CHECK_IDS_SQL = `
+  SELECT id FROM (
+    SELECT id, has_result,
+      ROW_NUMBER() OVER (PARTITION BY kind ORDER BY started_at DESC, rowid DESC) AS batch_rank,
+      ROW_NUMBER() OVER (PARTITION BY kind, has_result ORDER BY started_at DESC, rowid DESC) AS result_rank
+    FROM (
+      SELECT id, kind, started_at, rowid, state = 'succeeded' AND result_json IS NOT NULL AS has_result
+      FROM operations
+      WHERE kind IN ('account-plan-check', 'account-promo-check', 'account-inspection')
+    )
+  ) WHERE batch_rank = 1 OR (has_result AND result_rank = 1)`;
 
 function repositoryError(code, message, cause = null) {
   const error = new Error(message, cause ? { cause } : undefined);
@@ -372,6 +383,11 @@ export class KeeperRepository {
     return operation;
   }
 
+  getOperation(id) {
+    const row = this.db.prepare("SELECT * FROM operations WHERE id = ?").get(id);
+    return row ? operationFromRow(row) : null;
+  }
+
   listOperations({ limit = 200, includeTerminal = true } = {}) {
     const safeLimit = Math.max(1, Math.min(500, Number(limit) || 200));
     const rows = includeTerminal
@@ -392,6 +408,13 @@ export class KeeperRepository {
     return this.db.prepare(
       `SELECT * FROM operations WHERE id IN (${LATEST_ACCOUNT_RUN_IDS_SQL})
        ORDER BY finished_at DESC, rowid DESC`
+    ).all().map(operationFromRow);
+  }
+
+  listLatestAccountChecks() {
+    return this.db.prepare(
+      `SELECT * FROM operations WHERE id IN (${LATEST_ACCOUNT_CHECK_IDS_SQL})
+       ORDER BY started_at, rowid`
     ).all().map(operationFromRow);
   }
 
@@ -416,7 +439,7 @@ export class KeeperRepository {
       .prepare(
         `DELETE FROM operations WHERE id NOT IN (
            SELECT id FROM operations ORDER BY started_at DESC, rowid DESC LIMIT ?
-         ) AND id NOT IN (${LATEST_ACCOUNT_RUN_IDS_SQL})`
+         ) AND id NOT IN (${LATEST_ACCOUNT_RUN_IDS_SQL}) AND id NOT IN (${LATEST_ACCOUNT_CHECK_IDS_SQL})`
       )
       .run(safeKeep).changes;
   }

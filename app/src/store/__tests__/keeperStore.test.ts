@@ -538,34 +538,6 @@ describe("批量操作", () => {
     ).toHaveLength(3);
   });
 
-  it.each([false, true])("巡检提交失败或被立即取消时都计入失败（先收到取消事件=%s）", async (early) => {
-    const { notify } = await import("@/lib/notify");
-    const errorSpy = vi.spyOn(notify, "error");
-    const successSpy = vi.spyOn(notify, "success");
-
-    tauri.onMethod("accounts.refreshStatus", (params) => {
-      if (params.id === "acc-2") {
-        return Promise.reject({ code: "RESOURCE_BUSY", message: "忙", retryable: true });
-      }
-      if (params.id === "acc-3") {
-        const cancelled = makeOperation({ id: "inspection-3", state: "cancelled", message: "分组绑定的代理节点不可用" });
-        if (!early) return cancelled;
-        tauri.emitAgentEvent("operation.changed", cancelled);
-        return makeOperation({ id: cancelled.id, state: "queued" });
-      }
-      return makeOperation({ state: "queued" });
-    });
-
-    await store().bulkRefreshStatus(["acc-1", "acc-2", "acc-3"]);
-
-    expect(successSpy).not.toHaveBeenCalled();
-    expect(errorSpy).toHaveBeenCalledWith(
-      "提交批量巡检部分失败",
-      expect.stringContaining("成功 1 个，失败 2 个")
-    );
-    expect(errorSpy.mock.calls[0]?.[1]).toContain("RESOURCE_BUSY");
-  });
-
   it("批量启用把结果应用到卡片上", async () => {
     tauri.onMethod("accounts.update", (params) => {
       const patch = params.patch as { enabled?: boolean };

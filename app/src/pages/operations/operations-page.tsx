@@ -9,7 +9,8 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { EmptyState } from "@/components/ui/empty-state";
-import type { AccountPlanCheckResult } from "@/ipc/types";
+import { AccountCheckResults } from "@/components/account-check-results";
+import { accountCheckResult, isAccountCheckPending } from "@/lib/account-checks";
 import { ListTodo, Copy } from "lucide-react";
 import { formatDateTime, formatDuration } from "@/lib/format";
 import { notify } from "@/lib/notify";
@@ -41,9 +42,10 @@ export function OperationsPage() {
 
   const filtered = operations.filter((op) => {
     if (filter === "all") return true;
-    if (filter === "active") return op.state === "queued" || op.state === "running" || op.state === "waiting_user";
-    if (filter === "succeeded") return op.state === "succeeded";
-    if (filter === "failed") return op.state === "failed" || op.state === "timed_out";
+    if (filter === "active") return isAccountCheckPending(op);
+    const hasFailedItems = !!accountCheckResult(op)?.failures.length;
+    if (filter === "succeeded") return op.state === "succeeded" && !hasFailedItems;
+    if (filter === "failed") return op.state === "failed" || op.state === "timed_out" || hasFailedItems;
     if (filter === "cancelled") return op.state === "cancelled";
     return true;
   });
@@ -108,9 +110,8 @@ export function OperationsPage() {
         ) : (
           filtered.map((op) => {
             const display = normalizeOperationDisplay(op.state, op.stage, op.message);
-            const planFailures = op.kind === "account-plan-check"
-              ? (op.result as AccountPlanCheckResult | null)?.failures
-              : undefined;
+            const checkResult = accountCheckResult(op);
+            const hasFailedItems = !!checkResult?.failures.length;
             const durationSec = op.finishedAt
               ? (new Date(op.finishedAt).getTime() - new Date(op.startedAt).getTime()) / 1000
               : op.state === "running"
@@ -127,7 +128,9 @@ export function OperationsPage() {
               <Card key={op.id} className="p-4 flex flex-col gap-3 relative">
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex items-center gap-2.5 min-w-0">
-                    <Badge variant={getBadgeVariant(op.state)}>{getStateLabel(op.state)}</Badge>
+                    <Badge variant={hasFailedItems ? "danger" : getBadgeVariant(op.state)}>
+                      {hasFailedItems ? "有失败项" : getStateLabel(op.state)}
+                    </Badge>
                     <span
                       className={cn(
                         "font-semibold text-primary truncate max-w-[260px]",
@@ -145,20 +148,13 @@ export function OperationsPage() {
                   </div>
                 </div>
 
-                <div className="text-sm text-secondary">
-                  {display.stage ? <span className="font-medium text-primary mr-2">[{display.stage}]</span> : null}
-                  {display.message || "无详细信息"}
-                </div>
-
-                {planFailures && planFailures.length > 0 && (
-                  <details className="text-sm text-secondary">
-                    <summary className="cursor-pointer">查询失败明细（{planFailures.length} 个账号）</summary>
-                    <ul className="mt-2 max-h-48 space-y-1 overflow-auto">
-                      {planFailures.map(({ id, detail }) => (
-                        <li key={id} className="break-words">{accountLabeler(id).label} · {detail}</li>
-                      ))}
-                    </ul>
-                  </details>
+                {checkResult ? (
+                  <AccountCheckResults result={checkResult} accountLabel={(id) => accountLabeler(id).label} />
+                ) : (
+                  <div className="text-sm text-secondary">
+                    {display.stage ? <span className="font-medium text-primary mr-2">[{display.stage}]</span> : null}
+                    {display.message || "无详细信息"}
+                  </div>
                 )}
 
                 {op.error?.code && (
@@ -174,7 +170,7 @@ export function OperationsPage() {
                   </div>
                 )}
 
-                {op.progress !== null && (op.state === "queued" || op.state === "running" || op.state === "waiting_user") && (
+                {op.progress !== null && isAccountCheckPending(op) && (
                   <div className="mt-2">
                     <Progress value={op.progress * 100} />
                   </div>

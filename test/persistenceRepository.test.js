@@ -235,7 +235,7 @@ test(
 );
 
 test(
-  "清理与重启后仍保留每个账号按完成时间选出的最新非取消对话结果",
+  "清理与重启后保留最新对话结果和各类批量检查结果",
   { skip: !Database && "better-sqlite3 is not installed in this checkout" },
   async (t) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "keeper-latest-runs-"));
@@ -250,9 +250,9 @@ test(
       repository.close();
       fs.rmSync(root, { recursive: true, force: true });
     });
-    const save = (id, resourceId, kind, state, startedAt, finishedAt = startedAt) => {
+    const save = (id, resourceId, kind, state, startedAt, finishedAt = startedAt, result = null) => {
       repository.saveOperation({
-        id, resourceId, kind, state, startedAt, updatedAt: finishedAt, finishedAt,
+        id, resourceId, kind, state, startedAt, updatedAt: finishedAt, finishedAt, result,
         error: state === "failed" ? { code: "TIMEOUT", message: "启动端口超时", retryable: true } : null,
       });
     };
@@ -261,6 +261,28 @@ test(
     save("later-cancel", "acc_1", "account-run", "cancelled", "2026-08-31T11:00:00.000Z");
     save("late-finish", "acc_2", "account-run", "succeeded", "2026-08-31T09:00:00.000Z", "2026-08-31T11:00:00.000Z");
     save("early-finish", "acc_2", "account-run", "failed", "2026-08-31T10:00:00.000Z");
+    const first = "2026-08-31T09:00:00.000Z";
+    const next = "2026-08-31T10:00:00.000Z";
+    const batchResult = { total: 1, succeeded: 0, failures: [{ id: "acc_1", detail: "连接超时" }] };
+    save("old-plan", null, "account-plan-check", "succeeded", first, first, batchResult);
+    save("latest-plan", null, "account-plan-check", "succeeded", next, next, batchResult);
+    save("old-promo", null, "account-promo-check", "succeeded", next, next, {
+      total: 1, succeeded: 0, failures: [{ id: "acc_2", detail: "旧批次失败" }],
+    });
+    save("latest-promo", null, "account-promo-check", "succeeded", next, next, batchResult);
+    save("single-plan", "acc_1", "account-plan-check-single", "succeeded", next, next, batchResult);
+    save("latest-inspection", null, "account-inspection", "succeeded", first, first, batchResult);
+    const restoredWithBothBatches = new OperationRegistry({ store: createSqliteRuntimeAdapters(repository).operations });
+    restoredWithBothBatches.restore();
+    const latestPromo = restoredWithBothBatches.listLatestAccountChecks()
+      .find(({ kind }) => kind === "account-promo-check");
+    assert.equal(latestPromo?.id, "latest-promo");
+    assert.deepEqual(latestPromo.result.failures, batchResult.failures);
+
+    repository.saveOperation({
+      id: "interrupted-inspection", kind: "account-inspection", state: "running",
+      startedAt: next, updatedAt: next,
+    });
     for (let index = 0; index < 550; index++) {
       const at = new Date(Date.parse("2026-08-31T12:00:00.000Z") + index * 1000).toISOString();
       save(`check-${index}`, "acc_1", "account-status-refresh", "succeeded", at);
@@ -270,7 +292,7 @@ test(
     assert.ok(repository.db.prepare("SELECT id FROM operations WHERE id = ?").get("latest-failure"),
       "全局500条保留上限不能删除某账号唯一的最新实际结果");
     assert.equal(repository.db.prepare("SELECT id FROM operations WHERE id = ?").get("old-success"), undefined);
-    assert.equal(repository.db.prepare("SELECT count(*) AS count FROM operations").get().count, 502);
+    assert.equal(repository.db.prepare("SELECT count(*) AS count FROM operations").get().count, 506);
 
     repository.close();
     repository = await openKeeperRepository(options);
@@ -279,6 +301,14 @@ test(
     const latest = registry.listLatestAccountRuns();
     assert.deepEqual(latest.map((operation) => operation.id).sort(), ["late-finish", "latest-failure"]);
     assert.equal(latest.find((operation) => operation.resourceId === "acc_1").error.message, "启动端口超时");
+    const latestChecks = registry.listLatestAccountChecks();
+    assert.deepEqual(latestChecks.map(({ id }) => id).sort(), ["interrupted-inspection", "latest-inspection", "latest-plan", "latest-promo"]);
+    assert.equal(latestChecks.find(({ id }) => id === "interrupted-inspection").state, "cancelled");
+    assert.deepEqual(latestChecks.find(({ id }) => id === "latest-inspection").result, batchResult);
+    assert.deepEqual(latestChecks.find(({ id }) => id === "latest-plan").result, batchResult);
+    assert.deepEqual(latestChecks.find(({ id }) => id === "latest-promo").result, batchResult);
+    assert.deepEqual(registry.get("latest-promo")?.result, batchResult);
+    assert.equal(registry.get("interrupted-inspection")?.state, "cancelled");
     assert.equal(repository.integrityCheck().ok, true);
   }
 );

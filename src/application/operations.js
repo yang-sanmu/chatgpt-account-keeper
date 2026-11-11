@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { errorEnvelope } from "./errors.js";
 
 const TERMINAL_STATES = new Set(["succeeded", "failed", "timed_out", "cancelled"]);
+const ACCOUNT_BATCH_KINDS = new Set(["account-plan-check", "account-promo-check", "account-inspection"]);
 
 function clone(value) {
   return value == null ? value : structuredClone(value);
@@ -20,6 +21,20 @@ function latestAccountRuns(operations) {
     }
   }
   return [...latest.values()];
+}
+
+function latestAccountChecks(operations) {
+  const latest = new Map();
+  const completed = new Map();
+  for (const operation of operations) {
+    if (!ACCOUNT_BATCH_KINDS.has(operation.kind)) continue;
+    const previous = latest.get(operation.kind);
+    if (!previous || operation.startedAt >= previous.startedAt) latest.set(operation.kind, operation);
+    if (operation.state !== "succeeded" || !operation.result) continue;
+    const previousResult = completed.get(operation.kind);
+    if (!previousResult || operation.startedAt >= previousResult.startedAt) completed.set(operation.kind, operation);
+  }
+  return [...new Set([...latest.values(), ...completed.values()])];
 }
 
 export class OperationRegistry {
@@ -212,9 +227,9 @@ export class OperationRegistry {
     const operation = this._operations.get(id);
     if (operation) return clone(operation);
     // 已从内存淘汰但仍在库里的历史任务：错误详情必须还能查到。
-    if (!this._store?.list) return null;
     try {
-      return this._store.list({ limit: 500 }).find((item) => item.id === id) ?? null;
+      if (this._store?.get) return this._store.get(id);
+      return this._store?.list?.({ limit: 500 }).find((item) => item.id === id) ?? null;
     } catch {
       return null;
     }
@@ -263,6 +278,18 @@ export class OperationRegistry {
     return latestAccountRuns(merged.values()).map(clone);
   }
 
+  listLatestAccountChecks() {
+    let stored = [];
+    try {
+      stored = this._store?.listLatestAccountChecks?.() ?? [];
+    } catch {
+      // 保留内存结果供当前连接查看。
+    }
+    // 同一毫秒的批次以 SQLite 写入顺序为准，使用内存中的最新状态。
+    const persisted = stored.map((operation) => this._operations.get(operation.id) ?? operation);
+    return latestAccountChecks([...this._operations.values(), ...persisted]).map(clone);
+  }
+
   waitForTerminal(id) {
     const current = this._operations.get(id);
     if (!current) return Promise.resolve(null);
@@ -277,7 +304,10 @@ export class OperationRegistry {
   prune() {
     const cutoff = this._clock().getTime() - this._retentionMs;
     // 每个账号额外保留一条实际结果；巡检和取消不应抹掉最后一次对话失败。
-    const latestIds = new Set(latestAccountRuns(this._operations.values()).map((operation) => operation.id));
+    const latestIds = new Set([
+      ...latestAccountRuns(this._operations.values()),
+      ...latestAccountChecks(this._operations.values()),
+    ].map((operation) => operation.id));
     const terminal = [...this._operations.values()]
       .filter((operation) => TERMINAL_STATES.has(operation.state))
       .sort((a, b) => Date.parse(a.finishedAt) - Date.parse(b.finishedAt));

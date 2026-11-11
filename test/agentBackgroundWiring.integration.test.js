@@ -163,7 +163,7 @@ function spawnAgent(dataRoot, tempRoot, endpoint) {
 }
 
 test(
-  "真实 Agent：minor 3 客户端兼容 minor 9 Agent、队列与 BrowserRun 可用、broker 恒为 1，shutdown 干净退出",
+  "真实 Agent：minor 3 客户端兼容 minor 12 Agent、队列与 BrowserRun 可用、broker 恒为 1，shutdown 干净退出",
   { timeout: 90_000 },
   async (t) => {
     if (process.platform === "win32" && !resolveBrokerExecutable()) {
@@ -193,9 +193,17 @@ test(
       clientVersion: "wiring-test",
       capabilities: ["events"],
     });
-    assert.equal(hello.protocol.maxMinor, 10, output());
+    assert.equal(hello.protocol.maxMinor, 12, output());
 
     // 新方法必须真的接在服务上，而不只是写进契约。
+    const inspection = await client.call("accounts.inspect", { ids: ["missing-fixture"] }, randomUUID());
+    const inspected = await client.call("operations.get", { id: inspection.id });
+    assert.equal(inspected.kind, "account-inspection");
+    assert.equal(inspected.state, "succeeded");
+    assert.deepEqual(inspected.result, {
+      total: 1, succeeded: 0, successIds: [], failures: [{ id: "missing-fixture", detail: "账号已删除" }],
+    });
+
     const snapshot = await client.call("queue.getSnapshot");
     assert.equal(snapshot.workSlots.limit, 4, output());
     assert.equal(snapshot.chromeSlots.limit, 4);

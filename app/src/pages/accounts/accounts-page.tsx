@@ -10,8 +10,7 @@ import { BulkActionBar } from "./bulk-action-bar";
 import { AccountCreateDialog } from "./account-create-dialog";
 import { AccountDeleteDialog } from "./account-delete-dialog";
 import { AccountHistoryDrawer } from "./account-history-drawer";
-import { AccountInspectionDialog } from "./account-inspection-dialog";
-import { AccountPlanDialog } from "./account-plan-dialog";
+import { AccountCheckDialog, type AccountCheckTarget } from "./account-check-dialog";
 import { Users, SearchX } from "lucide-react";
 import { shortId } from "@/lib/format";
 
@@ -21,10 +20,9 @@ export function AccountsPage() {
   const { reset: resetFilters } = useAccountFilter();
 
   const [createOpen, setCreateOpen] = React.useState(false);
-  const [inspectionTarget, setInspectionTarget] = React.useState<{ title: string; ids: string[] } | null>(null);
-  const [planTarget, setPlanTarget] = React.useState<{ title: string; ids: string[]; allIds?: string[] } | null>(null);
+  const [checkTarget, setCheckTarget] = React.useState<AccountCheckTarget | null>(null);
   const checkSinglePlan = React.useCallback((id: string) => {
-    setPlanTarget({ title: "查询套餐", ids: [id] });
+    setCheckTarget({ title: "查询套餐", kind: "singlePlan", ids: [id], scope: "single" });
   }, []);
   
   const [deleteOpen, setDeleteOpen] = React.useState(false);
@@ -60,10 +58,10 @@ export function AccountsPage() {
       />
       
       <AccountsToolbar onCreateClick={() => setCreateOpen(true)}
-        canInspect={visibleIds.length > 0}
-        onInspect={() => setInspectionTarget({ title: "一键巡检", ids: visibleIds })}
-        canCheckPlans={accountIds.length > 0}
-        onCheckPlans={() => setPlanTarget({ title: "一键查套餐", ids: visibleIds, allIds: accountIds })}
+        canInspect={accountIds.length > 0}
+        onInspect={() => setCheckTarget({ title: "一键巡检", kind: "inspection", ids: visibleIds, scope: "filtered" })}
+        canCheckPromos={accountIds.length > 0}
+        onCheckPromos={() => setCheckTarget({ title: "一键查优惠", kind: "promo", ids: visibleIds, scope: "filtered" })}
       />
 
       <PageBody className="pb-20 relative">
@@ -112,12 +110,11 @@ export function AccountsPage() {
       <BulkActionBar 
         visibleIds={visibleIds} 
         onBulkDelete={handleBulkDelete} 
-        onCheckPlans={(ids) => setPlanTarget({ title: "批量查套餐", ids })}
-        onInspect={(ids) => setInspectionTarget({ title: "批量巡检", ids })}
+        onCheckPromos={(ids) => setCheckTarget({ title: "批量查优惠", kind: "promo", ids, scope: "selected" })}
+        onInspect={(ids) => setCheckTarget({ title: "批量巡检", kind: "inspection", ids, scope: "selected" })}
       />
 
-      {inspectionTarget && <AccountInspectionDialog {...inspectionTarget} onClose={() => setInspectionTarget(null)} />}
-      {planTarget && <AccountPlanDialog {...planTarget} onClose={() => setPlanTarget(null)} />}
+      {checkTarget && <AccountCheckDialog {...checkTarget} onClose={() => setCheckTarget(null)} />}
 
       <AccountCreateDialog 
         open={createOpen} 

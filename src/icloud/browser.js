@@ -17,6 +17,7 @@ export class IcloudBrowser {
   constructor({ acquireChrome, onList = () => {}, onClosed = () => {}, signal }) {
     Object.assign(this, { acquireChrome, onList, onClosed, signal });
     this.launched = null; this.sequence = 0; this.syncSince = 0; this.latest = null; this.failure = null; this.responseTasks = new Set(); this.closing = false;
+    this.managementRequested = false;
   }
   async launch(config, { headed = false, operationId = null } = {}) {
     this.launched = await this.acquireChrome({ accountId: ICLOUD_RESOURCE, account: { id: ICLOUD_RESOURCE, profileDir: ICLOUD_PROFILE },
@@ -102,29 +103,31 @@ export class IcloudBrowser {
     return visible.length === 1 ? visible[0] : null;
   }
   async openManagement() {
-    let opened = false;
     return this.waitFor(async () => {
       const frame = this.frame();
       const add = frame?.getByRole("button", { name: /^(添加|设置新的电子邮件地址|Add|Set Up New Email Address)$/i });
       if (add && await add.count() === 1 && await add.isVisible()) return frame;
-      if (!opened) {
-        const entry = await this.managementEntry();
-        if (entry) {
-          await this.clickManagement(entry);
-          opened = true;
-        }
-      }
+      await this.requestManagement();
       return null;
     }, 30_000, "未能打开隐藏邮件地址管理窗口，请打开 iCloud 检查页面");
   }
-  async clickManagement(entry) {
-    try { await entry.click({ timeout: 10_000 }); }
-    catch (error) {
+  async requestManagement() {
+    // Sync can receive the landing card's list before the clicked dialog has
+    // loaded. Share the click state until the next navigation.
+    if (this.managementRequested || this.frame()) return;
+    const entry = await this.managementEntry();
+    if (!entry || this.frame()) return;
+    try {
+      await entry.click({ timeout: 10_000 });
+      this.managementRequested = true;
+    } catch (error) {
+      if (this.frame()) return;
       const reason = /detached/.test(error.message) ? "页面正在切换" : "入口无法点击";
       throw new IcloudError("format", `未能打开隐藏邮件地址：${reason}，未提交操作`);
     }
   }
   async openLogin() {
+    this.managementRequested = false;
     try { await this.page.goto(ICLOUD_HOME, { waitUntil: "domcontentloaded", timeout: 45_000 }); }
     catch (error) {
       if (this.signal?.aborted || this.closing || this.page.isClosed()) throw new IcloudError("cancelled", "iCloud 操作已停止");
@@ -138,7 +141,7 @@ export class IcloudBrowser {
     this.submittedCandidate = null;
     const since = this.syncSince = this.sequence;
     await this.openLogin();
-    let opened = false; let loginVisibleSince = null;
+    let loginVisibleSince = null;
     const list = await this.waitFor(async () => {
       if (this.latest && this.latest.sequence > since) return this.latest;
       // The public landing page can flash while iCloud restores its session.
@@ -147,10 +150,7 @@ export class IcloudBrowser {
         loginVisibleSince ??= Date.now();
         if (Date.now() - loginVisibleSince >= 5000) throw new IcloudError("auth", "请打开 iCloud 浏览器手动登录，选择保持登录后同步列表");
       } else loginVisibleSince = null;
-      if (!this.frame() && !opened) {
-        const entry = await this.managementEntry();
-        if (entry) { opened = true; await this.clickManagement(entry); }
-      }
+      await this.requestManagement();
       return null;
     }, 45_000);
     return this.latest ?? list;

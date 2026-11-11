@@ -9,6 +9,7 @@ function Progress({ className, value, ...props }: React.ComponentProps<typeof Pr
         "relative h-2 w-full overflow-hidden rounded-full bg-sunken",
         className
       )}
+      value={value}
       {...props}
     >
       <ProgressPrimitive.Indicator

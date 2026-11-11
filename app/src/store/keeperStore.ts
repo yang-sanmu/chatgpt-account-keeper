@@ -258,7 +258,6 @@ interface KeeperActions {
   toggleAccountPage: (id: string, currentlyOpen: boolean) => Promise<void>;
 
   bulkSetEnabled: (ids: readonly string[], enabled: boolean) => Promise<void>;
-  bulkRefreshStatus: (ids: readonly string[], proxyId?: string) => Promise<void>;
   bulkRunNow: (ids: readonly string[]) => Promise<void>;
   bulkRemove: (ids: readonly string[], profileAction: ProfileAction) => Promise<void>;
 
@@ -1149,16 +1148,6 @@ export const useKeeperStore = create<KeeperStore>()((set, get) => {
           set((state) => ({
             accounts: applyAccountChanged(state.accounts, account).records,
           }));
-        }
-      });
-    },
-
-    bulkRefreshStatus: async (ids, proxyId) => {
-      await runSequentially("提交批量巡检", ids, async (id) => {
-        const submitted = await agentCall("accounts.refreshStatus", { id, ...(proxyId ? { proxyId } : {}) }, await newCommandId());
-        const operation = earlyTerminalOperations.get(submitted.id) ?? submitted;
-        if (TERMINAL_OPERATION_STATES.has(operation.state) && operation.state !== "succeeded") {
-          throw operationFailure(operation);
         }
       });
     },

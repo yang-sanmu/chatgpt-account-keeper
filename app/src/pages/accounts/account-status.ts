@@ -14,6 +14,7 @@
 
 import type { StatusDotProps } from "@/components/ui/status-dot";
 import type { PromoEligibility } from "@/ipc/types";
+import { PROMO_LABELS } from "@/lib/format";
 import type { AccountTokenStatus } from "@/store/accountModel";
 
 type DotStatus = NonNullable<StatusDotProps["status"]>;
@@ -54,12 +55,6 @@ export interface AccountStatusDisplay {
   dot: DotStatus;
   label: string;
 }
-
-export const PROMO_LABELS: Record<Exclude<PromoEligibility, "none">, string> = {
-  free_trial: "免费试用",
-  half_price: "半价优惠",
-  both: "免费试用 + 半价优惠",
-};
 
 /// 优惠资格的显示文案。
 ///

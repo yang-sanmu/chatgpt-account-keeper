@@ -23,11 +23,11 @@ interface AccountsToolbarProps {
   onCreateClick: () => void;
   canInspect: boolean;
   onInspect: () => void;
-  canCheckPlans: boolean;
-  onCheckPlans: () => void;
+  canCheckPromos: boolean;
+  onCheckPromos: () => void;
 }
 
-export function AccountsToolbar({ onCreateClick, canInspect, onInspect, canCheckPlans, onCheckPlans }: AccountsToolbarProps) {
+export function AccountsToolbar({ onCreateClick, canInspect, onInspect, canCheckPromos, onCheckPromos }: AccountsToolbarProps) {
   const { filter, active, setFilter, reset } = useAccountFilter();
   const emailsRevealed = useKeeperStore((s) => s.emailsRevealed);
   const setEmailsRevealed = useKeeperStore((s) => s.setEmailsRevealed);
@@ -129,8 +129,8 @@ export function AccountsToolbar({ onCreateClick, canInspect, onInspect, canCheck
 
       <div className="ml-auto flex flex-wrap items-center gap-2">
         <Button variant="outline" size="sm" className="h-9" disabled={!canInspect} onClick={onInspect}
-          title="巡检当前筛选的账号并更新 accessToken">一键巡检</Button>
-        <Button variant="outline" size="sm" className="h-9" disabled={!canCheckPlans} onClick={onCheckPlans}>一键查套餐</Button>
+          title="选择范围后巡检账号并更新 accessToken">一键巡检</Button>
+        <Button variant="outline" size="sm" className="h-9" disabled={!canCheckPromos} onClick={onCheckPromos}>一键查优惠</Button>
         <Tooltip>
           <TooltipTrigger asChild>
             <Button

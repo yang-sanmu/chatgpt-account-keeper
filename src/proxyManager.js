@@ -1342,7 +1342,7 @@ async function stopAuxiliaryAndWait(proc, timeoutMs = 5000) {
 
 async function withAuxiliarySidecar(nodes, fn, {
   listenerPort, signal, controlPort = TEST_API_PORT, runtimeDir = TEST_RUNTIME_DIR,
-  purpose = listenerPort ? "套餐查询" : "测速",
+  purpose = listenerPort ? "账号查询" : "测速",
 } = {}) {
   throwIfCancelled(signal);
   const bin = resolveMihomo();

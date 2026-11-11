@@ -3,6 +3,15 @@
 // 相对时间与绝对时间**成对出现**是有意的：只显示「3 分钟前」时用户无法判断这是哪一次
 // 巡检的结果，只显示时间戳又要自己算多久以前。界面上通常一个当正文、一个进 title。
 
+import type { PromoEligibility } from "@/ipc/types";
+
+export const PROMO_LABELS: Record<PromoEligibility, string> = {
+  free_trial: "免费试用",
+  half_price: "半价优惠",
+  both: "免费试用 + 半价优惠",
+  none: "无优惠",
+};
+
 const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
 const DAY_MS = 24 * HOUR_MS;

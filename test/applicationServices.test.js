@@ -247,6 +247,12 @@ test("bootstrap 保留被大量巡检挤出列表的最新对话失败，不被�
     code: "TIMEOUT", message: "Chrome 本地调试端口未就绪", retryable: true,
   });
   finish("cancelled-run", "account-run", "cancelled");
+  operations.declare("account-inspection", { id: "completed-inspection" });
+  operations.update("completed-inspection", {
+    state: "succeeded",
+    result: { total: 1, succeeded: 0, successIds: [], failures: [{ id: "acc_1", detail: "登录已过期" }] },
+  });
+  finish("interrupted-inspection", "account-inspection", "cancelled");
   for (let index = 0; index < 120; index++) {
     finish(`check-${index}`, "account-status-refresh", "succeeded");
   }
@@ -255,6 +261,8 @@ test("bootstrap 保留被大量巡检挤出列表的最新对话失败，不被�
   const latest = snapshot.operations.find((operation) => operation.id === "latest-startup-failure");
   assert.equal(latest?.state, "failed", "重连快照不能遗失历史里没有的新启动失败");
   assert.equal(latest.error.message, "Chrome 本地调试端口未就绪");
+  assert.equal(snapshot.operations.find(({ id }) => id === "interrupted-inspection")?.state, "cancelled");
+  assert.equal(snapshot.operations.find(({ id }) => id === "completed-inspection")?.result.failures[0].id, "acc_1");
   assert.equal(snapshot.historyAccounts[0].lastOk, true);
   assert.deepEqual(runtime.scheduler.status(), schedulerBefore, "实际结果展示不能改写调度排期");
   assert.equal(new Set(snapshot.operations.map((operation) => operation.id)).size, snapshot.operations.length);
@@ -431,7 +439,7 @@ test("批量套餐走指定节点并报告缺少 Token 的账号，显式读取�
   const completed = await services.operations.waitForTerminal(operation.id);
   assert.deepEqual(visits, [proxyId]);
   assert.deepEqual(completed.result, {
-    total: 2, succeeded: 1, failures: [{ id: account.id, detail: "缺少 accessToken，请先巡检" }],
+    total: 2, succeeded: 1, successIds: ["acc_1"], failures: [{ id: account.id, detail: "缺少 accessToken，请先巡检" }],
   });
   assert.deepEqual(events.find(({ event }) => event === "accountStatus.changed").payload, {
     id: "acc_1", planType: "plus", planCheckedAt: null, planCheckDetail: null,
@@ -439,8 +447,127 @@ test("批量套餐走指定节点并报告缺少 Token 的账号，显式读取�
   });
   assert.ok(!JSON.stringify({ completed, events }).includes(token));
   assert.deepEqual(await services.execute({ method: "accounts.readAccessTokens", params: { ids } }), { tokens: [token] });
+
+  const reason = "mihomo 配置未完成应用";
+  services.runtime.proxies.withPlanProxy = async () => { throw new Error(reason); };
+  const retry = await services.execute(request("accounts.checkPlans", { ids, proxyId }));
+  assert.deepEqual((await services.operations.waitForTerminal(retry.id)).result.failures, [
+    { id: "acc_1", detail: reason },
+    { id: account.id, detail: "缺少 accessToken，请先巡检" },
+  ]);
+
   services.runtime.ipcAuthToken = null;
   await assert.rejects(services.execute({ method: "accounts.readAccessTokens", params: { ids } }), /已认证/);
+});
+
+test("批量查优惠只更新优惠资格，部分结果进入失败明细", async () => {
+  const runtime = fakeRuntime({ ipcAuthToken: "fixture-ipc-key" });
+  const partial = runtime.store.addAccount({ note: "partial" }).id;
+  const missing = runtime.store.addAccount({ note: "missing" }).id;
+  const ids = ["acc_1", partial, missing];
+  runtime.proxies.nodes.push({ id: "node", enabled: true });
+  runtime.proxies.withPlanProxy = (id, _signal, action) => {
+    assert.equal(id, "node");
+    return action("http://127.0.0.1:31000");
+  };
+  runtime.accountPlans = {
+    getToken: (id) => id === missing ? null : { token: `fixture-${id}`, sealed: id },
+    savePlan: () => assert.fail("查优惠不应写入套餐"),
+  };
+  runtime.createPlanClient = () => ({
+    check: async (token, options) => {
+      assert.deepEqual(options, { promoOnly: true });
+      return token === "fixture-acc_1"
+        ? { promo: { ok: true, eligibility: "none" } }
+        : { promo: { ok: false, eligibility: "half_price", detail: "免费试用未确认" } };
+    },
+    close() {},
+  });
+  runtime.setCachedPromo = (_id, promo) => ({
+    promoEligibility: promo.eligibility, promoStale: !promo.ok, promoCheckDetail: promo.detail,
+  });
+
+  const services = new ApplicationServices({ runtime });
+  const statuses = [];
+  services.events.subscribe(({ event, payload }) => {
+    if (event === "accountStatus.changed") statuses.push(payload);
+  });
+  const operation = await services.execute(request("accounts.checkPromos", { ids, proxyId: "node" }));
+  const completed = await services.operations.waitForTerminal(operation.id);
+  assert.equal(completed.kind, "account-promo-check");
+  assert.deepEqual(completed.result, {
+    total: 3, succeeded: 1, successIds: ["acc_1"], promoResults: { acc_1: "none" },
+    failures: [{ id: partial, detail: "免费试用未确认" }, { id: missing, detail: "缺少 accessToken，请先巡检" }],
+  });
+  assert.deepEqual(statuses.find(({ id }) => id === partial), {
+    id: partial, promoEligibility: "half_price", promoStale: true, promoCheckDetail: "免费试用未确认", promoCheckedAt: null,
+  });
+  assert.ok(statuses.every((status) => !Object.hasOwn(status, "planType")));
+});
+
+test("Agent 退出中断的批量套餐查询记为已取消", async () => {
+  const runtime = fakeRuntime({
+    ipcAuthToken: "fixture-ipc-key",
+    accountPlans: { getToken: () => ({ token: "fixture-token", sealed: "sealed" }) },
+  });
+  runtime.proxies.nodes.push({ id: "node", enabled: true });
+  runtime.proxies.withPlanProxy = (_id, signal) => new Promise((resolve) => {
+    signal.addEventListener("abort", resolve, { once: true });
+  });
+  const services = new ApplicationServices({ runtime });
+  const operation = await services.execute(request("accounts.checkPlans", { ids: ["acc_1"], proxyId: "node" }));
+  assert.equal(services.operations.get(operation.id).state, "running");
+  services.cancelAccountQuery();
+
+  const interrupted = await services.operations.waitForTerminal(operation.id);
+  assert.equal(interrupted.state, "cancelled");
+  assert.equal(interrupted.message, "Agent 正在退出");
+  assert.equal(interrupted.result, null);
+});
+
+test("批量巡检只统计已结束的账号，并区分登录状态、入队异常与取消", async () => {
+  const runtime = fakeRuntime();
+  const stale = runtime.store.addAccount({ note: "stale" }).id;
+  const rejected = runtime.store.addAccount({ note: "rejected" }).id;
+  const cancelled = runtime.store.addAccount({ note: "cancelled" }).id;
+  const noToken = runtime.store.addAccount({ note: "no token" }).id;
+  const submissions = [];
+  runtime.accountPlans = {};
+  runtime.proxies.nodes.push({ id: "node", enabled: true });
+  runtime.enqueue = (request) => {
+    submissions.push(request);
+    if (request.accountId === rejected) throw new Error("无法入队");
+    const operation = services.operations.declare(request.kind, { id: request.accountId });
+    if (request.accountId === cancelled) {
+      return services.operations.update(operation.id, { state: "cancelled", message: "节点不可用" });
+    }
+    return operation;
+  };
+  const services = new ApplicationServices({ runtime });
+
+  const ids = ["acc_1", stale, rejected, cancelled, noToken, "deleted"];
+  const started = await services.execute(request("accounts.inspect", { ids: [...ids, "acc_1"], proxyId: "node" }));
+  assert.deepEqual(submissions.map(({ accountId }) => accountId), ids.slice(0, -1));
+  assert.ok(submissions.every(({ dedupeParams }) => dedupeParams.captureAccessToken && dedupeParams.proxyId === "node"));
+  assert.equal(services.operations.get(started.id).state, "running");
+  assert.equal(services.operations.get(started.id).progress, 3 / 6);
+  await assert.rejects(services.execute(request("accounts.inspect", { ids })), /已有巡检任务/);
+
+  services.operations.update("acc_1", { state: "succeeded", result: { state: "ok", tokenStatus: "saved" } });
+  services.operations.update(stale, { state: "succeeded", result: { state: "ok", lastCheckState: "unknown", lastCheckDetail: "本次连接超时" } });
+  services.operations.update(noToken, { state: "succeeded", result: { state: "ok", tokenStatus: "unavailable" } });
+  const finished = await services.operations.waitForTerminal(started.id);
+  assert.equal(finished.progress, 1);
+  assert.deepEqual(finished.result, {
+    total: 6, succeeded: 1, successIds: ["acc_1"],
+    failures: [
+      { id: stale, detail: "本次连接超时" },
+      { id: rejected, detail: "无法入队" },
+      { id: cancelled, detail: "节点不可用" },
+      { id: noToken, detail: "未获取到 accessToken" },
+      { id: "deleted", detail: "账号已删除" },
+    ],
+  });
 });
 
 test("command receipts coalesce concurrent requests and replay the same result", async () => {

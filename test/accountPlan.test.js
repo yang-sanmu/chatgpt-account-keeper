@@ -19,6 +19,7 @@ test("套餐查询按凭据中的账号选择工作区，部分优惠通过查�
     },
   };
   assert.equal(parseAccountPlan({ accounts }, "missing"), null);
+  assert.equal(parseAccountPlan({ accounts }, "missing", { allowMissingPlan: true }), null);
   let attempts = 0;
   const coupons = [];
   const client = createPlanClient("http://127.0.0.1:12345", new AbortController().signal, async (path, headers) => {
@@ -40,6 +41,71 @@ test("套餐查询按凭据中的账号选择工作区，部分优惠通过查�
   assert.equal(attempts, 2);
   assert.equal(coupons.length, 3);
   assert.ok(coupons.every((coupon) => coupon.includes("50-pct-off")));
+  assert.deepEqual(await client.check(token, { promoOnly: true }), {
+    promo: { ok: true, eligibility: "free_trial" },
+  });
+  assert.equal(coupons.length, 3, "查优惠直接使用已确认的活动列表");
+});
+
+test("查优惠在套餐字段缺失时保留活动列表已确认的资格", async (t) => {
+  const client = createPlanClient("http://127.0.0.1:12345", new AbortController().signal, async (path) => {
+    const url = new URL(path, "https://chatgpt.com");
+    if (url.pathname === ACCOUNTS_CHECK_PATH) {
+      return { status: 200, payload: { accounts: { default: {
+        eligible_promo_campaigns: { plus: { metadata: { discount: { percentage: 100 } } } },
+      } } } };
+    }
+    return { status: 200, payload: { coupon: url.searchParams.get("coupon"), state: "not_eligible" } };
+  });
+  t.after(() => client.close());
+  assert.deepEqual(await client.check("fixture-token", { promoOnly: true }), {
+    promo: { ok: true, eligibility: "free_trial" },
+  });
+  assert.deepEqual(await client.check("fixture-token"), { detail: "套餐接口未返回可确认的账号套餐" });
+});
+
+test("纯协议优惠查询在活动列表不可用时仍能查券，未认证响应保留为待复核", async (t) => {
+  const paths = [];
+  const client = createPlanClient("http://127.0.0.1:12345", new AbortController().signal, async (path, headers) => {
+    assert.equal(headers.authorization, "Bearer fixture-token");
+    const url = new URL(path, "https://chatgpt.com");
+    paths.push(url.pathname);
+    if (url.pathname === ACCOUNTS_CHECK_PATH) return { status: 404 };
+    if (url.pathname === "/backend-api/me") return { status: 200 };
+    const coupon = url.searchParams.get("coupon");
+    return { status: 200, payload: { coupon, state: coupon === "plus-1-month-free" ? "offline" : "eligible" } };
+  });
+  t.after(() => client.close());
+  const result = await client.check("fixture-token", { promoOnly: true });
+  assert.deepEqual(result, {
+    promo: { ok: false, eligibility: "half_price", detail: "plus-1-month-free：优惠资格未确认" },
+  });
+  assert.deepEqual(paths.slice(0, 2), [ACCOUNTS_CHECK_PATH, "/backend-api/me"]);
+  assert.deepEqual(paths.slice(2), Array(4).fill("/backend-api/promo_campaign/check_coupon"));
+});
+
+test("已认证账号的空活动列表可确认无优惠，访客列表仍需校验凭据", async (t) => {
+  const paths = [];
+  let planType = "free";
+  const client = createPlanClient("http://127.0.0.1:12345", new AbortController().signal, async (path) => {
+    const pathname = new URL(path, "https://chatgpt.com").pathname;
+    paths.push(pathname);
+    if (pathname === ACCOUNTS_CHECK_PATH) {
+      return { status: 200, payload: { accounts: { default: {
+        account: { plan_type: planType }, eligible_promo_campaigns: {},
+      } } } };
+    }
+    return { status: 401 };
+  });
+  t.after(() => client.close());
+  assert.deepEqual(await client.check("fixture-token", { promoOnly: true }), {
+    promo: { ok: true, eligibility: "none" },
+  });
+  assert.deepEqual(paths, [ACCOUNTS_CHECK_PATH]);
+
+  planType = "guest";
+  assert.match((await client.check("fixture-token", { promoOnly: true })).detail, /鉴权失败/);
+  assert.deepEqual(paths, [ACCOUNTS_CHECK_PATH, ACCOUNTS_CHECK_PATH, "/backend-api/me"]);
 });
 
 test("代理拒绝 CONNECT 时每次套餐请求都仍走所选代理", async (t) => {

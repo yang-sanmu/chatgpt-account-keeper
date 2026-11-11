@@ -58,7 +58,7 @@ import {
   fail,
   normalizeApplicationError,
 } from "./errors.js";
-import { OperationRegistry } from "./operations.js";
+import { OperationRegistry, statusRefreshFailure } from "./operations.js";
 import { InMemoryReceiptStore, ReceiptCoordinator } from "./receipts.js";
 import { environmentSnapshot, environmentPending, validateFixedEnvironment } from "../environmentConfig.js";
 import { getBrowserEnvironmentSnapshots } from "../browser.js";
@@ -266,11 +266,11 @@ function inspectionFailure(operation) {
   }
   const status = operation.result;
   if (status?.skipped) return status.skipReason || status.detail || "账号已跳过";
+  const failure = statusRefreshFailure(status);
+  if (failure) return failure;
   if ((status?.lastCheckState ?? status?.state) !== "ok") {
     return status?.lastCheckDetail || status?.detail || "未确认账号登录状态";
   }
-  if (status.tokenStatus === "failed") return "保存 accessToken 失败";
-  if (status.tokenStatus === "unavailable") return "未获取到 accessToken";
   return null;
 }
 
@@ -1086,10 +1086,14 @@ export class ApplicationServices {
     // 没有后台队列的入口（旧 CLI / 测试替身）保留直连路径。
     return this.operations.create(
       "account-status-refresh",
-      async () => {
+      async ({ update }) => {
         const result = await this.runtime.refreshAccount(account, { accountPlans: this.runtime.accountPlans });
         const value = publicStatus(this.runtime.store.getAccount(id) ?? account, result, this.runtime.accountPlans);
         this.events.publish("accountStatus.changed", value);
+        const failure = statusRefreshFailure(result);
+        if (failure) {
+          update({ state: "failed", message: failure, result: value, blocksUpdate: false });
+        }
         return value;
       },
       { resourceId: id }

@@ -171,9 +171,11 @@ test("后台任务只创建一个 runToken，且关闭时 dispose 的正是启�
   assert.ok(seenPages[0], "业务函数必须收到调用方提供的 page");
 });
 
-test("手动巡检获取 accessToken，且不会合并到已排队的自动巡检", async (t) => {
+test("手动巡检独立获取 accessToken，连接关闭时手动和自动巡检均记为失败", async (t) => {
   const accountPlans = { getPlan: () => ({}) };
   const seen = [];
+  const reason = "状态检查失败：page.goto: net::ERR_CONNECTION_CLOSED at https://chatgpt.com/";
+  const failedStatus = { state: "ok", stale: true, lastCheckState: "unknown", lastCheckDetail: `${reason}\nCall log` };
   let enqueueAutomatic;
   const store = fakeStore();
   const { background, operations } = await composeFake({
@@ -183,8 +185,8 @@ test("手动巡检获取 accessToken，且不会合并到已排队的自动巡�
     refreshAccount: async (_account, options) => {
       seen.push(options.accountPlans);
       return options.accountPlans
-        ? { state: "ok", tokenStatus: "unavailable", lastCheckDetail: "连接已关闭\nCall log" }
-        : { state: "ok" };
+        ? { ...failedStatus, tokenStatus: "unavailable" }
+        : failedStatus;
     },
   });
   const services = createApplicationServices({ operations, runtime: { store, accountPlans, enqueue: background.enqueue } });
@@ -197,11 +199,26 @@ test("手动巡检获取 accessToken，且不会合并到已排队的自动巡�
   const [automatic] = operations.listActive();
   const manual = await services.invoke("accounts.refreshStatus", { id: "acc-1" });
   assert.notEqual(manual.id, automatic.id);
-  const [completed] = await Promise.all([manual, automatic].map(({ id }) => operations.waitForTerminal(id)));
-  assert.equal(completed.message, "未获取到 accessToken：连接已关闭");
+  const [manualResult, automaticResult] = await Promise.all(
+    [manual, automatic].map(({ id }) => operations.waitForTerminal(id))
+  );
+  assert.equal(manualResult.state, "failed");
+  assert.equal(manualResult.message, `未获取到 accessToken：${reason}`);
+  assert.equal(manualResult.result.state, "ok");
+  assert.equal(manualResult.result.lastCheckState, "unknown");
+  assert.equal(manualResult.result.close.ok, true);
+  assert.equal(automaticResult.state, "failed");
+  assert.equal(automaticResult.message, reason);
   assert.equal(seen.length, 2);
   assert.ok(seen.includes(undefined));
   assert.ok(seen.includes(accountPlans));
+
+  const batch = await services.invoke("accounts.inspect", { ids: ["acc-1"] });
+  const batchResult = await operations.waitForTerminal(batch.id);
+  assert.deepEqual(batchResult.result, {
+    total: 1, succeeded: 0, successIds: [],
+    failures: [{ id: "acc-1", detail: manualResult.message }],
+  });
 });
 
 test("指定节点巡检独立去重，覆盖分组校验并使用独立代理", async (t) => {

@@ -8,6 +8,25 @@ function clone(value) {
   return value == null ? value : structuredClone(value);
 }
 
+export function statusRefreshFailure(status) {
+  if (!status || status.skipped) return null;
+  const checkDetail = status.lastCheckDetail || status.detail;
+  const detail = typeof checkDetail === "string" ? checkDetail.split("\n", 1)[0] : null;
+  if (status.tokenStatus === "failed") return "保存 accessToken 失败";
+  if (status.tokenStatus === "unavailable") {
+    return detail ? `未获取到 accessToken：${detail}` : "未获取到 accessToken";
+  }
+  // state 可能保留上次确认的登录状态，本次巡检结果由 lastCheckState 表示。
+  if ((status.lastCheckState ?? status.state) === "unknown") return detail || "未确认账号登录状态";
+  return null;
+}
+
+function normalizeStoredOperation(operation) {
+  if (operation?.kind !== "account-status-refresh" || operation.state !== "succeeded") return operation;
+  const message = statusRefreshFailure(operation.result);
+  return message ? { ...operation, state: "failed", stage: null, message } : operation;
+}
+
 function latestAccountRuns(operations) {
   const latest = new Map();
   for (const operation of operations) {
@@ -64,7 +83,7 @@ export class OperationRegistry {
     let restored = 0;
     for (const operation of this._store.list?.({ limit: this._maxTerminal }) ?? []) {
       if (this._operations.has(operation.id)) continue;
-      this._operations.set(operation.id, operation);
+      this._operations.set(operation.id, normalizeStoredOperation(operation));
       restored++;
     }
     return restored;
@@ -228,8 +247,10 @@ export class OperationRegistry {
     if (operation) return clone(operation);
     // 已从内存淘汰但仍在库里的历史任务：错误详情必须还能查到。
     try {
-      if (this._store?.get) return this._store.get(id);
-      return this._store?.list?.({ limit: 500 }).find((item) => item.id === id) ?? null;
+      const stored = this._store?.get
+        ? this._store.get(id)
+        : this._store?.list?.({ limit: 500 }).find((item) => item.id === id) ?? null;
+      return normalizeStoredOperation(stored);
     } catch {
       return null;
     }
@@ -248,7 +269,7 @@ export class OperationRegistry {
     if (includeTerminal && this._store?.list) {
       try {
         const stored = this._store.list({ limit, includeTerminal });
-        const merged = new Map(stored.map((operation) => [operation.id, operation]));
+        const merged = new Map(stored.map((operation) => [operation.id, normalizeStoredOperation(operation)]));
         for (const operation of this._operations.values()) merged.set(operation.id, operation);
         return [...merged.values()]
           .sort((a, b) => String(b.startedAt).localeCompare(String(a.startedAt)))

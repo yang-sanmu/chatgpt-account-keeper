@@ -60,6 +60,29 @@ test("失败任务的稳定错误码可跨重启查询", async () => {
   assert.equal(recovered.error.message, "未登录");
 });
 
+test("恢复和查询历史时将旧版误标成功的巡检显示为失败", () => {
+  const store = fakeStore();
+  const result = { state: "ok", lastCheckState: "unknown", lastCheckDetail: "连接已关闭", tokenStatus: "unavailable" };
+  const startedAt = "2026-01-01T00:00:00.000Z";
+  store.save({ id: "old-failure", kind: "account-status-refresh", state: "succeeded", result, startedAt });
+  store.save({
+    id: "confirmed-out", kind: "account-status-refresh", state: "succeeded", result: { state: "out" },
+    startedAt: "2026-01-02T00:00:00.000Z",
+  });
+
+  const registry = new OperationRegistry({ store, maxTerminal: 1 });
+  registry.restore();
+  const recovered = registry.get("old-failure");
+  assert.equal(recovered.state, "failed");
+  assert.equal(recovered.message, "未获取到 accessToken：连接已关闭");
+  assert.deepEqual(recovered.result, result);
+  assert.deepEqual(registry.list().map(({ state }) => state), ["succeeded", "failed"]);
+
+  const restarted = new OperationRegistry({ store });
+  restarted.restore();
+  assert.deepEqual(restarted.get("old-failure"), recovered);
+});
+
 test("重启后未完成的任务不会伪装成仍在运行", () => {
   const store = fakeStore();
   store.save({

@@ -6,6 +6,7 @@ import { ChromeProcessLauncher } from "../chromeProcessLauncher.js";
 import { configureChromeLauncher } from "../browser.js";
 import { launchForAccount } from "../browser.js";
 import { normalizeApplicationError } from "../application/errors.js";
+import { statusRefreshFailure } from "../application/operations.js";
 import { publicAccount, publicStatus } from "../application/services.js";
 import { ScheduleClock, planOverdueRecovery } from "../scheduleClock.js";
 import { STAGES } from "../application/backgroundQueue.js";
@@ -405,13 +406,13 @@ export async function composeBackground({
     const result = proxyId
       ? await withInspectionProxy(proxyId, context.signal, (url) => withBrowserRun(context, refresh, url))
       : await withBrowserRun(context, refresh);
-    const reason = result?.lastCheckDetail?.split("\n", 1)[0];
-    const tokenMessage = {
-      saved: "巡检完成，已保存 accessToken",
-      unavailable: reason ? `未获取到 accessToken：${reason}` : "巡检完成，未获取到 accessToken",
-      failed: "巡检完成，保存 accessToken 失败",
-    }[result?.tokenStatus];
-    if (tokenMessage) context.setStage("complete", tokenMessage);
+    const failure = statusRefreshFailure(result);
+    if (failure) {
+      const error = new Error(failure);
+      error.details = { result };
+      throw error;
+    }
+    if (result?.tokenStatus === "saved") context.setStage("complete", "巡检完成，已保存 accessToken");
     return result;
   });
 

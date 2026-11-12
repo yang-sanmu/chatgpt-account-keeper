@@ -15,7 +15,7 @@ const releaseSource = fs.readFileSync(
 );
 const release = YAML.parse(releaseSource);
 
-for (const version of ['0.2.14', '0.2.15', '0.2.16']) {
+for (const version of ['0.2.14', '0.2.15', '0.2.16', '0.2.17']) {
   test(`v${version} direct publication is version scoped, skips Windows signing and retains updater validation`, () => {
     const input = `publish_v${version.replaceAll('.', '_')}`;
     assert.equal(release.on.workflow_dispatch.inputs[input].default, false);

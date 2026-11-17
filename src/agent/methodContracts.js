@@ -13,6 +13,7 @@ export const METHOD_CONTRACTS = Object.freeze({
   "icloud.create": ["emptyParams", "operationResult"],
   "icloud.runNow": ["emptyParams", "operationResult"],
   "icloud.delete": ["icloudDeleteParams", "operationResult"],
+  "icloud.cancelDelete": ["emptyParams", "icloudState"],
   "icloud.stop": ["emptyParams", "icloudState"],
   "icloud.updateLocal": ["icloudLocalParams", "icloudState"],
   "icloud.acknowledge": ["emptyParams", "icloudState"],

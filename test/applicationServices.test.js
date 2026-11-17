@@ -695,6 +695,53 @@ test("iCloud delete forwards explicit addresses and replays the same operation w
   assert.deepEqual(calls, [{ emails, operationId: first.id }]);
 });
 
+test("iCloud cancelDelete is allowed while draining and idempotently stops active deletion", async t => {
+  let progressFn = null;
+  let cancelledCalls = 0;
+  let releaseDelete;
+  const state = {
+    config: { enabled: true, mode: "until_limit", batchSize: 5, intervalMinutes: 61, label: "G", note: "", networkMode: "direct" },
+    status: "deleting", bound: true, busy: true, browserOpen: false, nextRunAt: null, cooldownUntil: null,
+    lastSyncAt: null, lastMessage: "正在停止", pendingEmail: null, emails: [], history: [],
+  };
+  const runtime = fakeRuntime({
+    icloud: {
+      state: () => state,
+      setOperationProgress: fn => { progressFn = fn; },
+      delete: async ({ operationId }) => new Promise(resolve => {
+        releaseDelete = () => {
+          progressFn?.(operationId, {
+            state: "cancelled",
+            stage: "cancelled",
+            progress: 0.5,
+            message: "已停止批量删除",
+            result: { total: 2, processed: 1, count: 1, skipped: 0, remainingEmails: ["second@example.com"] },
+            blocksUpdate: false,
+          });
+          resolve({ ok: false, cancelled: true, count: 1, skipped: 0 });
+        };
+      }),
+      cancelDelete: () => { cancelledCalls++; return state; },
+    },
+  });
+  const services = new ApplicationServices({ runtime }); t.after(() => services.dispose());
+  const op = await services.execute(request("icloud.delete", { emails: ["first@example.com", "second@example.com"] }));
+  while (!releaseDelete) await new Promise(resolve => setImmediate(resolve));
+
+  services.draining = true;
+  const cancelCmd = request("icloud.cancelDelete", {});
+  const cancelledState = await services.execute(cancelCmd);
+  assert.equal(cancelledState.status, "deleting");
+  assert.equal((await services.execute(cancelCmd)).status, "deleting");
+  assert.equal(cancelledCalls, 1);
+
+  releaseDelete();
+  const finished = await services.operations.waitForTerminal(op.id);
+  assert.equal(finished.state, "cancelled");
+  assert.equal(finished.blocksUpdate, false);
+  assert.deepEqual(finished.result.remainingEmails, ["second@example.com"]);
+});
+
 test("group and conversation change events expose the exact UI delta payloads", async () => {
   const runtime = fakeRuntime();
   const services = new ApplicationServices({ runtime });

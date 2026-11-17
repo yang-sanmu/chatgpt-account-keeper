@@ -1103,3 +1103,82 @@ test("IPC rejects invalid settings and empty updates; endpoint matching excludes
   assert.equal(hmeEndpoint("https://p203-maildomainws.icloud.com.cn.evil.test/v2/hme/list?dsid=123"), null);
   assert.equal(classifyIcloudFailure({ body: payload([raw("a", { note: "too many" })]) }), null);
 });
+
+test("batch deletion emits operation progress and cancelDelete stops cleanly between items", async t => {
+  const progressEvents = [];
+  const overrides = {
+    managerOptions: {
+      onOperationProgress: (id, patch) => progressEvents.push({ id, ...patch }),
+    },
+  };
+  const { manager, remote, calls } = fixture(t, overrides);
+  remote.emails.push(...parseIcloudList(payload([raw("second"), raw("third")])));
+  await manager.sync();
+  manager.saveConfig({ ...ICLOUD_DEFAULT_CONFIG, enabled: true });
+
+  let finishFirst;
+  overrides.onDelete = row => {
+    if (row.id === "old") return new Promise(resolve => { finishFirst = resolve; });
+  };
+
+  const deleting = manager.delete({
+    emails: ["absent@example.com", "old@example.com", "second@example.com", "third@example.com"],
+    operationId: "op-del-1",
+  });
+  while (!finishFirst) await new Promise(resolve => setImmediate(resolve));
+
+  const cancellingState = manager.cancelDelete();
+  assert.equal(cancellingState.busy, true);
+  assert.match(cancellingState.lastMessage, /正在停止批量删除/);
+  finishFirst();
+
+  const result = await deleting;
+  assert.deepEqual(result, {
+    ok: false,
+    cancelled: true,
+    count: 1,
+    skipped: 1,
+    total: 4,
+    processed: 2,
+    remainingEmails: ["second@example.com", "third@example.com"],
+  });
+  assert.equal(calls.deletes.map(row => row.id).join(","), "old");
+  assert.equal(manager.state().status, "idle");
+  assert.equal(manager.state().busy, false);
+  assert.equal(manager.state().config.enabled, true, "cancelling delete must preserve auto-creation");
+  assert.equal(manager.state().emails.length, 2);
+
+  const terminal = progressEvents.at(-1);
+  assert.equal(terminal.id, "op-del-1");
+  assert.equal(terminal.state, "cancelled");
+  assert.equal(terminal.blocksUpdate, false);
+  assert.deepEqual(terminal.result.remainingEmails, ["second@example.com", "third@example.com"]);
+  assert.ok(progressEvents.some(event => event.stage === "cancelling"));
+
+  // Cancellation state does not leak into a subsequent batch deletion.
+  delete overrides.onDelete;
+  const next = await manager.delete({ emails: ["second@example.com"], operationId: "op-del-2" });
+  assert.deepEqual(next, { ok: true, count: 1, skipped: 0 });
+  assert.equal(manager.state().emails.map(row => row.id).join(","), "third");
+  assert.equal(progressEvents.at(-1).stage, "complete");
+  assert.equal(progressEvents.at(-1).progress, 1);
+});
+
+test("cancelDelete during initial sync stops before touching any address", async t => {
+  const overrides = {};
+  const { manager, calls } = fixture(t, overrides);
+  let releaseSync;
+  overrides.onSync = () => new Promise(resolve => { releaseSync = resolve; });
+
+  const deleting = manager.delete({ emails: ["old@example.com"], operationId: "op-del-init" });
+  while (!releaseSync) await new Promise(resolve => setImmediate(resolve));
+  manager.cancelDelete();
+  releaseSync();
+
+  const result = await deleting;
+  assert.equal(result.cancelled, true);
+  assert.equal(result.count, 0);
+  assert.deepEqual(result.remainingEmails, ["old@example.com"]);
+  assert.equal(calls.deletes.length, 0);
+  assert.equal(manager.state().emails.length, 1);
+});

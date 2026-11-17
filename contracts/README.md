@@ -16,6 +16,7 @@ Compatibility rules:
 - v1.11 adds `accounts.inspect` for tracked batch inspections and records successful and failed account IDs in batch operation results. The paired Desktop requires Agent 1.11.
 - v1.12 adds `accounts.checkPromos` for batch Plus promotion checks using saved access tokens. The paired Desktop requires Agent 1.12.
 - v1.9 adds `icloud.delete` for an explicit list of email addresses and the iCloud `deleting` status. Deletion runs as an idempotent operation and blocks updates while active. The paired Desktop requires Agent 1.9.
+- v1.13 adds `icloud.cancelDelete` to gracefully stop an active iCloud batch deletion between items without disabling automatic email creation. The paired Desktop requires Agent 1.13.
 - Mutating requests carry a UUID `commandId` and are idempotent.
 - The first request on every connection is `system.hello`.
 - A changed `instanceId` or a gap in event `seq` requires `system.bootstrap`.

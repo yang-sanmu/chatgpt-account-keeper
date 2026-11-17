@@ -67,11 +67,11 @@ import { getStrictNetworkCapabilities } from "../network/strictConfig.js";
 import { createPlanClient } from "../accountPlan.js";
 import { cancellableSleep, raceSignal, throwIfCancelled } from "../cancellation.js";
 
-// Minor 12 adds protocol-based batch promotion checks.
-export const PROTOCOL_VERSION = Object.freeze({ major: 1, minor: 12 });
+// Minor 13 adds icloud.cancelDelete for stopping background batch deletions.
+export const PROTOCOL_VERSION = Object.freeze({ major: 1, minor: 13 });
 
 export const MUTATING_METHODS = new Set([
-  "icloud.saveConfig", "icloud.open", "icloud.close", "icloud.sync", "icloud.create", "icloud.runNow", "icloud.delete", "icloud.stop", "icloud.updateLocal", "icloud.acknowledge",
+  "icloud.saveConfig", "icloud.open", "icloud.close", "icloud.sync", "icloud.create", "icloud.runNow", "icloud.delete", "icloud.cancelDelete", "icloud.stop", "icloud.updateLocal", "icloud.acknowledge",
   "temporaryWindows.save", "temporaryWindows.remove", "temporaryWindows.open",
   "temporaryWindows.close", "temporaryWindows.detectRegion", "temporaryWindows.clearData",
   "network.updateConfig",
@@ -125,7 +125,7 @@ export const MUTATING_METHODS = new Set([
 ]);
 
 const DRAIN_ALLOWED_MUTATIONS = new Set([
-  "icloud.close", "icloud.stop",
+  "icloud.close", "icloud.cancelDelete", "icloud.stop",
   "temporaryWindows.close",
   "system.prepareUpdate",
   "system.shutdown",
@@ -625,15 +625,38 @@ export class ApplicationServices {
       return this.runtime.icloud;
     };
     add("icloud.getState", () => icloud().state());
-    for (const name of ["saveConfig", "stop", "updateLocal", "acknowledge"]) {
+    for (const name of ["saveConfig", "cancelDelete", "stop", "updateLocal", "acknowledge"]) {
       add(`icloud.${name}`, params => icloud()[name](params));
     }
     for (const name of ["open", "close", "sync", "create", "runNow"]) {
       add(`icloud.${name}`, () => this.operations.create(`icloud-${name}`,
         ({ operationId }) => icloud()[name]({ operationId }), { resourceId: "icloud_primary", blocksUpdate: true }));
     }
-    add("icloud.delete", params => this.operations.create("icloud-delete",
-      ({ operationId }) => icloud().delete({ ...params, operationId }), { resourceId: "icloud_primary", blocksUpdate: true }));
+    add("icloud.delete", params => {
+      const total = Array.isArray(params?.emails) ? params.emails.length : 0;
+      return this.operations.create("icloud-delete",
+        async ({ operationId, update }) => {
+          const manager = icloud();
+          manager.setOperationProgress?.((id, patch) => {
+            if (id === operationId) update(patch);
+          });
+          const result = await manager.delete({ ...params, operationId });
+          if (!result?.cancelled && this.operations.get(operationId)?.stage !== "complete") {
+            update({
+              stage: "complete",
+              message: `删除完成：已删除 ${result?.count ?? 0} 个，跳过 ${result?.skipped ?? 0} 个`,
+            });
+          }
+          return result;
+        },
+        {
+          resourceId: "icloud_primary",
+          blocksUpdate: true,
+          stage: "queued",
+          message: `等待删除 ${total} 个邮箱`,
+          progress: 0,
+        });
+    });
     const windows = () => {
       if (!this.runtime.temporaryWindows) fail(ERROR_CODES.INTERNAL, "临时窗口服务尚未就绪");
       return this.runtime.temporaryWindows;
@@ -822,6 +845,7 @@ export class ApplicationServices {
       ...(this.operations.listLatestAccountChecks?.() ?? []),
       ...activeOperations.filter(({ kind }) =>
         [
+          "icloud-delete",
           "account-inspection",
           "account-relogin",
           "account-plan-check",

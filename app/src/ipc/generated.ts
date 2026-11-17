@@ -71,6 +71,7 @@ export type Method =
   | "icloud.create"
   | "icloud.runNow"
   | "icloud.delete"
+  | "icloud.cancelDelete"
   | "icloud.stop"
   | "icloud.updateLocal"
   | "icloud.acknowledge"
@@ -1670,6 +1671,7 @@ export interface IpcMethodContracts {
   "icloud.create": { params: Record<string, never>; result: Operation };
   "icloud.runNow": { params: Record<string, never>; result: Operation };
   "icloud.delete": { params: IcloudDeleteParams; result: Operation };
+  "icloud.cancelDelete": { params: Record<string, never>; result: IcloudState };
   "icloud.stop": { params: Record<string, never>; result: IcloudState };
   "icloud.updateLocal": { params: IcloudLocalParams; result: IcloudState };
   "icloud.acknowledge": { params: Record<string, never>; result: IcloudState };

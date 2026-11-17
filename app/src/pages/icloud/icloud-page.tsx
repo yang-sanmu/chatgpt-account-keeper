@@ -13,7 +13,7 @@ import { StatusDot } from "@/components/ui/status-dot";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel } from "@/components/ui/alert-dialog";
 import { agentCall, newCommandId } from "@/ipc/bridge";
-import type { IcloudConfig, IcloudEmail, IcloudState } from "@/ipc/generated";
+import type { IcloudConfig, IcloudEmail, IcloudState, Operation } from "@/ipc/generated";
 import { useKeeperStore } from "@/store/keeperStore";
 import { notify } from "@/lib/notify";
 import { cn } from "@/lib/utils";
@@ -64,10 +64,34 @@ function strategySummary(config: IcloudConfig) {
 }
 
 function statusIndicator(status: IcloudState["status"], busy: boolean): { dot: "ok" | "busy" | "needs_login" | "unknown"; badge: "ok" | "info" | "warn" | "neutral" } {
-  if (busy || status === "running") return { dot: "busy", badge: "info" };
+  if (busy || status === "running" || status === "deleting") return { dot: "busy", badge: "info" };
   if (status === "idle") return { dot: "ok", badge: "ok" };
   if (status === "paused") return { dot: "unknown", badge: "neutral" };
   return { dot: "needs_login", badge: "warn" };
+}
+
+interface IcloudDeleteProgress {
+  total: number;
+  processed: number;
+  count: number;
+  skipped: number;
+  currentEmail: string | null;
+  remainingEmails: string[];
+}
+
+function parseDeleteProgress(result: unknown): IcloudDeleteProgress | null {
+  if (!result || typeof result !== "object") return null;
+  const raw = result as Record<string, unknown>;
+  const total = typeof raw.total === "number" && Number.isFinite(raw.total) ? raw.total : null;
+  const processed = typeof raw.processed === "number" && Number.isFinite(raw.processed) ? raw.processed : null;
+  const count = typeof raw.count === "number" && Number.isFinite(raw.count) ? raw.count : 0;
+  const skipped = typeof raw.skipped === "number" && Number.isFinite(raw.skipped) ? raw.skipped : 0;
+  if (total === null || processed === null) return null;
+  const currentEmail = typeof raw.currentEmail === "string" && raw.currentEmail ? raw.currentEmail : null;
+  const remainingEmails = Array.isArray(raw.remainingEmails)
+    ? raw.remainingEmails.filter((item): item is string => typeof item === "string")
+    : [];
+  return { total, processed, count, skipped, currentEmail, remainingEmails };
 }
 
 function parseBatchProgress(message: string | undefined, config: IcloudConfig): { current: number; total: number; percent: number } | null {
@@ -89,7 +113,12 @@ export function IcloudPage() {
   const state = useKeeperStore(s => s.icloud);
   const connection = useKeeperStore(s => s.connection);
   const draining = useKeeperStore(s => s.draining);
+  const operations = useKeeperStore(s => s.operations);
+  const dismissedDeleteOpId = useKeeperStore(s => s.dismissedIcloudDeleteOpId);
   const runOperation = useKeeperStore(s => s.runOperation);
+  const startIcloudDelete = useKeeperStore(s => s.startIcloudDelete);
+  const cancelIcloudDelete = useKeeperStore(s => s.cancelIcloudDelete);
+  const dismissIcloudDeleteNotice = useKeeperStore(s => s.dismissIcloudDeleteNotice);
   const [draft, setDraft] = useState<IcloudConfig | null>(null);
   const [dirty, setDirty] = useState(false);
   const [configOpen, setConfigOpen] = useState(false);
@@ -105,12 +134,22 @@ export function IcloudPage() {
   const [acknowledge, setAcknowledge] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteText, setDeleteText] = useState("");
-  const [deleting, setDeleting] = useState(false);
+  const [submittingDelete, setSubmittingDelete] = useState(false);
+  const [stoppingDelete, setStoppingDelete] = useState(false);
   const [deleteError, setDeleteError] = useState("");
   const deletion = parseDeleteInput(deleteText);
+  const activeDeleteOp = operations.find(
+    op => op.kind === "icloud-delete" && (op.state === "queued" || op.state === "running")
+  );
+  const latestDeleteOp = operations.reduce<Operation | undefined>(
+    (latest, op) => (op.kind === "icloud-delete" && (!latest || op.startedAt > latest.startedAt) ? op : latest),
+    undefined
+  );
+  const latestDeleteTerminal = !!latestDeleteOp && ["succeeded", "failed", "timed_out", "cancelled"].includes(latestDeleteOp.state);
+  const isDeletingBackground = !!activeDeleteOp || (state?.status === "deleting" && !latestDeleteTerminal);
   const disabled = !connection.connected || draining;
-  const busy = working || state?.busy === true;
-  const isRunning = activeAction !== null || state?.busy === true || state?.status === "running";
+  const busy = working || (state?.busy === true && !(state.status === "deleting" && latestDeleteTerminal)) || !!activeDeleteOp;
+  const isRunning = activeAction !== null || (state?.busy === true && !(state.status === "deleting" && latestDeleteTerminal)) || state?.status === "running" || isDeletingBackground;
   const needsLogin = !!state && (!state.bound || ["not_logged_in", "needs_login"].includes(state.status));
   const mode = draft?.mode ?? "single";
   const setSnapshot = (value: IcloudState) => useKeeperStore.setState({ icloud: value });
@@ -168,18 +207,49 @@ export function IcloudPage() {
   const selectedRows = rows.filter(row => selected.has(row.id));
   const openDelete = (text: string) => { setDeleteText(text); setDeleteError(""); setDeleteOpen(true); };
   const deleteEmails = async () => {
-    if (busy || disabled || deletion.error || !deletion.emails.length) return;
-    setWorking(true); setDeleting(true); setDeleteError("");
+    if (busy || disabled || submittingDelete || deletion.error || !deletion.emails.length) return;
+    const submittedEmails = deletion.emails as [string, ...string[]];
+    const submittedSet = new Set(submittedEmails);
+    setSubmittingDelete(true);
+    setDeleteError("");
     try {
-      const result = await runOperation("icloud.delete", { emails: deletion.emails as [string, ...string[]] });
+      const result = await startIcloudDelete(submittedEmails);
+      if (result.state === "succeeded" || result.state === "queued" || result.state === "running") {
+        setSelected(current => new Set([...current].filter(id => {
+          const row = rows.find(item => item.id === id);
+          return row && !submittedSet.has(row.email.toLowerCase());
+        })));
+        setDeleteOpen(false);
+      }
       if (result.state === "succeeded") {
-        setDeleteOpen(false); setSelected(new Set());
         notify.success("删除操作完成，请查看处理记录");
+        await refresh();
+      } else if (result.state === "queued" || result.state === "running") {
+        notify.info("已转入后台批量删除", `共 ${submittedEmails.length} 个邮箱，可切换页面或随时停止`);
+      } else {
+        setDeleteError("删除结果尚未完全确认。请查看处理记录并同步列表，核对后再重试。");
+        notify.error("删除邮箱失败", result.error ?? result.message ?? "删除未完成");
+        await refresh();
       }
     } catch (error) {
       setDeleteError("删除结果尚未完全确认。请查看处理记录并同步列表，核对后再重试。");
       notify.error("删除邮箱失败", error);
-    } finally { await refresh(); setWorking(false); setDeleting(false); }
+      await refresh();
+    } finally {
+      setSubmittingDelete(false);
+    }
+  };
+  const handleCancelDelete = async () => {
+    if (!connection.connected || stoppingDelete) return;
+    setStoppingDelete(true);
+    try {
+      await cancelIcloudDelete();
+      notify.info("已请求停止批量删除", "将在当前邮箱处理完成后停止");
+    } catch (error) {
+      notify.error("停止批量删除失败", error);
+    } finally {
+      setStoppingDelete(false);
+    }
   };
   const unusedCount = rows.filter(row => row.usage === "unused").length;
   const usedCount = rows.filter(row => row.usage === "used").length;
@@ -218,7 +288,32 @@ export function IcloudPage() {
   const indicator = state ? statusIndicator(state.status, isRunning) : null;
   const isRoundRunning = activeAction === "runNow" || (!activeAction && state?.status === "running");
   const batchProgress = state && isRoundRunning ? parseBatchProgress(state.lastMessage, state.config) : null;
-  const runningHeadline = activeAction
+  const deleteProgress = activeDeleteOp ? parseDeleteProgress(activeDeleteOp.result) : null;
+  const deletePercent = activeDeleteOp
+    ? typeof activeDeleteOp.progress === "number"
+      ? Math.max(0, Math.min(100, Math.round(activeDeleteOp.progress * 100)))
+      : deleteProgress && deleteProgress.total > 0
+      ? Math.max(0, Math.min(100, Math.round((deleteProgress.processed / deleteProgress.total) * 100)))
+      : 0
+    : null;
+  const cancellingDelete = activeDeleteOp?.stage === "cancelling";
+  const latestDeleteProgress = latestDeleteOp && !isDeletingBackground
+    ? parseDeleteProgress(latestDeleteOp.result)
+    : null;
+  const showDeleteRecovery = !deleteOpen &&
+    !isDeletingBackground &&
+    !!latestDeleteOp &&
+    latestDeleteOp.id !== dismissedDeleteOpId &&
+    ["failed", "timed_out", "cancelled"].includes(latestDeleteOp.state) &&
+    !!latestDeleteProgress &&
+    latestDeleteProgress.remainingEmails.length > 0;
+  const runningHeadline = isDeletingBackground
+    ? cancellingDelete
+      ? "正在停止后台批量删除，等待当前邮箱处理完成…"
+      : activeDeleteOp?.stage === "syncing" || activeDeleteOp?.state === "queued"
+      ? "正在同步云端列表并准备后台批量删除…"
+      : "正在后台批量删除 iCloud 邮箱…"
+    : activeAction
     ? ACTION_RUNNING_TEXT[activeAction]
     : state?.status === "running"
     ? `正在执行自动申请（${strategySummary(state.config)}）…`
@@ -269,7 +364,7 @@ export function IcloudPage() {
               <div className="flex flex-wrap items-center gap-2 text-xs">
                 <Badge variant={indicator.badge} className="gap-1.5 px-2.5 py-1 font-medium">
                   {isRunning ? <Loader2 className="size-3 animate-spin" /> : <StatusDot status={indicator.dot} />}
-                  {isRunning ? "处理中" : STATUS[state.status]}
+                  {isRunning ? (isDeletingBackground ? (cancellingDelete ? "正在停止删除" : "正在后台删除") : "处理中") : STATUS[state.status]}
                 </Badge>
                 <Badge variant={state.config.enabled ? "accent" : "neutral"} className="px-2.5 py-1 font-normal">
                   {state.config.enabled ? "持续申请已开启" : "自动申请已关闭"}
@@ -288,7 +383,7 @@ export function IcloudPage() {
                   size="sm"
                   className="h-7 px-3 text-xs"
                   title="跳过本地冷却立即执行；成功申请后重新计时，零成功保留原冷却和下次自动申请时间"
-                  disabled={disabled || working}
+                  disabled={disabled || working || isDeletingBackground}
                   onClick={() => void perform("runNow")}
                 >
                   {isRoundRunning ? (
@@ -317,24 +412,65 @@ export function IcloudPage() {
             {isRunning && (
               <div className="rounded-control border border-info bg-info-soft px-3.5 py-2.5 text-xs">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex items-center gap-2 font-medium text-info">
+                  <div className="flex flex-wrap items-center gap-2 font-medium text-info">
                     <Activity className="size-4 animate-pulse shrink-0" />
                     <span>{runningHeadline}</span>
+                    {isDeletingBackground && deleteProgress?.currentEmail && (
+                      <span className="font-mono font-normal text-secondary">
+                        当前：{deleteProgress.currentEmail}
+                      </span>
+                    )}
                   </div>
-                  <div className="flex items-center gap-2">
-                    {batchProgress && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    {isDeletingBackground && deleteProgress && (
+                      <>
+                        <Badge variant="info" className="tabular">
+                          删除进度 {deleteProgress.processed} / {deleteProgress.total}（{deletePercent ?? 0}%）
+                        </Badge>
+                        <Badge variant="neutral" className="tabular font-normal">
+                          已删 {deleteProgress.count} · 跳过 {deleteProgress.skipped}
+                        </Badge>
+                      </>
+                    )}
+                    {isDeletingBackground && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="danger"
+                        className="h-7 px-2.5 text-xs"
+                        disabled={!connection.connected || cancellingDelete || stoppingDelete}
+                        onClick={() => void handleCancelDelete()}
+                      >
+                        {stoppingDelete || cancellingDelete ? (
+                          <Loader2 className="size-3 animate-spin" />
+                        ) : (
+                          <Square className="size-3" />
+                        )}
+                        {cancellingDelete || stoppingDelete ? "正在停止…" : "停止批量删除"}
+                      </Button>
+                    )}
+                    {!isDeletingBackground && batchProgress && (
                       <Badge variant="info" className="tabular">
                         本轮进度 {batchProgress.current} / {batchProgress.total}
                       </Badge>
                     )}
-                    {state.pendingEmail && (
+                    {!isDeletingBackground && state.pendingEmail && (
                       <Badge variant="warn" className="font-mono font-normal">
                         待确认：{state.pendingEmail}
                       </Badge>
                     )}
                   </div>
                 </div>
-                {batchProgress && (
+                {isDeletingBackground && (
+                  <div className="mt-2 space-y-1.5">
+                    <Progress aria-label="批量删除进度" value={deletePercent ?? 0} className="h-1.5" />
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-2xs text-secondary">
+                      <span>{activeDeleteOp?.message || state.lastMessage}</span>
+                      <span className="text-muted">可自由切换页面或复制其他邮箱，完成后自动通知</span>
+                    </div>
+                  </div>
+                )}
+                {!isDeletingBackground && batchProgress && (
                   <div className="mt-2">
                     <Progress value={batchProgress.percent} className="h-1.5" />
                   </div>
@@ -413,6 +549,64 @@ export function IcloudPage() {
         <Button size="sm" variant="outline" className="h-7 text-xs" disabled={disabled || busy} onClick={() => setAcknowledge(true)}>我已在 iCloud 核对结果</Button>
       </div>}
 
+      {showDeleteRecovery && latestDeleteOp && latestDeleteProgress && (
+        <div
+          role="region"
+          aria-label="未完成的批量删除"
+          className={cn(
+            "flex flex-wrap items-center justify-between gap-3 rounded-panel border px-4 py-2.5 text-xs",
+            latestDeleteOp.state === "cancelled"
+              ? "border-warn bg-warn-soft text-warn"
+              : "border-danger bg-danger-soft text-danger"
+          )}
+        >
+          <div className="space-y-0.5">
+            <p className="font-medium">
+              {latestDeleteOp.state === "cancelled"
+                ? `批量删除已停止：已删除 ${latestDeleteProgress.count} 个，跳过 ${latestDeleteProgress.skipped} 个，剩余 ${latestDeleteProgress.remainingEmails.length} 个未处理。`
+                : `批量删除未全部完成：已删除 ${latestDeleteProgress.count} 个，跳过 ${latestDeleteProgress.skipped} 个，剩余 ${latestDeleteProgress.remainingEmails.length} 个未处理。`}
+            </p>
+            <p className="text-secondary">
+              {state?.status === "uncertain"
+                ? "请先点击「同步列表」核对云端状态，确认后再继续删除剩余邮箱。"
+                : latestDeleteOp.error?.message || latestDeleteOp.message || "请检查处理记录后再继续。"}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {state?.status === "uncertain" && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 text-xs"
+                disabled={disabled || busy}
+                onClick={() => void perform("sync")}
+              >
+                <RefreshCw className="size-3.5" />
+                同步列表
+              </Button>
+            )}
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 text-xs"
+              disabled={disabled || busy || !!state?.pendingEmail || state?.status === "uncertain"}
+              onClick={() => openDelete(latestDeleteProgress.remainingEmails.join("\n"))}
+            >
+              继续删除剩余 {latestDeleteProgress.remainingEmails.length} 个
+            </Button>
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              className="h-7 w-7"
+              aria-label="关闭未完成删除提示"
+              onClick={() => dismissIcloudDeleteNotice(latestDeleteOp.id)}
+            >
+              <X className="size-3.5" />
+            </Button>
+          </div>
+        </div>
+      )}
+
       <div className="space-y-2.5">
         <div className="flex flex-wrap items-center gap-2">
           <div className="relative w-64 sm:w-72">
@@ -478,7 +672,7 @@ export function IcloudPage() {
             </div>
             <div className="flex flex-wrap items-center gap-1.5">
               <Button size="sm" variant="outline" className="h-7 px-2.5 text-xs text-danger" disabled={disabled || busy || !state?.bound || !!state?.pendingEmail} onClick={() => openDelete(selectedEmailText(rows, selected))}><Trash2 className="size-3.5" />批量删除</Button>
-              <Button size="sm" variant="outline" className="h-7 px-2.5 text-xs" disabled={!selectedRows.length || busy} onClick={() => void copy(selected)}><Copy className="size-3.5" />复制选中</Button>
+              <Button size="sm" variant="outline" className="h-7 px-2.5 text-xs" disabled={!selectedRows.length || working} onClick={() => void copy(selected)}><Copy className="size-3.5" />复制选中</Button>
               <Button size="sm" variant={selectedRows.length ? "default" : "outline"} className="h-7 px-2.5 text-xs" disabled={!selectedRows.length || disabled || busy} onClick={() => void copy(selected, true)}>复制并标记已使用</Button>
               <div className="mx-0.5 hidden h-3.5 w-px bg-subtle sm:block" />
               {(["unused", "used", "unknown"] as const).map(value => (
@@ -523,7 +717,7 @@ export function IcloudPage() {
                       <td className="whitespace-nowrap px-3 py-2 text-xs text-muted tabular">{time(row.createdAt)}</td>
                       <td className="px-3 py-2">
                         <div className="flex items-center">
-                          <Button size="icon-sm" variant="ghost" aria-label={`复制 ${row.email}`} disabled={busy} onClick={() => void copy(new Set([row.id]))}><Copy className="size-3.5" /></Button>
+                          <Button size="icon-sm" variant="ghost" aria-label={`复制 ${row.email}`} disabled={working} onClick={() => void copy(new Set([row.id]))}><Copy className="size-3.5" /></Button>
                           <Button size="icon-sm" variant="ghost" aria-label={`编辑 ${row.email} 的本地备注`} disabled={disabled || busy} onClick={() => setEdit({ id: row.id, email: row.email, note: row.localNote })}><Pencil className="size-3.5" /></Button>
                           <Button size="icon-sm" variant="ghost" className="text-danger" aria-label={`删除 ${row.email}`} disabled={disabled || busy || !!state?.pendingEmail} onClick={() => openDelete(row.email)}><Trash2 className="size-3.5" /></Button>
                         </div>
@@ -552,7 +746,7 @@ export function IcloudPage() {
           <summary className="cursor-pointer text-xs font-medium text-secondary">最近申请、同步与删除记录（{state.history.length}）</summary>
           <div className="mt-2.5 divide-y divide-subtle border-t border-subtle pt-1">
             {state.history.map((entry, index) => {
-              const outcomeDot = entry.outcome === "ok" ? "ok" : ["started", "retry", "cooldown", "uncertain", "unchanged"].includes(entry.outcome) ? "needs_login" : "failed";
+              const outcomeDot = entry.outcome === "ok" ? "ok" : entry.outcome === "skipped" ? "unknown" : ["started", "retry", "cooldown", "uncertain", "unchanged", "cancelled"].includes(entry.outcome) ? "needs_login" : "failed";
               return (
                 <div key={`${entry.at}-${index}`} className="flex flex-wrap items-center gap-2 py-1.5 text-xs">
                   <StatusDot status={outcomeDot} />
@@ -569,23 +763,23 @@ export function IcloudPage() {
       )}
     </PageBody>
 
-    <Dialog open={deleteOpen} onOpenChange={open => { if (!deleting) setDeleteOpen(open); }}>
+    <Dialog open={deleteOpen} onOpenChange={open => { setDeleteOpen(open); }}>
       <DialogContent className="max-w-xl">
         <DialogHeader>
           <DialogTitle>删除 iCloud 邮箱</DialogTitle>
-          <DialogDescription>先停用邮箱，再从停用列表中永久删除。删除后无法恢复，也无法再接收发送到这些地址的邮件。</DialogDescription>
+          <DialogDescription>先停用邮箱，再从停用列表中永久删除。删除后无法恢复，也无法再接收发送到这些地址的邮件。确认后将在后台执行，可随时切换页面或停止。</DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
           <Label htmlFor="icloud-delete-emails">待删除邮箱（每行一个）</Label>
-          <Textarea id="icloud-delete-emails" className="min-h-48 font-mono text-xs" value={deleteText} onChange={event => { setDeleteText(event.target.value); setDeleteError(""); }} disabled={deleting} placeholder={"first@icloud.com\nsecond@icloud.com"} />
+          <Textarea id="icloud-delete-emails" className="min-h-48 font-mono text-xs" value={deleteText} onChange={event => { setDeleteText(event.target.value); setDeleteError(""); }} disabled={submittingDelete} placeholder={"first@icloud.com\nsecond@icloud.com"} />
           <p className="text-xs text-muted">已去重 {deletion.emails.length} 个邮箱。同步确认云端不存在的邮箱会移除本地记录；本地和云端均未找到才跳过。</p>
           {(deletion.error || deleteError) && <p role="alert" className="text-xs text-danger">{deletion.error || deleteError}</p>}
-          {deleting && <p role="status" className="text-sm text-secondary">{state?.lastMessage || "正在删除…"}</p>}
+          {submittingDelete && <p role="status" className="text-sm text-secondary">正在提交后台删除任务…</p>}
         </div>
         <DialogFooter>
-          <Button variant="outline" disabled={deleting} onClick={() => setDeleteOpen(false)}>取消</Button>
-          <Button variant="danger" disabled={disabled || busy || !!deletion.error || !deletion.emails.length} onClick={() => void deleteEmails()}>
-            {deleting ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}{deleting ? "正在删除…" : `永久删除 ${deletion.emails.length} 个邮箱`}
+          <Button variant="outline" onClick={() => setDeleteOpen(false)}>取消</Button>
+          <Button variant="danger" disabled={disabled || busy || submittingDelete || !!deletion.error || !deletion.emails.length} onClick={() => void deleteEmails()}>
+            {submittingDelete ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}{submittingDelete ? "正在提交…" : `永久删除 ${deletion.emails.length} 个邮箱`}
           </Button>
         </DialogFooter>
       </DialogContent>

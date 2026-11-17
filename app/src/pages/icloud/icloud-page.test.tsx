@@ -257,3 +257,158 @@ it("opening uses the operation channel and local note editing does not modify cl
   await waitFor(() => expect(useKeeperStore.getState().icloud!.emails[0]!.localNote).toBe("已用于购物"));
   expect(useKeeperStore.getState().icloud!.emails[0]!.cloudNote).toBe("云端备注");
 });
+
+it("runs batch deletion in background without blocking modal, survives remount, and notifies on completion", async () => {
+  const user = userEvent.setup();
+  const infoSpy = vi.spyOn(notify, "info");
+  const successSpy = vi.spyOn(notify, "success");
+  const write = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+  const runningOp = makeOperation({
+    id: "op-bg-del",
+    kind: "icloud-delete",
+    resourceId: "icloud_primary",
+    state: "running",
+    stage: "syncing",
+    progress: 0,
+    message: "正在同步列表，准备删除 2 个邮箱",
+    result: { total: 2, processed: 0, count: 0, skipped: 0, currentEmail: null, remainingEmails: ["mail0@example.com", "mail1@example.com"] },
+  });
+  tauri.onMethod("icloud.delete", () => runningOp);
+
+  try {
+    const view = render(<IcloudPage />);
+    await user.click(screen.getByRole("button", { name: "选择当前页" }));
+    await user.click(screen.getByRole("button", { name: "批量删除" }));
+    await user.click(screen.getByRole("button", { name: "永久删除 2 个邮箱" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(infoSpy).toHaveBeenCalledWith("已转入后台批量删除", expect.stringContaining("2 个邮箱"));
+    expect(screen.getByText("正在后台删除")).toBeInTheDocument();
+    expect(screen.getByText("正在同步云端列表并准备后台批量删除…")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "停止批量删除" })).toBeEnabled();
+
+    act(() => {
+      tauri.emitAgentEvent("operation.changed", {
+        ...runningOp,
+        stage: "deleting",
+        progress: 0.5,
+        message: "正在删除 2 / 2：mail1@example.com（已删 1，跳过 0）",
+        result: {
+          total: 2,
+          processed: 1,
+          count: 1,
+          skipped: 0,
+          currentEmail: "mail1@example.com",
+          remainingEmails: ["mail1@example.com"],
+        },
+      });
+      tauri.emitAgentEvent("icloud.changed", {
+        ...initial,
+        status: "deleting",
+        busy: true,
+        emails: [initial.emails[1]!],
+        lastMessage: "正在删除 2 / 2：mail1@example.com",
+      });
+    });
+
+    expect(screen.getByRole("progressbar", { name: "批量删除进度" })).toHaveAttribute("aria-valuenow", "50");
+    expect(screen.getByText("删除进度 1 / 2（50%）")).toBeInTheDocument();
+    expect(screen.getByText("已删 1 · 跳过 0")).toBeInTheDocument();
+    expect(screen.getByText("当前：mail1@example.com")).toBeInTheDocument();
+
+    // User can still select and copy remaining emails while background delete is running.
+    await user.click(screen.getByRole("checkbox", { name: "选择 mail1@example.com" }));
+    await user.click(screen.getByRole("button", { name: "复制选中" }));
+    expect(write).toHaveBeenCalledWith("mail1@example.com");
+
+    // Unmount (simulate switching to another page) and remount back to IcloudPage.
+    view.unmount();
+    const remounted = render(<IcloudPage />);
+    expect(remounted.getByRole("progressbar", { name: "批量删除进度" })).toHaveAttribute("aria-valuenow", "50");
+    expect(remounted.getByRole("button", { name: "停止批量删除" })).toBeEnabled();
+
+    // Background deletion completes while user is away on another page.
+    remounted.unmount();
+    act(() => {
+      tauri.emitAgentEvent("icloud.changed", {
+        ...initial,
+        status: "idle",
+        busy: false,
+        emails: [],
+        lastMessage: "删除完成：已删除 2 个，跳过 0 个（本地和云端均未找到）",
+      });
+      tauri.emitAgentEvent("operation.changed", {
+        ...runningOp,
+        state: "succeeded",
+        stage: "complete",
+        progress: 1,
+        message: "删除完成：已删除 2 个，跳过 0 个",
+        result: { ok: true, count: 2, skipped: 0 },
+      });
+    });
+
+    await waitFor(() =>
+      expect(successSpy).toHaveBeenCalledWith("iCloud 邮箱批量删除完成", "删除完成：已删除 2 个，跳过 0 个")
+    );
+  } finally {
+    infoSpy.mockRestore();
+    successSpy.mockRestore();
+    write.mockRestore();
+  }
+});
+
+it("stops background batch deletion and offers one-click retry for remaining emails", async () => {
+  const user = userEvent.setup();
+  const runningOp = makeOperation({
+    id: "op-bg-cancel",
+    kind: "icloud-delete",
+    resourceId: "icloud_primary",
+    state: "running",
+    stage: "deleting",
+    progress: 0.5,
+    message: "正在删除 2 / 2：mail1@example.com",
+    result: { total: 2, processed: 1, count: 1, skipped: 0, currentEmail: "mail1@example.com", remainingEmails: ["mail1@example.com"] },
+  });
+  tauri.onMethod("icloud.delete", () => runningOp);
+  tauri.onMethod("icloud.cancelDelete", () => {
+    tauri.emitAgentEvent("operation.changed", {
+      ...runningOp,
+      stage: "cancelling",
+      message: "正在停止批量删除（已处理 1 / 2），等待当前邮箱完成…",
+    });
+    return { ...initial, status: "deleting", busy: true, lastMessage: "正在停止批量删除" };
+  });
+
+  render(<IcloudPage />);
+  await user.click(screen.getByRole("button", { name: "批量删除" }));
+  const input = screen.getByLabelText("待删除邮箱（每行一个）");
+  await user.click(input);
+  await user.paste("mail0@example.com\nmail1@example.com");
+  await user.click(screen.getByRole("button", { name: "永久删除 2 个邮箱" }));
+
+  await waitFor(() => expect(screen.getByRole("button", { name: "停止批量删除" })).toBeEnabled());
+  await user.click(screen.getByRole("button", { name: "停止批量删除" }));
+  expect(tauri.methodSequence()).toContain("icloud.cancelDelete");
+
+  act(() => {
+    tauri.emitAgentEvent("icloud.changed", {
+      ...initial,
+      status: "idle",
+      busy: false,
+      lastMessage: "已停止批量删除：已删除 1 个，跳过 0 个，剩余 1 个未处理",
+    });
+    tauri.emitAgentEvent("operation.changed", {
+      ...runningOp,
+      state: "cancelled",
+      stage: "cancelled",
+      progress: 0.5,
+      message: "已停止批量删除：已删除 1 个，跳过 0 个，剩余 1 个未处理",
+      result: { ok: false, cancelled: true, total: 2, processed: 1, count: 1, skipped: 0, remainingEmails: ["mail1@example.com"] },
+    });
+  });
+
+  const recovery = screen.getByRole("region", { name: "未完成的批量删除" });
+  expect(recovery).toHaveTextContent("批量删除已停止：已删除 1 个，跳过 0 个，剩余 1 个未处理");
+  await user.click(screen.getByRole("button", { name: "继续删除剩余 1 个" }));
+  expect(screen.getByLabelText("待删除邮箱（每行一个）")).toHaveValue("mail1@example.com");
+});

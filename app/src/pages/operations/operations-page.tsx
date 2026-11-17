@@ -6,12 +6,13 @@ import { resolveOperationSubject } from "@/lib/operation-subject";
 import { normalizeOperationDisplay } from "@/lib/operation-labels";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { EmptyState } from "@/components/ui/empty-state";
 import { AccountCheckResults } from "@/components/account-check-results";
 import { accountCheckResult, isAccountCheckPending } from "@/lib/account-checks";
-import { ListTodo, Copy } from "lucide-react";
+import { ListTodo, Copy, Square } from "lucide-react";
 import { formatDateTime, formatDuration } from "@/lib/format";
 import { notify } from "@/lib/notify";
 import { cn } from "@/lib/utils";
@@ -38,6 +39,8 @@ export function OperationsPage() {
   const operations = useKeeperStore((s) => s.operations);
   const proxyNodes = useKeeperStore((s) => s.proxies.nodes);
   const accountLabeler = useAccountLabeler();
+  const cancelIcloudDelete = useKeeperStore((s) => s.cancelIcloudDelete);
+  const [stoppingDeleteId, setStoppingDeleteId] = useState<string | null>(null);
   const [filter, setFilter] = useState<OperationFilter>("active");
 
   const filtered = operations.filter((op) => {
@@ -53,6 +56,18 @@ export function OperationsPage() {
   const handleCopyCode = (code: string) => {
     void navigator.clipboard.writeText(code);
     notify.success("已复制错误码");
+  };
+
+  const handleCancelIcloudDelete = async (operationId: string) => {
+    setStoppingDeleteId(operationId);
+    try {
+      await cancelIcloudDelete();
+      notify.info("已请求停止批量删除", "将在当前邮箱处理完成后停止");
+    } catch (error) {
+      notify.error("停止批量删除失败", error);
+    } finally {
+      setStoppingDeleteId(null);
+    }
   };
 
   const getBadgeVariant = (state: string) => {
@@ -173,6 +188,20 @@ export function OperationsPage() {
                 {op.progress !== null && isAccountCheckPending(op) && (
                   <div className="mt-2">
                     <Progress value={op.progress * 100} />
+                  </div>
+                )}
+                {op.kind === "icloud-delete" && isAccountCheckPending(op) && (
+                  <div className="flex justify-end">
+                    <Button
+                      size="sm"
+                      variant="danger"
+                      className="h-7 px-2.5 text-xs"
+                      disabled={stoppingDeleteId === op.id || op.stage === "cancelling"}
+                      onClick={() => void handleCancelIcloudDelete(op.id)}
+                    >
+                      <Square className="size-3" />
+                      {op.stage === "cancelling" || stoppingDeleteId === op.id ? "正在停止…" : "停止批量删除"}
+                    </Button>
                   </div>
                 )}
               </Card>

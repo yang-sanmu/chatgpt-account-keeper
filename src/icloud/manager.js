@@ -8,10 +8,10 @@ const iso = value => value == null ? null : new Date(value).toISOString();
 const busyError = () => new ApplicationError(ERROR_CODES.RESOURCE_BUSY, "iCloud 正在处理另一项操作，请稍后重试");
 
 export class IcloudManager {
-  constructor({ store, dataRoot, acquireChrome, browserRuns, onChanged = () => {}, canRun = () => true,
+  constructor({ store, dataRoot, acquireChrome, browserRuns, onChanged = () => {}, onOperationProgress = () => {}, canRun = () => true,
     now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout, browserFactory = options => new IcloudBrowser(options) }) {
-    Object.assign(this, { store, dataRoot, acquireChrome, browserRuns, onChanged, canRun, now, setTimer, clearTimer, browserFactory });
-    this.data = store.load(); this.manual = null; this.worker = null; this.pending = null; this.timer = null; this.stopping = false;
+    Object.assign(this, { store, dataRoot, acquireChrome, browserRuns, onChanged, onOperationProgress, canRun, now, setTimer, clearTimer, browserFactory });
+    this.data = store.load(); this.manual = null; this.worker = null; this.pending = null; this.timer = null; this.stopping = false; this.activeDelete = null;
     // Existing settings retain the original one-address-per-interval behavior.
     this.data.config = validateIcloudConfig({ mode: "single", ...this.data.config });
     this.controller = new AbortController();
@@ -77,6 +77,22 @@ export class IcloudManager {
     if (config.enabled && !this.needsLogin()) this.data.status = this.data.cooldownUntil > this.now() ? "cooldown" : "idle";
     if (wasEnabled !== config.enabled) this.record("settings", "ok", config.enabled ? "已开启持续申请" : "已停止自动申请");
     this.persist(); this.schedule(); return this.state();
+  }
+  setOperationProgress(fn) {
+    this.onOperationProgress = typeof fn === "function" ? fn : () => {};
+  }
+  cancelDelete() {
+    if (!this.activeDelete) return this.state();
+    if (!this.activeDelete.cancelRequested) {
+      this.activeDelete.cancelRequested = true;
+      const msg = `正在停止批量删除（已处理 ${this.activeDelete.processed} / ${this.activeDelete.total}），等待当前邮箱完成…`;
+      this.data.lastMessage = msg;
+      if (this.activeDelete.operationId) {
+        this.onOperationProgress?.(this.activeDelete.operationId, { stage: "cancelling", message: msg });
+      }
+      this.persist();
+    }
+    return this.state();
   }
   stop() {
     this.data.config.enabled = false; this.data.nextRunAt = null;
@@ -265,54 +281,153 @@ export class IcloudManager {
   }
   async delete({ emails, operationId = null } = {}) {
     const addresses = validateDeleteEmails(emails);
-    return this.exclusive("delete", () => this.usingBrowser(operationId, async browser => {
-      if (this.data.pendingCreate || this.data.pendingDelete) throw new IcloudError("validation", "请先同步列表核对上次操作结果，再删除邮箱");
-      let list = await browser.sync(); this.acceptList(list);
-      let count = 0; let skipped = 0;
-      this.data.status = "deleting";
-      this.record("delete", "started", `开始删除 ${addresses.length} 个邮箱`); this.persist();
-      for (const [index, email] of addresses.entries()) {
-        if (this.stopping) throw new IcloudError("cancelled", "批量删除已停止");
-        const row = list.emails.find(item => item.email.toLowerCase() === email);
-        if (!row) {
-          const remaining = this.data.emails.filter(item => item.email.toLowerCase() !== email);
-          if (remaining.length !== this.data.emails.length) {
-            this.data.emails = remaining;
-            count++;
-            this.record("delete", "ok", `已移除本地记录（云端未找到）：${email}（${index + 1} / ${addresses.length}）`);
-          } else {
-            skipped++;
-            this.record("delete", "skipped", `跳过（本地和云端均未找到）：${email}（${index + 1} / ${addresses.length}）`);
-          }
-          this.persist();
-          continue;
-        }
-        this.record("delete", "started", `正在删除 ${index + 1} / ${addresses.length}：${email}`); this.persist();
-        let deletionError;
-        try {
-          await browser.delete(row, () => {
-            if (this.stopping) throw new IcloudError("cancelled", "批量删除已停止");
-            this.data.pendingDelete = { id: row.id, email: row.email }; this.persist();
-          });
-        } catch (error) { deletionError = error; }
-        // Always read a fresh list after either success or an interrupted click.
-        // Only absence in this same account proves permanent deletion.
-        try { list = await browser.sync(); this.acceptList(list); }
-        catch (error) { throw deletionError ?? error; }
-        const remaining = list.emails.some(item => item.id === row.id || item.email.toLowerCase() === email);
-        if (remaining) {
-          // The first list can lag behind a submitted deletion. Keep its intent
-          // so a later sync can remove the local row once absence is confirmed.
-          throw deletionError ?? new IcloudError("service", `未确认删除：${email}，已停止批量删除，请查看云端状态后重试`);
-        }
-        if (deletionError && this.data.emails.some(item => item.id === row.id)) throw deletionError;
-        count++;
-        this.record("delete", "ok", `已删除 ${count} 个（${index + 1} / ${addresses.length}）：${email}`); this.persist();
+    const reportProgress = patch => {
+      if (operationId) this.onOperationProgress?.(operationId, patch);
+    };
+    return this.exclusive("delete", () => {
+      if (this.data.pendingCreate || this.data.pendingDelete) {
+        throw new IcloudError("validation", "请先同步列表核对上次操作结果，再删除邮箱");
       }
-      this.data.status = this.data.cooldownUntil > this.now() ? "cooldown" : "idle"; this.data.failures = 0;
-      this.record("delete", "ok", `删除完成：已删除 ${count} 个，跳过 ${skipped} 个（本地和云端均未找到）`);
-      return { ok: true, count, skipped };
-    }));
+      const session = {
+        operationId,
+        cancelRequested: false,
+        total: addresses.length,
+        processed: 0,
+        count: 0,
+        skipped: 0,
+        currentEmail: null,
+      };
+      this.activeDelete = session;
+      const syncResultSnapshot = (processed, count, skipped, currentEmail = null) => ({
+        total: addresses.length,
+        processed,
+        count,
+        skipped,
+        currentEmail,
+        remainingEmails: addresses.slice(processed),
+      });
+      reportProgress({
+        stage: "syncing",
+        progress: 0,
+        message: `正在同步列表，准备删除 ${addresses.length} 个邮箱`,
+        result: syncResultSnapshot(0, 0, 0),
+      });
+      return this.usingBrowser(operationId, async browser => {
+        let list = await browser.sync(); this.acceptList(list);
+        let count = 0; let skipped = 0; let processed = 0;
+        const emitProgress = (index, currentEmail = null, extra = {}) => {
+          session.processed = index;
+          session.count = count;
+          session.skipped = skipped;
+          session.currentEmail = currentEmail;
+          reportProgress({
+            stage: session.cancelRequested ? "cancelling" : "deleting",
+            progress: addresses.length ? index / addresses.length : 0,
+            message: extra.message ?? (currentEmail
+              ? `正在删除 ${index + 1} / ${addresses.length}：${currentEmail}（已删 ${count}，跳过 ${skipped}）`
+              : `已处理 ${index} / ${addresses.length}（已删 ${count}，跳过 ${skipped}）`),
+            result: syncResultSnapshot(index, count, skipped, currentEmail),
+          });
+        };
+        if (session.cancelRequested) {
+          const remainingEmails = addresses;
+          const cancelMessage = `已停止批量删除：已删除 0 个，跳过 0 个，剩余 ${remainingEmails.length} 个未处理`;
+          this.data.status = this.data.cooldownUntil > this.now() ? "cooldown" : "idle";
+          this.data.failures = 0;
+          this.record("delete", "cancelled", cancelMessage);
+          this.persist();
+          reportProgress({
+            state: "cancelled",
+            stage: "cancelled",
+            progress: 0,
+            message: cancelMessage,
+            result: { ok: false, cancelled: true, count: 0, skipped: 0, total: addresses.length, processed: 0, remainingEmails },
+            blocksUpdate: false,
+          });
+          return { ok: false, cancelled: true, count: 0, skipped: 0, total: addresses.length, processed: 0, remainingEmails };
+        }
+        this.data.status = "deleting";
+        this.record("delete", "started", `开始删除 ${addresses.length} 个邮箱`); this.persist();
+        emitProgress(0, null, { message: `开始删除 ${addresses.length} 个邮箱` });
+        for (const [index, email] of addresses.entries()) {
+          if (this.stopping) throw new IcloudError("cancelled", "批量删除已停止");
+          if (session.cancelRequested) break;
+          const row = list.emails.find(item => item.email.toLowerCase() === email);
+          if (!row) {
+            const remaining = this.data.emails.filter(item => item.email.toLowerCase() !== email);
+            if (remaining.length !== this.data.emails.length) {
+              this.data.emails = remaining;
+              count++;
+              this.record("delete", "ok", `已移除本地记录（云端未找到）：${email}（${index + 1} / ${addresses.length}）`);
+            } else {
+              skipped++;
+              this.record("delete", "skipped", `跳过（本地和云端均未找到）：${email}（${index + 1} / ${addresses.length}）`);
+            }
+            processed = index + 1;
+            this.persist();
+            emitProgress(processed);
+            continue;
+          }
+          emitProgress(index, email);
+          this.data.lastMessage = `正在删除 ${index + 1} / ${addresses.length}：${email}`; this.persist();
+          let deletionError;
+          try {
+            await browser.delete(row, () => {
+              if (this.stopping) throw new IcloudError("cancelled", "批量删除已停止");
+              this.data.pendingDelete = { id: row.id, email: row.email }; this.persist();
+            });
+          } catch (error) { deletionError = error; }
+          // Always read a fresh list after either success or an interrupted click.
+          // Only absence in this same account proves permanent deletion.
+          try { list = await browser.sync(); this.acceptList(list); }
+          catch (error) { throw deletionError ?? error; }
+          const remaining = list.emails.some(item => item.id === row.id || item.email.toLowerCase() === email);
+          if (remaining) {
+            // The first list can lag behind a submitted deletion. Keep its intent
+            // so a later sync can remove the local row once absence is confirmed.
+            throw deletionError ?? new IcloudError("service", `未确认删除：${email}，已停止批量删除，请查看云端状态后重试`);
+          }
+          if (deletionError && this.data.emails.some(item => item.id === row.id)) throw deletionError;
+          count++;
+          processed = index + 1;
+          this.record("delete", "ok", `已删除 ${count} 个（${index + 1} / ${addresses.length}）：${email}`); this.persist();
+          emitProgress(processed);
+        }
+        this.data.status = this.data.cooldownUntil > this.now() ? "cooldown" : "idle"; this.data.failures = 0;
+        if (session.cancelRequested && processed < addresses.length) {
+          const remainingEmails = addresses.slice(processed);
+          const cancelMessage = `已停止批量删除：已删除 ${count} 个，跳过 ${skipped} 个，剩余 ${remainingEmails.length} 个未处理`;
+          this.record("delete", "cancelled", cancelMessage);
+          this.persist();
+          reportProgress({
+            state: "cancelled",
+            stage: "cancelled",
+            progress: addresses.length ? processed / addresses.length : 0,
+            message: cancelMessage,
+            result: { ok: false, cancelled: true, count, skipped, total: addresses.length, processed, remainingEmails },
+            blocksUpdate: false,
+          });
+          return { ok: false, cancelled: true, count, skipped, total: addresses.length, processed, remainingEmails };
+        }
+        const doneMessage = `删除完成：已删除 ${count} 个，跳过 ${skipped} 个（本地和云端均未找到）`;
+        this.record("delete", "ok", doneMessage);
+        this.persist();
+        reportProgress({
+          stage: "complete",
+          progress: 1,
+          message: doneMessage,
+          result: { ok: true, count, skipped, total: addresses.length, processed: addresses.length, remainingEmails: [] },
+        });
+        return { ok: true, count, skipped };
+      });
+    }, () => {
+      if (this.data.status === "deleting") {
+        this.data.status = (this.data.pendingCreate || this.data.pendingDelete)
+          ? "uncertain"
+          : (this.data.cooldownUntil > this.now() ? "cooldown" : "idle");
+      }
+      this.activeDelete = null;
+    });
   }
   async reconcileCreated(browser, creationError) {
     const maxAttempts = ["auth", "account", "rate_limit", "limit", "cancelled"].includes(creationError?.kind) ? 1 : 3;

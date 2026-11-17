@@ -347,6 +347,7 @@ async function main() {
     browserRuns: background.browserRuns,
     canRun: () => !agent.services.draining && !shuttingDown,
     onChanged: state => agent.services.events.publish("icloud.changed", state),
+    onOperationProgress: (operationId, patch) => agent.services.operations.update(operationId, patch),
   });
   backendRestorers.push(proxies.configureTemporaryProxyIds(() => temporaryWindows.proxyIds()));
   backendRestorers.push(agent.services.events.subscribe((event) => {

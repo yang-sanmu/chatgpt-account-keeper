@@ -84,6 +84,7 @@ import type {
   StartupInfo,
   UpdateStatus,
 } from "@/ipc/types";
+import type { IcloudState } from "@/ipc/generated";
 import {
   applyAccountChanged,
   applyAccountRemoved,
@@ -195,7 +196,8 @@ interface KeeperState {
 
   groups: Group[];
   temporaryWindows: import("@/ipc/generated").TemporaryWindowResult[];
-  icloud: import("@/ipc/generated").IcloudState | null;
+  icloud: IcloudState | null;
+  dismissedIcloudDeleteOpId: string | null;
   proxies: ProxyState;
   conversations: Record<string, ConversationSet>;
   scheduler: SchedulerState;
@@ -300,6 +302,9 @@ interface KeeperActions {
     method: M,
     params: IpcParams<M>
   ) => Promise<Operation>;
+  startIcloudDelete: (emails: [string, ...string[]]) => Promise<Operation>;
+  cancelIcloudDelete: () => Promise<IcloudState>;
+  dismissIcloudDeleteNotice: (operationId: string) => void;
 }
 
 export type KeeperStore = KeeperState & KeeperActions;
@@ -319,6 +324,7 @@ const INITIAL_STATE: KeeperState = {
   groups: [],
   temporaryWindows: [],
   icloud: null,
+  dismissedIcloudDeleteOpId: null,
   proxies: DEFAULT_PROXY_STATE,
   conversations: {},
   scheduler: DEFAULT_SCHEDULER,
@@ -356,6 +362,8 @@ interface OperationWaiter {
 /// 唤醒。事件监听器的注销函数同理。
 const operationWaiters = new Map<string, OperationWaiter>();
 const earlyTerminalOperations = new Map<string, Operation>();
+const trackedBackgroundDeletes = new Set<string>();
+let awaitingDeleteSubmit = 0;
 let eventUnsubscribers: (() => void)[] = [];
 let bootstrapStarted = false;
 
@@ -590,9 +598,40 @@ export const useKeeperStore = create<KeeperStore>()((set, get) => {
       };
     });
     // 断线期间的终态可能只出现在重连快照里。
-    for (const operation of snapshot.operations ?? []) settleOperationWaiter(operation);
+    for (const operation of snapshot.operations ?? []) {
+      settleOperationWaiter(operation);
+      if (operation.kind === "icloud-delete") {
+        if (PENDING_OPERATION_STATES.has(operation.state)) {
+          trackedBackgroundDeletes.add(operation.id);
+        } else if (
+          TERMINAL_OPERATION_STATES.has(operation.state) &&
+          trackedBackgroundDeletes.has(operation.id)
+        ) {
+          finalizeTrackedIcloudDelete(operation);
+        }
+      }
+    }
     void agentCall("mail.getSettings", {})
       .then((mailSettings) => set({ mailSettings }))
+      .catch(() => {});
+  }
+
+  function finalizeTrackedIcloudDelete(operation: Operation): void {
+    trackedBackgroundDeletes.delete(operation.id);
+    if (operation.state === "succeeded") {
+      notify.success("iCloud 邮箱批量删除完成", operation.message ?? "请查看处理记录");
+    } else if (operation.state === "cancelled") {
+      notify.info("iCloud 邮箱批量删除已停止", operation.message ?? undefined);
+    } else {
+      notify.error(
+        "iCloud 邮箱批量删除未完成",
+        operation.error ?? operation.message ?? "请查看处理记录并同步列表"
+      );
+    }
+    void agentCall("icloud.getState", {})
+      .then((icloud) => {
+        if (icloud) set({ icloud });
+      })
       .catch(() => {});
   }
 
@@ -667,6 +706,17 @@ export const useKeeperStore = create<KeeperStore>()((set, get) => {
     if (operation.state === "succeeded" && operation.kind.startsWith("profile-")) {
       if (get().profileScanning) profileMutationsDuringScan.push(operation);
       set({ profileScan: applyProfileOperation(get().profileScan, operation) });
+    }
+
+    if (operation.kind === "icloud-delete") {
+      if (PENDING_OPERATION_STATES.has(operation.state) && awaitingDeleteSubmit === 0) {
+        trackedBackgroundDeletes.add(operation.id);
+      } else if (
+        TERMINAL_OPERATION_STATES.has(operation.state) &&
+        trackedBackgroundDeletes.has(operation.id)
+      ) {
+        finalizeTrackedIcloudDelete(operation);
+      }
     }
   }
 
@@ -1467,6 +1517,68 @@ export const useKeeperStore = create<KeeperStore>()((set, get) => {
         operationWaiters.set(initial.id, { resolve, reject });
       });
     },
+
+    startIcloudDelete: async (emails) => {
+      awaitingDeleteSubmit++;
+      try {
+        const commandId = await newCommandId();
+        const initial = await agentCall("icloud.delete", { emails }, commandId);
+        if (
+          !initial ||
+          typeof initial !== "object" ||
+          typeof initial.id !== "string" ||
+          initial.id.trim().length === 0
+        ) {
+          throw new Error("操作 icloud.delete 未返回有效的 Operation 描述符");
+        }
+
+        const early =
+          earlyTerminalOperations.get(initial.id) ??
+          get().operations.find(
+            (operation) =>
+              operation.id === initial.id && TERMINAL_OPERATION_STATES.has(operation.state)
+          );
+        const resolved = early ?? initial;
+        if (early) earlyTerminalOperations.delete(initial.id);
+
+        set((state) => {
+          const existing = state.operations.find((item) => item.id === resolved.id);
+          const nextOperations =
+            existing && TERMINAL_OPERATION_STATES.has(existing.state)
+              ? state.operations
+              : (() => {
+                  const index = state.operations.findIndex((item) => item.id === resolved.id);
+                  return index >= 0
+                    ? state.operations.map((item, at) => (at === index ? resolved : item))
+                    : [resolved, ...state.operations];
+                })();
+          return {
+            operations: nextOperations,
+            dismissedIcloudDeleteOpId:
+              state.dismissedIcloudDeleteOpId === resolved.id
+                ? null
+                : state.dismissedIcloudDeleteOpId,
+          };
+        });
+
+        if (PENDING_OPERATION_STATES.has(resolved.state)) {
+          trackedBackgroundDeletes.add(resolved.id);
+        }
+        return resolved;
+      } finally {
+        awaitingDeleteSubmit = Math.max(0, awaitingDeleteSubmit - 1);
+      }
+    },
+
+    cancelIcloudDelete: async () => {
+      const value = await agentCall("icloud.cancelDelete", {}, await newCommandId());
+      set({ icloud: value });
+      return value;
+    },
+
+    dismissIcloudDeleteNotice: (operationId) => {
+      set({ dismissedIcloudDeleteOpId: operationId });
+    },
   };
 });
 
@@ -1478,6 +1590,8 @@ export function __resetKeeperStoreForTests(): void {
   profileMutationsDuringScan = [];
   operationWaiters.clear();
   earlyTerminalOperations.clear();
+  trackedBackgroundDeletes.clear();
+  awaitingDeleteSubmit = 0;
   eventUnsubscribers = [];
   bootstrapStarted = false;
   useKeeperStore.setState(

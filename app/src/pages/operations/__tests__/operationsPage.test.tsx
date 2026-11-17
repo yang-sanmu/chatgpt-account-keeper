@@ -75,4 +75,45 @@ describe("历史任务的完成态展示", () => {
     await user.click(screen.getByText("失败明细（1 个账号）"));
     expect(screen.getByText("待巡检账号 · 缺少 accessToken，请先巡检")).toBeVisible();
   });
+
+  it("进行中的 iCloud 批量删除任务支持在任务中心停止", async () => {
+    tauri.onMethod("icloud.cancelDelete", () => ({
+      config: { enabled: true, intervalMinutes: 61, label: "G", note: "", networkMode: "direct" },
+      status: "deleting",
+      bound: true,
+      busy: true,
+      browserOpen: false,
+      nextRunAt: null,
+      cooldownUntil: null,
+      lastSyncAt: null,
+      lastMessage: "正在停止批量删除",
+      pendingEmail: null,
+      emails: [],
+      history: [],
+    }));
+    act(() => {
+      tauri.emitBootstrap(
+        makeBootstrap({
+          operations: [
+            makeOperation({
+              id: "op-icloud-del",
+              kind: "icloud-delete",
+              resourceId: "icloud_primary",
+              state: "running",
+              stage: "deleting",
+              progress: 0.4,
+              message: "正在删除 2 / 5：test@example.com",
+            }),
+          ],
+        })
+      );
+    });
+    const user = userEvent.setup();
+    render(<OperationsPage />);
+
+    expect(screen.getByText("正在删除 2 / 5：test@example.com")).toBeInTheDocument();
+    expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "40");
+    await user.click(screen.getByRole("button", { name: "停止批量删除" }));
+    expect(tauri.methodSequence()).toContain("icloud.cancelDelete");
+  });
 });

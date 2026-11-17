@@ -2,6 +2,7 @@ import type { AccountCheckResult, Operation } from "@/ipc/types";
 
 export const ACCOUNT_CHECK_KINDS = {
   inspection: "account-inspection",
+  relogin: "account-relogin",
   plan: "account-plan-check",
   singlePlan: "account-plan-check-single",
   promo: "account-promo-check",

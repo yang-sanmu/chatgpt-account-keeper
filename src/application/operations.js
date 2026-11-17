@@ -2,7 +2,12 @@ import { randomUUID } from "node:crypto";
 import { errorEnvelope } from "./errors.js";
 
 const TERMINAL_STATES = new Set(["succeeded", "failed", "timed_out", "cancelled"]);
-const ACCOUNT_BATCH_KINDS = new Set(["account-plan-check", "account-promo-check", "account-inspection"]);
+const ACCOUNT_BATCH_KINDS = new Set([
+  "account-plan-check",
+  "account-promo-check",
+  "account-inspection",
+  "account-relogin",
+]);
 
 function clone(value) {
   return value == null ? value : structuredClone(value);
@@ -22,7 +27,12 @@ export function statusRefreshFailure(status) {
 }
 
 function normalizeStoredOperation(operation) {
-  if (operation?.kind !== "account-status-refresh" || operation.state !== "succeeded") return operation;
+  if (
+    (operation?.kind !== "account-status-refresh" && operation?.kind !== "account-relogin-item") ||
+    operation.state !== "succeeded"
+  ) {
+    return operation;
+  }
   const message = statusRefreshFailure(operation.result);
   return message ? { ...operation, state: "failed", stage: null, message } : operation;
 }

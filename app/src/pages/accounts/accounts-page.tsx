@@ -11,6 +11,7 @@ import { AccountCreateDialog } from "./account-create-dialog";
 import { AccountDeleteDialog } from "./account-delete-dialog";
 import { AccountHistoryDrawer } from "./account-history-drawer";
 import { AccountCheckDialog, type AccountCheckTarget } from "./account-check-dialog";
+import { AccountCredentialsDialog } from "./account-credentials-dialog";
 import { Users, SearchX } from "lucide-react";
 import { shortId } from "@/lib/format";
 
@@ -21,9 +22,15 @@ export function AccountsPage() {
 
   const [createOpen, setCreateOpen] = React.useState(false);
   const [checkTarget, setCheckTarget] = React.useState<AccountCheckTarget | null>(null);
+  const [credentialAccountId, setCredentialAccountId] = React.useState<string | null>(null);
   const checkSinglePlan = React.useCallback((id: string) => {
     setCheckTarget({ title: "查询套餐", kind: "singlePlan", ids: [id], scope: "single" });
   }, []);
+  const editAccountCredentials = React.useCallback((id: string) => {
+    setCredentialAccountId(id);
+  }, []);
+  const accountsMap = useKeeperStore((s) => s.accounts);
+  const credentialAccount = credentialAccountId ? accountsMap[credentialAccountId]?.effective ?? null : null;
   
   const [deleteOpen, setDeleteOpen] = React.useState(false);
   const [deleteTargets, setDeleteTargets] = React.useState<{ id: string; name: string }[]>([]);
@@ -49,6 +56,16 @@ export function AccountsPage() {
   };
 
   const visibleIds = visibleAccounts.map((a) => a.effective.id);
+  const failedReloginIds = visibleAccounts
+    .filter(({ effective }) =>
+      effective.status === "out" ||
+      effective.status === "reauth" ||
+      effective.lastCheckState === "out" ||
+      effective.lastCheckState === "reauth" ||
+      /\b401\b|重新登录/i.test(effective.lastCheckDetail ?? effective.lastRunReason ?? "") ||
+      effective.hasAccessToken === false
+    )
+    .map((a) => a.effective.id);
 
   return (
     <Page>
@@ -60,6 +77,15 @@ export function AccountsPage() {
       <AccountsToolbar onCreateClick={() => setCreateOpen(true)}
         canInspect={accountIds.length > 0}
         onInspect={() => setCheckTarget({ title: "一键巡检", kind: "inspection", ids: visibleIds, scope: "filtered" })}
+        canRelogin={accountIds.length > 0}
+        failedCount={failedReloginIds.length}
+        onRelogin={() =>
+          setCheckTarget(
+            failedReloginIds.length > 0
+              ? { title: "一键自动重登（失效 / 401）", kind: "relogin", ids: failedReloginIds, scope: "failed" }
+              : { title: "一键自动重登", kind: "relogin", ids: visibleIds, scope: "filtered" }
+          )
+        }
         canCheckPromos={accountIds.length > 0}
         onCheckPromos={() => setCheckTarget({ title: "一键查优惠", kind: "promo", ids: visibleIds, scope: "filtered" })}
       />
@@ -101,6 +127,7 @@ export function AccountsPage() {
                 id={record.effective.id}
                 onDelete={handleDeleteSingle}
                 onCheckPlan={checkSinglePlan}
+                onEditCredentials={editAccountCredentials}
               />
             ))}
           </div>
@@ -112,9 +139,16 @@ export function AccountsPage() {
         onBulkDelete={handleBulkDelete} 
         onCheckPromos={(ids) => setCheckTarget({ title: "批量查优惠", kind: "promo", ids, scope: "selected" })}
         onInspect={(ids) => setCheckTarget({ title: "批量巡检", kind: "inspection", ids, scope: "selected" })}
+        onRelogin={(ids) => setCheckTarget({ title: "批量自动重登", kind: "relogin", ids, scope: "selected" })}
       />
 
       {checkTarget && <AccountCheckDialog {...checkTarget} onClose={() => setCheckTarget(null)} />}
+
+      <AccountCredentialsDialog
+        account={credentialAccount}
+        onClose={() => setCredentialAccountId(null)}
+        onAutoRelogin={(id) => setCheckTarget({ title: "自动重登", kind: "relogin", ids: [id], scope: "single" })}
+      />
 
       <AccountCreateDialog 
         open={createOpen} 

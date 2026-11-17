@@ -57,6 +57,8 @@ pub const UI_METHODS: &[&str] = &[
     "accounts.getStatus",
     "accounts.refreshStatus",
     "accounts.inspect",
+    "accounts.relogin",
+    "accounts.setCredentials",
     "accounts.checkPlans",
     "accounts.checkPromos",
     "accounts.readAccessTokens",
@@ -104,6 +106,9 @@ pub const UI_METHODS: &[&str] = &[
     "scheduler.stop",
     "settings.get",
     "settings.update",
+    "mail.getSettings",
+    "mail.updateSettings",
+    "mail.testConnection",
     "operations.get",
     "operations.listActive",
     "operations.list",
@@ -199,7 +204,7 @@ mod tests {
 
         // 数量固定，防止有人一边加一边删还让上面两条都过。
         assert_eq!(INTERNAL_METHODS.len(), 5);
-        assert_eq!(UI_METHODS.len(), 84);
+        assert_eq!(UI_METHODS.len(), 89);
     }
 
     #[test]

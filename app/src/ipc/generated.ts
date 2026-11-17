@@ -99,6 +99,8 @@ export type Method =
   | "accounts.getStatus"
   | "accounts.refreshStatus"
   | "accounts.inspect"
+  | "accounts.relogin"
+  | "accounts.setCredentials"
   | "accounts.checkPlans"
   | "accounts.checkPromos"
   | "accounts.readAccessTokens"
@@ -146,6 +148,9 @@ export type Method =
   | "scheduler.stop"
   | "settings.get"
   | "settings.update"
+  | "mail.getSettings"
+  | "mail.updateSettings"
+  | "mail.testConnection"
   | "operations.get"
   | "operations.listActive"
   | "operations.list"
@@ -331,6 +336,8 @@ export interface KeeperIPCV1GeneratedSchema {
   accountPlanParams?: AccountPlanParams;
   accountPromoParams?: AccountPromoParams;
   accountInspectParams?: AccountInspectParams;
+  accountReloginParams?: AccountReloginParams;
+  accountCredentialsParams?: AccountCredentialsParams;
   accountTokenParams?: AccountTokenParams;
   accountTokenResult?: AccountTokenResult;
   idParams?: IdParams;
@@ -372,6 +379,10 @@ export interface KeeperIPCV1GeneratedSchema {
   nameParams?: NameParams;
   conversationUpsertParams?: ConversationUpsertParams;
   settingsUpdateParams?: SettingsUpdateParams;
+  mailSettingsResult?: MailSettingsResult;
+  mailSettingsUpdateParams?: MailSettingsUpdateParams;
+  mailTestParams?: MailTestParams;
+  mailTestResult?: MailTestResult;
   jsonValue?: JsonValue;
   protocolVersion?: ProtocolVersion;
   method?: Method;
@@ -660,6 +671,8 @@ export interface AccountResult {
   planCheckDetail?: string | null;
   hasAccessToken?: boolean;
   accessTokenExpiresAt?: string | null;
+  hasPassword?: boolean;
+  hasTotpSecret?: boolean;
   pageOpen: boolean;
   rotationCurrentSet: string | null;
   rotationWindowsDone: number;
@@ -962,6 +975,42 @@ export interface AccountInspectParams {
    * 省略时使用各账号的分组节点
    */
   proxyId?: string;
+  /**
+   * 遇到会话失效或 401 时自动重新登录
+   */
+  autoRelogin?: boolean;
+}
+/**
+ * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
+ * via the `definition` "accountReloginParams".
+ */
+export interface AccountReloginParams {
+  /**
+   * @minItems 1
+   */
+  ids: [string, ...string[]];
+  /**
+   * 省略时使用各账号的分组节点
+   */
+  proxyId?: string;
+  /**
+   * 即使当前仍显示在线也强制重新登录
+   */
+  force?: boolean;
+  /**
+   * 覆盖自动重登的无头模式设置
+   */
+  headless?: boolean;
+}
+/**
+ * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
+ * via the `definition` "accountCredentialsParams".
+ */
+export interface AccountCredentialsParams {
+  id: string;
+  email?: string | null;
+  password?: string | null;
+  totpSecret?: string | null;
 }
 /**
  * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
@@ -1473,6 +1522,53 @@ export interface SettingsUpdateParams {
 }
 /**
  * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
+ * via the `definition` "mailSettingsResult".
+ */
+export interface MailSettingsResult {
+  imapHost: string | null;
+  imapPort: number;
+  imapTls: boolean;
+  imapUser: string | null;
+  imapPasswordConfigured: boolean;
+  autoReloginDefault: boolean;
+  reloginHeadless: boolean | null;
+}
+/**
+ * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
+ * via the `definition` "mailSettingsUpdateParams".
+ */
+export interface MailSettingsUpdateParams {
+  imapHost?: string | null;
+  imapPort?: number;
+  imapTls?: boolean;
+  imapUser?: string | null;
+  imapPassword?: string | null;
+  autoReloginDefault?: boolean;
+  reloginHeadless?: boolean | null;
+}
+/**
+ * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
+ * via the `definition` "mailTestParams".
+ */
+export interface MailTestParams {
+  imapHost?: string;
+  imapPort?: number;
+  imapTls?: boolean;
+  imapUser?: string;
+  imapPassword?: string;
+}
+/**
+ * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
+ * via the `definition` "mailTestResult".
+ */
+export interface MailTestResult {
+  ok: boolean;
+  folders: string[];
+  inboxMessages: number;
+  message: string;
+}
+/**
+ * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
  * via the `definition` "request".
  */
 export interface Request {
@@ -1601,6 +1697,8 @@ export interface IpcMethodContracts {
   "accounts.getStatus": { params: IdParams; result: AccountStatusResult };
   "accounts.refreshStatus": { params: AccountRefreshStatusParams; result: Operation };
   "accounts.inspect": { params: AccountInspectParams; result: Operation };
+  "accounts.relogin": { params: AccountReloginParams; result: Operation };
+  "accounts.setCredentials": { params: AccountCredentialsParams; result: AccountResult };
   "accounts.checkPlans": { params: AccountPlanParams; result: Operation };
   "accounts.checkPromos": { params: AccountPromoParams; result: Operation };
   "accounts.readAccessTokens": { params: AccountTokenParams; result: AccountTokenResult };
@@ -1648,6 +1746,9 @@ export interface IpcMethodContracts {
   "scheduler.stop": { params: Record<string, never>; result: SchedulerResult };
   "settings.get": { params: Record<string, never>; result: SettingsResult };
   "settings.update": { params: SettingsUpdateParams; result: SettingsResult };
+  "mail.getSettings": { params: Record<string, never>; result: MailSettingsResult };
+  "mail.updateSettings": { params: MailSettingsUpdateParams; result: MailSettingsResult };
+  "mail.testConnection": { params: MailTestParams; result: MailTestResult };
   "operations.get": { params: IdParams; result: Operation };
   "operations.listActive": { params: Record<string, never>; result: OperationArray };
   "operations.list": { params: OperationListParams; result: OperationArray };
@@ -1674,6 +1775,7 @@ export const OPERATION_METHODS = [
   "temporaryWindows.detectRegion",
   "accounts.refreshStatus",
   "accounts.inspect",
+  "accounts.relogin",
   "accounts.checkPlans",
   "accounts.checkPromos",
   "accounts.runNow",

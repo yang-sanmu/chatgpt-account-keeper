@@ -60,6 +60,7 @@ import {
 } from "./errors.js";
 import { OperationRegistry, statusRefreshFailure } from "./operations.js";
 import { InMemoryReceiptStore, ReceiptCoordinator } from "./receipts.js";
+import { testImapConnection as defaultTestImapConnection } from "../mail/sharedInbox.js";
 import { environmentSnapshot, environmentPending, validateFixedEnvironment } from "../environmentConfig.js";
 import { getBrowserEnvironmentSnapshots } from "../browser.js";
 import { getStrictNetworkCapabilities } from "../network/strictConfig.js";
@@ -83,6 +84,8 @@ export const MUTATING_METHODS = new Set([
   "accounts.remove",
   "accounts.refreshStatus",
   "accounts.inspect",
+  "accounts.relogin",
+  "accounts.setCredentials",
   "accounts.checkPlans",
   "accounts.checkPromos",
   "accounts.runNow",
@@ -118,6 +121,7 @@ export const MUTATING_METHODS = new Set([
   "scheduler.start",
   "scheduler.stop",
   "settings.update",
+  "mail.updateSettings",
 ]);
 
 const DRAIN_ALLOWED_MUTATIONS = new Set([
@@ -176,6 +180,9 @@ export function createDefaultRuntime(overrides = {}) {
     deleteCachedStatus: defaultDeleteCachedStatus,
     setCachedPromo: defaultSetCachedPromo,
     accountPlans: null,
+    mailCredentials: null,
+    sharedInboxRegistry: null,
+    testImapConnection: defaultTestImapConnection,
     createPlanClient,
     refreshAccount: defaultRefreshAccount,
     restartStatusMonitor: defaultRestartStatusMonitor,
@@ -293,6 +300,7 @@ function accountViewContext(runtime) {
     lastResults: schedulerStatus.lastResults ?? {},
     groups: new Map((runtime.store.getGroups() ?? []).map((group) => [group.id, group])),
     nodes: new Map((runtime.proxies.getNodes() ?? []).map((node) => [node.id, node])),
+    credStatuses: runtime.mailCredentials?.listCredentialStatusMap?.() ?? new Map(),
   };
 }
 
@@ -333,6 +341,9 @@ export function publicAccount(account, runtime, context = accountViewContext(run
     ...publicPromo(status),
     ...runtime.accountPlans?.getPlan(account.id),
     ...runtime.accountPlans?.getTokenStatus?.(account.id),
+    ...(context.credStatuses?.get(account.id) ??
+      runtime.mailCredentials?.getCredentialStatus?.(account.id) ??
+      {}),
     pageOpen: !!openPages[account.id],
     // 轮换进度：界面上"当前主题 + 已完成/目标窗口"直接来自这三项。
     rotationCurrentSet: rotation.currentSet ?? null,
@@ -656,6 +667,8 @@ export class ApplicationServices {
     add("accounts.getStatus", this._accountsGetStatus);
     add("accounts.refreshStatus", this._accountsRefreshStatus);
     add("accounts.inspect", this._accountsInspect);
+    add("accounts.relogin", this._accountsRelogin);
+    add("accounts.setCredentials", this._accountsSetCredentials);
     add("accounts.checkPlans", this._accountsCheckPlans);
     add("accounts.checkPromos", (params) => this._accountsQuery(params, true));
     add("accounts.readAccessTokens", this._accountsReadAccessTokens);
@@ -717,6 +730,9 @@ export class ApplicationServices {
     add("scheduler.stop", this._schedulerStop);
     add("settings.get", this._settingsGet);
     add("settings.update", this._settingsUpdate);
+    add("mail.getSettings", this._mailGetSettings);
+    add("mail.updateSettings", this._mailUpdateSettings);
+    add("mail.testConnection", this._mailTestConnection);
     add("operations.get", this._operationsGet);
     add("operations.listActive", this._operationsListActive);
     add("operations.list", this._operationsList);
@@ -805,7 +821,13 @@ export class ApplicationServices {
       ...(this.operations.listLatestAccountRuns?.() ?? []),
       ...(this.operations.listLatestAccountChecks?.() ?? []),
       ...activeOperations.filter(({ kind }) =>
-        ["account-inspection", "account-plan-check", "account-plan-check-single", "account-promo-check"].includes(kind)),
+        [
+          "account-inspection",
+          "account-relogin",
+          "account-plan-check",
+          "account-plan-check-single",
+          "account-promo-check",
+        ].includes(kind)),
     ]) {
       operations.set(operation.id, operation);
     }
@@ -1105,7 +1127,7 @@ export class ApplicationServices {
     if (!node || node.enabled === false || node.missing) fail(ERROR_CODES.PROXY_UNAVAILABLE, "所选节点不可用");
   }
 
-  _enqueueInspection(id, proxyId) {
+  _enqueueInspection(id, proxyId, autoRelogin = false) {
     return this.runtime.enqueue({
       accountId: id,
       workKind: "status-check",
@@ -1113,43 +1135,147 @@ export class ApplicationServices {
       dedupeParams: {
         ...(this.runtime.accountPlans ? { captureAccessToken: true } : {}),
         ...(proxyId ? { proxyId } : {}),
+        ...(autoRelogin ? { autoRelogin: true } : {}),
       },
       message: "等待状态检查",
     });
   }
 
+  _enqueueRelogin(id, proxyId, { force = false, headless = null } = {}) {
+    return this.runtime.enqueue({
+      accountId: id,
+      workKind: "account-relogin",
+      kind: "account-relogin-item",
+      dedupeParams: {
+        ...(this.runtime.accountPlans ? { captureAccessToken: true } : {}),
+        ...(proxyId ? { proxyId } : {}),
+        ...(force ? { force: true } : {}),
+        ...(typeof headless === "boolean" ? { headless } : {}),
+      },
+      message: "等待自动重登",
+    });
+  }
+
+  _runQueuedAccountBatch({ ids, proxyId, kind, verb, queueMissingMessage, enqueueOne, failureText }) {
+    if (proxyId) this._requireCheckProxy(proxyId);
+    if (!this.runtime.enqueue) fail(ERROR_CODES.INTERNAL, queueMissingMessage);
+    if (
+      this.operations
+        .listActive()
+        .some(({ kind: activeKind }) => activeKind === "account-inspection" || activeKind === "account-relogin")
+    ) {
+      fail(ERROR_CODES.RESOURCE_BUSY, "已有巡检任务或自动重登任务在执行，请等待完成");
+    }
+
+    return this.operations.create(
+      kind,
+      async ({ update }) => {
+        const batch = accountCheckReporter(ids, update, verb);
+        await Promise.all(
+          ids.map(async (id) => {
+            let detail;
+            try {
+              if (!this.runtime.store.getAccount(id)) {
+                detail = "账号已删除";
+              } else {
+                const operation = enqueueOne(id);
+                const settled = await this.operations.waitForTerminal(operation.id);
+                detail = failureText(settled ?? operation);
+              }
+            } catch (error) {
+              detail = normalizeApplicationError(error).message;
+            }
+            batch.report(id, detail);
+          })
+        );
+        if (this.draining) {
+          update({ state: "cancelled", stage: null, message: `Agent 正在退出，${verb}已中断`, blocksUpdate: false });
+          return;
+        }
+        return batch.result();
+      },
+      { stage: "queued", message: `等待${verb} ${ids.length} 个账号`, progress: 0 }
+    );
+  }
+
   _accountsInspect(params) {
     const ids = requireAccountIds(params.ids);
     const proxyId = Object.hasOwn(params, "proxyId") ? requireId(params, "proxyId") : null;
-    if (proxyId) this._requireCheckProxy(proxyId);
-    if (!this.runtime.enqueue) fail(ERROR_CODES.INTERNAL, "批量巡检需要后台队列");
-    if (this.operations.listActive().some(({ kind }) => kind === "account-inspection")) {
-      fail(ERROR_CODES.RESOURCE_BUSY, "已有巡检任务在执行，请等待完成");
+    const autoRelogin = params.autoRelogin === true;
+    return this._runQueuedAccountBatch({
+      ids,
+      proxyId,
+      kind: "account-inspection",
+      verb: "巡检",
+      queueMissingMessage: "批量巡检需要后台队列",
+      enqueueOne: (id) => this._enqueueInspection(id, proxyId, autoRelogin),
+      failureText: inspectionFailure,
+    });
+  }
+
+  _accountsRelogin(params) {
+    const ids = requireAccountIds(params.ids);
+    const proxyId = Object.hasOwn(params, "proxyId") ? requireId(params, "proxyId") : null;
+    const force = params.force === true;
+    const headless =
+      typeof params.headless === "boolean"
+        ? params.headless
+        : this.runtime.mailCredentials?.getSettings?.().reloginHeadless ?? null;
+    return this._runQueuedAccountBatch({
+      ids,
+      proxyId,
+      kind: "account-relogin",
+      verb: "自动重登",
+      queueMissingMessage: "批量自动重登需要后台队列",
+      enqueueOne: (id) => this._enqueueRelogin(id, proxyId, { force, headless }),
+      failureText: (operation) => {
+        if (operation?.state !== "succeeded") {
+          return operation?.error?.message || operation?.message || "自动重登失败";
+        }
+        return statusRefreshFailure(operation.result);
+      },
+    });
+  }
+
+  _requireMailCredentials() {
+    if (!this.runtime.ipcAuthToken || !this.runtime.mailCredentials) {
+      fail(ERROR_CODES.INTERNAL, "请通过桌面应用连接到已认证的 Agent");
+    }
+    return this.runtime.mailCredentials;
+  }
+
+  _accountsSetCredentials(params) {
+    const id = requireId(params, "id");
+    const existing = this.runtime.store.getAccount(id);
+    if (!existing) fail(ERROR_CODES.NOT_FOUND, "账号不存在");
+
+    let nextEmail;
+    if (Object.hasOwn(params, "email")) {
+      if (params.email === null || params.email === "") {
+        nextEmail = null;
+      } else {
+        assertInput(typeof params.email === "string", "email 必须是字符串或 null");
+        const trimmed = params.email.trim();
+        assertInput(!trimmed || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed), "邮箱格式无效");
+        nextEmail = trimmed || null;
+      }
     }
 
-    return this.operations.create("account-inspection", async ({ update }) => {
-      const batch = accountCheckReporter(ids, update, "巡检");
-      await Promise.all(ids.map(async (id) => {
-        let detail;
-        try {
-          if (!this.runtime.store.getAccount(id)) {
-            detail = "账号已删除";
-          } else {
-            const operation = this._enqueueInspection(id, proxyId);
-            const settled = await this.operations.waitForTerminal(operation.id);
-            detail = inspectionFailure(settled ?? operation);
-          }
-        } catch (error) {
-          detail = normalizeApplicationError(error).message;
-        }
-        batch.report(id, detail);
-      }));
-      if (this.draining) {
-        update({ state: "cancelled", stage: null, message: "Agent 正在退出，巡检已中断", blocksUpdate: false });
-        return;
-      }
-      return batch.result();
-    }, { stage: "queued", message: `等待巡检 ${ids.length} 个账号`, progress: 0 });
+    const creds = this._requireMailCredentials();
+    if (Object.hasOwn(params, "password") || Object.hasOwn(params, "totpSecret")) {
+      creds.setAccountCredentials(id, {
+        ...(Object.hasOwn(params, "password") ? { password: params.password } : {}),
+        ...(Object.hasOwn(params, "totpSecret") ? { totpSecret: params.totpSecret } : {}),
+      });
+    }
+
+    const updated =
+      nextEmail !== undefined
+        ? this.runtime.store.updateAccount(id, { email: nextEmail })
+        : this.runtime.store.getAccount(id);
+    const result = publicAccount(updated, this.runtime);
+    this.events.publish("account.changed", result);
+    return result;
   }
 
   cancelAccountQuery() {
@@ -1873,6 +1999,42 @@ export class ApplicationServices {
     this.runtime.bumpConfigEpoch?.();
     this.events.publish("settings.changed", settings);
     return settings;
+  }
+
+  _mailGetSettings() {
+    if (!this.runtime.mailCredentials) {
+      return {
+        imapHost: null,
+        imapPort: 993,
+        imapTls: true,
+        imapUser: null,
+        imapPasswordConfigured: false,
+        autoReloginDefault: false,
+        reloginHeadless: null,
+      };
+    }
+    return this.runtime.mailCredentials.getSettings();
+  }
+
+  _mailUpdateSettings(params) {
+    const creds = this._requireMailCredentials();
+    const patch = params.patch ?? params;
+    return creds.updateSettings(patch);
+  }
+
+  async _mailTestConnection(params = {}) {
+    const saved = this.runtime.mailCredentials?.getImapSecretConfig?.() ?? null;
+    const host = Object.hasOwn(params, "imapHost") ? String(params.imapHost || "").trim() : saved?.host || "";
+    const port = Object.hasOwn(params, "imapPort") ? params.imapPort : saved?.port ?? 993;
+    const tls = Object.hasOwn(params, "imapTls") ? params.imapTls : saved?.tls ?? true;
+    const user = Object.hasOwn(params, "imapUser") ? String(params.imapUser || "").trim() : saved?.user || "";
+    let password = "";
+    if (Object.hasOwn(params, "imapPassword") && params.imapPassword) {
+      password = String(params.imapPassword);
+    } else if (saved?.password && (!user || user.toLowerCase() === String(saved.user || "").toLowerCase())) {
+      password = saved.password;
+    }
+    return await this.runtime.testImapConnection({ host, port, tls, user, password });
   }
 
   _operationsGet(params) {

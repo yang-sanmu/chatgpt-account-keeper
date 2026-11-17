@@ -1,5 +1,6 @@
 import { Page, PageBody, PageHeader } from "@/components/layout/page";
 import { AgentSettingsCard } from "./agent-settings-card";
+import { MailSettingsCard } from "./mail-settings-card";
 import { DesktopSettingsCard } from "./desktop-settings-card";
 import { AboutCard } from "./about-card";
 
@@ -12,6 +13,7 @@ export function SettingsPage() {
       />
       <PageBody className="flex flex-col gap-6">
         <AgentSettingsCard />
+        <MailSettingsCard />
         <DesktopSettingsCard />
         <AboutCard />
       </PageBody>

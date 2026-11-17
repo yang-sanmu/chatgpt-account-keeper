@@ -11,6 +11,8 @@ import {
 } from "../statusMonitor.js";
 import { configureStatusBackend } from "../statusCacheStore.js";
 import { AccountPlanStore } from "../persistence/accountPlans.js";
+import { MailCredentialStore } from "../persistence/mailCredentials.js";
+import { SharedInboxRegistry, testImapConnection } from "../mail/sharedInbox.js";
 import { startProfileMaintenance } from "../profileMaintenance.js";
 import { checkSelectors, runOnce, scheduler } from "../scheduler.js";
 import { closeAllBrowserContexts } from "../browser.js";
@@ -95,6 +97,7 @@ async function performShutdown(exitCode, { preserveScheduler }) {
     closeInteractive: async () => {
       await agent?.services.runtime.icloud?.shutdown();
       await agent?.services.runtime.temporaryWindows?.shutdown();
+      await agent?.services.runtime.sharedInboxRegistry?.dispose().catch(() => {});
       await closeAllLoginTasks().catch(() => {});
       await closeAllOpenPages().catch(() => {});
     },
@@ -237,6 +240,8 @@ async function main() {
   const adapters = createSqliteRuntimeAdapters(repository);
   const ipcAuthToken = process.env.GPT_ACCOUNT_KEEPER_IPC_TOKEN || null;
   const accountPlans = ipcAuthToken ? new AccountPlanStore(repository.db, ipcAuthToken) : null;
+  const mailCredentials = ipcAuthToken ? new MailCredentialStore(repository.db, ipcAuthToken) : null;
+  const sharedInboxRegistry = new SharedInboxRegistry();
   backendRestorers = [
     store.configureStoreBackend(adapters.store),
     configureHistoryBackend(adapters.history),
@@ -255,6 +260,9 @@ async function main() {
     runtime: {
       ipcAuthToken,
       accountPlans,
+      mailCredentials,
+      sharedInboxRegistry,
+      testImapConnection,
       // 仅这个回调负责「关闭失败」的兜底退出。system.shutdown 是 fire-and-forget：
       // 它把 {accepted:true} 先返回给 Desktop，真正的关闭在 setTimeout 里异步跑。
       // 若那条链抛错，没有人会再推进退出，Agent 会留在半关闭状态。

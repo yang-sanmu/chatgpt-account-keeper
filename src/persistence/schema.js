@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-export const SCHEMA_VERSION = 15;
+export const SCHEMA_VERSION = 16;
 
 const SCHEMA_V1 = String.raw`
 CREATE TABLE IF NOT EXISTS command_receipts (
@@ -521,6 +521,34 @@ const SCHEMA_V15 = String.raw`
 ALTER TABLE proxy_subscriptions ADD COLUMN link_revision INTEGER NOT NULL DEFAULT 0;
 `;
 
+const SCHEMA_V16 = `
+CREATE TABLE IF NOT EXISTS mail_settings (
+  singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
+  imap_host TEXT,
+  imap_port INTEGER NOT NULL DEFAULT 993 CHECK (imap_port BETWEEN 1 AND 65535),
+  imap_tls INTEGER NOT NULL DEFAULT 1 CHECK (imap_tls IN (0, 1)),
+  imap_user TEXT,
+  imap_sealed_password TEXT,
+  auto_relogin_default INTEGER NOT NULL DEFAULT 0 CHECK (auto_relogin_default IN (0, 1)),
+  relogin_headless INTEGER CHECK (relogin_headless IN (0, 1)),
+  updated_at TEXT NOT NULL
+);
+
+INSERT OR IGNORE INTO mail_settings (
+  singleton_id, imap_host, imap_port, imap_tls, imap_user, imap_sealed_password,
+  auto_relogin_default, relogin_headless, updated_at
+) VALUES (
+  1, NULL, 993, 1, NULL, NULL, 0, NULL, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+);
+
+CREATE TABLE IF NOT EXISTS account_credentials (
+  account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
+  sealed_password TEXT,
+  sealed_totp_secret TEXT,
+  updated_at TEXT NOT NULL
+);
+`;
+
 export const MIGRATIONS = Object.freeze([
   Object.freeze({
     version: 1,
@@ -557,6 +585,7 @@ export const MIGRATIONS = Object.freeze([
   Object.freeze({ version: 13, name: "account-plans", sql: SCHEMA_V13, checksum: createHash("sha256").update(SCHEMA_V13).digest("hex") }),
   Object.freeze({ version: 14, name: "proxy-subscriptions", sql: SCHEMA_V14, checksum: createHash("sha256").update(SCHEMA_V14).digest("hex") }),
   Object.freeze({ version: 15, name: "proxy-subscription-link-revision", sql: SCHEMA_V15, checksum: createHash("sha256").update(SCHEMA_V15).digest("hex") }),
+  Object.freeze({ version: 16, name: "mail-settings-and-account-credentials", sql: SCHEMA_V16, checksum: createHash("sha256").update(SCHEMA_V16).digest("hex") }),
 ]);
 
 export const MIGRATION_LEDGER_SQL = String.raw`

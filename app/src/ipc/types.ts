@@ -59,6 +59,8 @@ export interface Account {
   status: string;
   statusCheckedAt: string | null;
   stale: boolean;
+  lastCheckState?: string | null;
+  lastCheckDetail?: string | null;
   promoEligibility: PromoEligibility | null;
   promoCheckedAt: string | null;
   promoStale: boolean;
@@ -68,6 +70,8 @@ export interface Account {
   planCheckDetail?: string | null;
   hasAccessToken?: boolean;
   accessTokenExpiresAt?: string | null;
+  hasPassword?: boolean;
+  hasTotpSecret?: boolean;
   exitNode: string | null;
   exitNodeMissing: boolean;
   rotationTopic: string | null;
@@ -316,4 +320,10 @@ export type {
   BrowserRun,
   BrowserRunListResult,
   BrowserRunCloseResult,
+  MailSettingsResult,
+  MailSettingsUpdateParams,
+  MailTestParams,
+  MailTestResult,
+  AccountCredentialsParams,
+  AccountReloginParams,
 } from "./generated";

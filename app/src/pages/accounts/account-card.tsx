@@ -71,6 +71,7 @@ interface AccountCardProps {
   id: string;
   onDelete: (id: string, email: string) => void;
   onCheckPlan?: (id: string) => void;
+  onEditCredentials?: (id: string) => void;
 }
 
 const PLAN_LABELS = new Map([
@@ -98,7 +99,7 @@ function TokenStatus(account: Pick<Account, "hasAccessToken" | "accessTokenExpir
   );
 }
 
-export const AccountCard = React.memo(({ id, onDelete, onCheckPlan }: AccountCardProps) => {
+export const AccountCard = React.memo(({ id, onDelete, onCheckPlan, onEditCredentials }: AccountCardProps) => {
   const record = useAccountRecord(id);
   const runningOp = useAccountRunningOperation(id);
   const lastRun = useAccountLastRun(id);
@@ -578,6 +579,22 @@ export const AccountCard = React.memo(({ id, onDelete, onCheckPlan }: AccountCar
                   <RefreshCw className="size-4" />
                 )}
               </Button>
+
+              {onEditCredentials && (
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={() => onEditCredentials(id)}
+                  aria-label="登录凭据"
+                  title={
+                    acc.hasPassword || acc.hasTotpSecret
+                      ? "编辑登录凭据（已保存密码/2FA）或执行自动重登"
+                      : "编辑邮箱/密码/2FA 凭据或执行自动重登"
+                  }
+                >
+                  <KeyRound className="size-4" />
+                </Button>
+              )}
 
               {onCheckPlan && (
                 <Button variant="ghost" size="icon-sm" onClick={() => onCheckPlan(id)} aria-label="查询套餐" title="查询套餐">

@@ -61,6 +61,11 @@ import type {
   Account,
   AgentEventEnvelope,
   AgentSettings,
+  MailSettingsResult,
+  MailSettingsUpdateParams,
+  MailTestParams,
+  MailTestResult,
+  AccountCredentialsParams,
   BootstrapSnapshot,
   BrowserRunListResult,
   ConnectionSnapshot,
@@ -201,6 +206,7 @@ interface KeeperState {
   browserRuns: BrowserRunListResult | null;
   queue: QueueSnapshot | null;
   agentSettings: AgentSettings | null;
+  mailSettings: MailSettingsResult | null;
   desktopSettings: DesktopSettings;
 
   profileScan: ProfileScanResult | null;
@@ -275,6 +281,10 @@ interface KeeperActions {
 
   updateDesktopSettings: (patch: Partial<DesktopSettings>) => Promise<void>;
   updateAgentSettings: (patch: Partial<AgentSettings>) => Promise<void>;
+  loadMailSettings: () => Promise<MailSettingsResult>;
+  updateMailSettings: (patch: MailSettingsUpdateParams) => Promise<MailSettingsResult>;
+  testMailConnection: (params?: MailTestParams) => Promise<MailTestResult>;
+  setAccountCredentials: (params: AccountCredentialsParams) => Promise<void>;
 
   checkForUpdate: () => Promise<void>;
   installPendingUpdate: () => Promise<void>;
@@ -319,6 +329,7 @@ const INITIAL_STATE: KeeperState = {
   browserRuns: null,
   queue: null,
   agentSettings: null,
+  mailSettings: null,
   desktopSettings: DEFAULT_DESKTOP_SETTINGS,
 
   profileScan: null,
@@ -399,6 +410,8 @@ function toStatusPatch(payload: unknown): AccountStatusPatch {
 
   const stale = optionalBoolean(raw.stale);
   if (stale !== undefined) patch.stale = stale;
+  if (raw.lastCheckState !== undefined) patch.lastCheckState = optionalString(raw.lastCheckState) ?? null;
+  if (raw.lastCheckDetail !== undefined) patch.lastCheckDetail = optionalString(raw.lastCheckDetail) ?? null;
 
   if (raw.promoEligibility === null) {
     patch.promoEligibility = null;
@@ -422,6 +435,8 @@ function toStatusPatch(payload: unknown): AccountStatusPatch {
     if (raw[key] !== undefined) patch[key] = optionalString(raw[key]) ?? null;
   }
   if (typeof raw.hasAccessToken === "boolean") patch.hasAccessToken = raw.hasAccessToken;
+  if (typeof raw.hasPassword === "boolean") patch.hasPassword = raw.hasPassword;
+  if (typeof raw.hasTotpSecret === "boolean") patch.hasTotpSecret = raw.hasTotpSecret;
 
   if (raw.statusCheckedAt !== undefined) {
     patch.statusCheckedAt = optionalString(raw.statusCheckedAt) ?? null;
@@ -576,6 +591,9 @@ export const useKeeperStore = create<KeeperStore>()((set, get) => {
     });
     // 断线期间的终态可能只出现在重连快照里。
     for (const operation of snapshot.operations ?? []) settleOperationWaiter(operation);
+    void agentCall("mail.getSettings", {})
+      .then((mailSettings) => set({ mailSettings }))
+      .catch(() => {});
   }
 
   function settleOperationWaiter(operation: Operation): boolean {
@@ -1308,6 +1326,43 @@ export const useKeeperStore = create<KeeperStore>()((set, get) => {
         notify.success("Agent 设置已保存");
       } catch (error) {
         notify.error("保存 Agent 设置失败", error);
+        throw error;
+      }
+    },
+
+    loadMailSettings: async () => {
+      const mailSettings = await agentCall("mail.getSettings", {});
+      set({ mailSettings });
+      return mailSettings;
+    },
+
+    updateMailSettings: async (patch) => {
+      try {
+        const mailSettings = await agentCall("mail.updateSettings", patch, await newCommandId());
+        set({ mailSettings });
+        notify.success("接码邮箱与自动重登设置已保存");
+        return mailSettings;
+      } catch (error) {
+        notify.error("保存接码邮箱设置失败", error);
+        throw error;
+      }
+    },
+
+    testMailConnection: async (params = {}) => {
+      return await agentCall("mail.testConnection", params);
+    },
+
+    setAccountCredentials: async (params) => {
+      try {
+        const updated = normalizeAccount(
+          await agentCall("accounts.setCredentials", params, await newCommandId())
+        );
+        set((state) => ({
+          accounts: applyAccountChanged(state.accounts, updated).records,
+        }));
+        notify.success("账号登录凭据已更新");
+      } catch (error) {
+        notify.error("更新账号凭据失败", error);
         throw error;
       }
     },

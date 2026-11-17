@@ -18,6 +18,7 @@ export const WORK_KINDS = Object.freeze({
   accountRun: "account-run",
   statusCheck: "status-check",
   selectorCheck: "selector-check",
+  accountRelogin: "account-relogin",
 });
 
 export const SOURCES = Object.freeze({

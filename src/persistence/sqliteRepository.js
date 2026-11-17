@@ -24,7 +24,7 @@ const LATEST_ACCOUNT_CHECK_IDS_SQL = `
     FROM (
       SELECT id, kind, started_at, rowid, state = 'succeeded' AND result_json IS NOT NULL AS has_result
       FROM operations
-      WHERE kind IN ('account-plan-check', 'account-promo-check', 'account-inspection')
+      WHERE kind IN ('account-plan-check', 'account-promo-check', 'account-inspection', 'account-relogin')
     )
   ) WHERE batch_rank = 1 OR (has_result AND result_rank = 1)`;
 
@@ -461,6 +461,7 @@ export class KeeperRepository {
     const tables = [
       "temporary_windows",
       "accounts",
+      "account_credentials",
       "groups",
       "proxy_nodes",
       "proxy_subscriptions",
@@ -472,6 +473,22 @@ export class KeeperRepository {
       "operations",
     ];
     if (tables.some((table) => this.db.prepare(`SELECT 1 FROM ${table} LIMIT 1`).get())) {
+      return false;
+    }
+
+    const mailSettings = this.db.prepare("SELECT * FROM mail_settings").all();
+    if (mailSettings.length !== 1) return false;
+    const [mail] = mailSettings;
+    if (
+      mail.singleton_id !== 1 ||
+      mail.imap_host !== null ||
+      mail.imap_port !== 993 ||
+      mail.imap_tls !== 1 ||
+      mail.imap_user !== null ||
+      mail.imap_sealed_password !== null ||
+      mail.auto_relogin_default !== 0 ||
+      mail.relogin_headless !== null
+    ) {
       return false;
     }
 

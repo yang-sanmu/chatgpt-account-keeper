@@ -12,6 +12,7 @@ import { ScheduleClock, planOverdueRecovery } from "../scheduleClock.js";
 import { STAGES } from "../application/backgroundQueue.js";
 import { isQuarantined, release as releaseAccountLock } from "../locks.js";
 import { isCancellation, raceSignal, throwIfCancelled } from "../cancellation.js";
+import { autoReloginAccount, shouldAttemptAutoRelogin } from "../autoRelogin.js";
 
 /**
  * Agent 组合根（计划 §2）。
@@ -45,6 +46,7 @@ export async function composeBackground({
   // 服务 runtime 在组合完成之后才存在。
   recordConversation = null,
   accountViewRuntime = null,
+  autoRelogin = autoReloginAccount,
 }) {
   // 缺省不给 []：那正是「所有绑定了分组代理的账号一律被判为节点不可用」的成因，
   // 而且它静默——每个账号各自失败，没有任何一处报错。必须在启动时就炸。
@@ -204,7 +206,9 @@ export async function composeBackground({
       let launched;
       try {
         launched = await launchChrome(account, {
-          headless: store.getSettings().headless,
+          headless: typeof context.dedupeParams?.headless === "boolean"
+            ? context.dedupeParams.headless
+            : store.getSettings().headless,
           runToken,
           signal,
           inspectionProxyUrl,
@@ -390,22 +394,61 @@ export async function composeBackground({
     return failIfNotOk(result, "自动对话执行失败");
   });
 
+  const publishAccountRefresh = (latest, value, { includeAccount = false } = {}) => {
+    const viewRuntime = accountViewRuntime?.();
+    const accountPlans = viewRuntime?.accountPlans;
+    events?.publish("accountStatus.changed", publicStatus(latest, value, accountPlans));
+    if (includeAccount && viewRuntime && latest) {
+      events?.publish("account.changed", publicAccount(latest, viewRuntime));
+    }
+  };
+
+  const runWithOptionalProxy = (context, body) => {
+    const proxyId = context.dedupeParams.proxyId;
+    return proxyId
+      ? withInspectionProxy(proxyId, context.signal, (url) => withBrowserRun(context, body, url))
+      : withBrowserRun(context, body);
+  };
+
   // 状态检查同样经 withBrowserRun：它自己走账号锁 + launch 的老路会在队列已持锁时
   // 被 isBusy 判为忙碌并直接返回 cached skipped，巡检永远不启动 Chrome。
   queue.registerHandler(WORK_KINDS.statusCheck, async (context) => {
     const refresh = async ({ signal, page, account }) => {
-      const accountPlans = accountViewRuntime?.()?.accountPlans;
-      const value = await refreshAccount(account, {
+      const viewRuntime = accountViewRuntime?.();
+      const accountPlans = viewRuntime?.accountPlans;
+      let didRelogin = false;
+      let value = await refreshAccount(account, {
         page, signal, accountPlans: context.dedupeParams?.captureAccessToken ? accountPlans : undefined,
       });
+      if (context.dedupeParams?.autoRelogin && shouldAttemptAutoRelogin(value)) {
+        didRelogin = true;
+        const latestBefore = store.getAccount(account.id) ?? account;
+        context.setStage?.("relogin", "会话失效或返回 401，尝试自动重登");
+        const reloginRes = await autoRelogin(
+          latestBefore,
+          {
+            page,
+            signal,
+            accountPlans,
+            mailCredentials: viewRuntime?.mailCredentials,
+            sharedInboxRegistry: viewRuntime?.sharedInboxRegistry,
+            refreshAccount: (target, opts) =>
+              refreshAccount(target, {
+                ...opts,
+                accountPlans: context.dedupeParams?.captureAccessToken ? accountPlans : undefined,
+              }),
+            setStage: context.setStage,
+            log,
+          },
+          { skipInitialCheck: true }
+        );
+        if (reloginRes?.status) value = reloginRes.status;
+      }
       const latest = store.getAccount(account.id) ?? account;
-      events?.publish("accountStatus.changed", publicStatus(latest, value, accountPlans));
+      publishAccountRefresh(latest, value, { includeAccount: didRelogin });
       return value;
     };
-    const proxyId = context.dedupeParams.proxyId;
-    const result = proxyId
-      ? await withInspectionProxy(proxyId, context.signal, (url) => withBrowserRun(context, refresh, url))
-      : await withBrowserRun(context, refresh);
+    const result = await runWithOptionalProxy(context, refresh);
     const failure = statusRefreshFailure(result);
     if (failure) {
       const error = new Error(failure);
@@ -413,6 +456,55 @@ export async function composeBackground({
       throw error;
     }
     if (result?.tokenStatus === "saved") context.setStage("complete", "巡检完成，已保存 accessToken");
+    return result;
+  });
+
+  queue.registerHandler(WORK_KINDS.accountRelogin, async (context) => {
+    const runRelogin = async ({ signal, page, account }) => {
+      const viewRuntime = accountViewRuntime?.();
+      const accountPlans = viewRuntime?.accountPlans;
+      const force = Boolean(context.dedupeParams?.force);
+      const wrapRefresh = (target, opts) =>
+        refreshAccount(target, { ...opts, accountPlans });
+
+      if (!force) {
+        const preCheck = await wrapRefresh(account, { page, signal, accountPlans });
+        if (preCheck?.lastCheckState === "ok" && preCheck?.tokenStatus !== "unavailable") {
+          const latest = store.getAccount(account.id) ?? account;
+          publishAccountRefresh(latest, preCheck);
+          return preCheck;
+        }
+      }
+
+      context.setStage?.("relogin", "正在执行自动重登");
+      const reloginRes = await autoRelogin(
+        store.getAccount(account.id) ?? account,
+        {
+          page,
+          signal,
+          accountPlans,
+          mailCredentials: viewRuntime?.mailCredentials,
+          sharedInboxRegistry: viewRuntime?.sharedInboxRegistry,
+          refreshAccount: wrapRefresh,
+          setStage: context.setStage,
+          log,
+        },
+        { force, skipInitialCheck: !force }
+      );
+      const latest = store.getAccount(account.id) ?? account;
+      const value = reloginRes?.status ?? { state: "ok", lastCheckState: "ok", tokenStatus: "unavailable" };
+      publishAccountRefresh(latest, value, { includeAccount: true });
+      return value;
+    };
+
+    const result = await runWithOptionalProxy(context, runRelogin);
+    const failure = statusRefreshFailure(result);
+    if (failure) {
+      const error = new Error(failure);
+      error.details = { result };
+      throw error;
+    }
+    context.setStage?.("complete", "自动重登成功，已保存 accessToken");
     return result;
   });
 

@@ -263,6 +263,8 @@ export function applyAccountRemoved(
 export interface AccountStatusPatch {
   status?: string;
   stale?: boolean;
+  lastCheckState?: string | null;
+  lastCheckDetail?: string | null;
   statusCheckedAt?: string | null;
   promoEligibility?: PromoEligibility | null;
   promoCheckedAt?: string | null;
@@ -273,6 +275,8 @@ export interface AccountStatusPatch {
   planCheckDetail?: string | null;
   hasAccessToken?: boolean;
   accessTokenExpiresAt?: string | null;
+  hasPassword?: boolean;
+  hasTotpSecret?: boolean;
   nextRunAt?: string | null;
   lastRunAt?: string | null;
   lastRunOk?: boolean | null;
@@ -292,6 +296,8 @@ export interface AccountStatusPatch {
 const STATUS_PATCH_FIELDS = [
   "status",
   "stale",
+  "lastCheckState",
+  "lastCheckDetail",
   "statusCheckedAt",
   "promoEligibility",
   "promoCheckedAt",
@@ -302,6 +308,8 @@ const STATUS_PATCH_FIELDS = [
   "planCheckDetail",
   "hasAccessToken",
   "accessTokenExpiresAt",
+  "hasPassword",
+  "hasTotpSecret",
   "nextRunAt",
   "lastRunAt",
   "lastRunOk",

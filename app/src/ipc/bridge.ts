@@ -321,6 +321,8 @@ export function normalizeAccount(raw: unknown): Account {
       : null;
 
   const stale = Boolean(r.stale);
+  const lastCheckState = typeof r.lastCheckState === "string" ? r.lastCheckState : null;
+  const lastCheckDetail = typeof r.lastCheckDetail === "string" ? r.lastCheckDetail : null;
   const promoEligibility = (
     r.promoEligibility === "free_trial" ||
     r.promoEligibility === "half_price" ||
@@ -391,6 +393,8 @@ export function normalizeAccount(raw: unknown): Account {
     status,
     statusCheckedAt,
     stale,
+    lastCheckState,
+    lastCheckDetail,
     promoEligibility,
     promoCheckedAt,
     promoStale,
@@ -400,6 +404,8 @@ export function normalizeAccount(raw: unknown): Account {
     planCheckDetail: typeof r.planCheckDetail === "string" ? r.planCheckDetail : null,
     hasAccessToken: typeof r.hasAccessToken === "boolean" ? r.hasAccessToken : undefined,
     accessTokenExpiresAt: typeof r.accessTokenExpiresAt === "string" ? r.accessTokenExpiresAt : null,
+    hasPassword: typeof r.hasPassword === "boolean" ? r.hasPassword : undefined,
+    hasTotpSecret: typeof r.hasTotpSecret === "boolean" ? r.hasTotpSecret : undefined,
     exitNode,
     exitNodeMissing,
     rotationTopic,

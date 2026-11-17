@@ -1,9 +1,9 @@
-import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from "node:crypto";
 import { accessTokenExpiry } from "../accessToken.js";
+import { deriveSealingKey, sealSecret, unsealSecret } from "./sealedBox.js";
 
 export class AccountPlanStore {
   constructor(db, ipcKey) {
-    this.key = hkdfSync("sha256", ipcKey, "", "keeper/account-access-token/v1", 32);
+    this.key = deriveSealingKey(ipcKey, "keeper/account-access-token/v1");
     // 对话和选择器自检也会确认登录邮箱，但只刷新状态缓存。
     this.read = db.prepare(`
       SELECT p.*, s.state = 'ok' AND lower(trim(s.email)) <> lower(trim(a.email)) AS identity_changed
@@ -27,11 +27,7 @@ export class AccountPlanStore {
 
   saveToken(id, email, token) {
     if (this.getToken(id)?.token === token) return;
-    const iv = randomBytes(12);
-    const cipher = createCipheriv("aes-256-gcm", this.key, iv);
-    cipher.setAAD(Buffer.from(id));
-    const ciphertext = Buffer.concat([cipher.update(token, "utf8"), cipher.final()]);
-    const sealed = Buffer.concat([iv, cipher.getAuthTag(), ciphertext]).toString("base64");
+    const sealed = sealSecret(this.key, id, token);
     if (!this.writeToken.run(sealed, id, email).changes) throw new Error("账号身份已变更");
   }
 
@@ -44,17 +40,8 @@ export class AccountPlanStore {
     if (row?.identity_changed) return null;
     const sealed = row?.sealed_token;
     if (!sealed) return null;
-    try {
-      const data = Buffer.from(sealed, "base64");
-      const decipher = createDecipheriv("aes-256-gcm", this.key, data.subarray(0, 12));
-      decipher.setAAD(Buffer.from(id));
-      decipher.setAuthTag(data.subarray(12, 28));
-      const token = Buffer.concat([decipher.update(data.subarray(28)), decipher.final()]).toString("utf8");
-      return { sealed, token };
-    } catch {
-      // 凭据损坏或本机密钥被重建时，可通过再次巡检补齐。
-      return null;
-    }
+    const token = unsealSecret(this.key, id, sealed);
+    return token == null ? null : { sealed, token };
   }
 
   getPlan(id) {

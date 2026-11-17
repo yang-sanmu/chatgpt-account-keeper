@@ -3,7 +3,7 @@ import { useAccountSelection, useBulkActions } from "@/store/selectors";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
-import { Play, RefreshCw, Trash2, Power, PowerOff, Tag, Copy } from "lucide-react";
+import { Play, RefreshCw, Trash2, Power, PowerOff, Tag, Copy, KeyRound } from "lucide-react";
 import { agentCall } from "@/ipc/bridge";
 import { notify } from "@/lib/notify";
 
@@ -12,9 +12,10 @@ interface BulkActionBarProps {
   onBulkDelete: (ids: string[]) => void;
   onCheckPromos: (ids: string[]) => void;
   onInspect: (ids: string[]) => void;
+  onRelogin?: (ids: string[]) => void;
 }
 
-export function BulkActionBar({ visibleIds, onBulkDelete, onCheckPromos, onInspect }: BulkActionBarProps) {
+export function BulkActionBar({ visibleIds, onBulkDelete, onCheckPromos, onInspect, onRelogin }: BulkActionBarProps) {
   const { selectedIds, count, tokenCount, select, clear } = useAccountSelection();
   const bulkActions = useBulkActions();
   const [copying, setCopying] = useState(false);
@@ -93,6 +94,11 @@ export function BulkActionBar({ visibleIds, onBulkDelete, onCheckPromos, onInspe
         <Button variant="secondary" size="sm" onClick={() => onInspect(selectedArray)} className="h-8">
           <RefreshCw className="mr-1.5 size-4" /> 批量巡检
         </Button>
+        {onRelogin && (
+          <Button variant="secondary" size="sm" onClick={() => onRelogin(selectedArray)} className="h-8">
+            <KeyRound className="mr-1.5 size-4" /> 批量自动重登
+          </Button>
+        )}
         <Button variant="secondary" size="sm" onClick={() => onCheckPromos(selectedArray)} className="h-8">
           <Tag className="mr-1.5 size-4" /> 批量查优惠
         </Button>

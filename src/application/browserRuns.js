@@ -49,6 +49,7 @@ export function purposeFor(workKind, effectiveSource) {
   }
   if (workKind === "status-check") return "status-check";
   if (workKind === "selector-check") return "selector-check";
+  if (workKind === "account-relogin") return "login";
   return workKind;
 }
 

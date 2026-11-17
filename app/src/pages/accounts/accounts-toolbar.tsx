@@ -23,11 +23,14 @@ interface AccountsToolbarProps {
   onCreateClick: () => void;
   canInspect: boolean;
   onInspect: () => void;
+  canRelogin: boolean;
+  failedCount: number;
+  onRelogin: () => void;
   canCheckPromos: boolean;
   onCheckPromos: () => void;
 }
 
-export function AccountsToolbar({ onCreateClick, canInspect, onInspect, canCheckPromos, onCheckPromos }: AccountsToolbarProps) {
+export function AccountsToolbar({ onCreateClick, canInspect, onInspect, canRelogin, failedCount, onRelogin, canCheckPromos, onCheckPromos }: AccountsToolbarProps) {
   const { filter, active, setFilter, reset } = useAccountFilter();
   const emailsRevealed = useKeeperStore((s) => s.emailsRevealed);
   const setEmailsRevealed = useKeeperStore((s) => s.setEmailsRevealed);
@@ -129,7 +132,11 @@ export function AccountsToolbar({ onCreateClick, canInspect, onInspect, canCheck
 
       <div className="ml-auto flex flex-wrap items-center gap-2">
         <Button variant="outline" size="sm" className="h-9" disabled={!canInspect} onClick={onInspect}
-          title="选择范围后巡检账号并更新 accessToken">一键巡检</Button>
+          title="选择范围后巡检账号并更新 accessToken（可选自动重登）">一键巡检</Button>
+        <Button variant="outline" size="sm" className="h-9" disabled={!canRelogin} onClick={onRelogin}
+          title="针对失效或 401 账号执行批量自动重登">
+          {failedCount > 0 ? `自动重登 (${failedCount})` : "一键重登"}
+        </Button>
         <Button variant="outline" size="sm" className="h-9" disabled={!canCheckPromos} onClick={onCheckPromos}>一键查优惠</Button>
         <Tooltip>
           <TooltipTrigger asChild>

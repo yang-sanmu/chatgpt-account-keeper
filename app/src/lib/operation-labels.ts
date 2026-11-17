@@ -28,6 +28,8 @@ const OPERATIONS: Record<string, OperationMeta> = {
   "account-plan-check-single": { action: "查询套餐", resource: "account" },
   "account-promo-check": { action: "查优惠", resource: "global" },
   "account-inspection": { action: "批量巡检", resource: "global" },
+  "account-relogin": { action: "批量自动重登", resource: "global" },
+  "account-relogin-item": { action: "自动重登", resource: "account" },
   "account-selector-check": { action: "检查选择器", resource: "account" },
   "account-busy": { action: "占用中", resource: "account" },
   "open-page": { action: "打开网页", resource: "account" },

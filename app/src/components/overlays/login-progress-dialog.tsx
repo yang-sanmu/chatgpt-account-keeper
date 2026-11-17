@@ -27,6 +27,7 @@ const STAGE_TITLES: Record<string, string> = {
   clearing: "正在清除旧登录态",
   saving: "正在保存登录状态",
   promo: "正在检查优惠资格",
+  token: "正在获取 accessToken",
 };
 
 export function LoginProgressDialog() {

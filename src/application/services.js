@@ -1528,7 +1528,13 @@ export class ApplicationServices {
             closeOnSuccess: params.closeOnSuccess !== false,
             checkPromoOnSuccess: params.checkPromoOnSuccess === true,
           },
-          { acquireInteractiveChrome: this.runtime.acquireInteractiveChrome }
+          {
+            acquireInteractiveChrome: this.runtime.acquireInteractiveChrome,
+            accountPlans: this.runtime.accountPlans,
+            getAccount: (id) => this.runtime.store.getAccount(id),
+            updateAccount: (id, patch) => this.runtime.store.updateAccount(id, patch),
+            ...(this.runtime.setCachedStatus ? { setCachedStatus: this.runtime.setCachedStatus } : {}),
+          }
         );
         if (started.status === "failed") throw loginFailure(started);
         let task = this.runtime.getLoginTask(started.taskId) ?? started;
@@ -1542,11 +1548,12 @@ export class ApplicationServices {
           task = this.runtime.getLoginTask(started.taskId);
         }
         if (!task) fail(ERROR_CODES.NOT_FOUND, "登录任务不存在");
+        // 必须发完整的账号视图：直接发 store 里的原始记录会让管理端收到一个
+        // 没有状态、出口和轮换字段的账号，界面上刚登录成功的账号反而变空；
+        // 失败/超时且此前执行过清理或探测时，也要把最新的状态与 Token 变更推给界面。
+        const latest = this.runtime.store.getAccount(accountId);
+        if (latest) this.events.publish("account.changed", publicAccount(latest, this.runtime));
         if (task.status === "success") {
-          // 必须发完整的账号视图：直接发 store 里的原始记录会让管理端收到一个
-          // 没有状态、出口和轮换字段的账号，界面上刚登录成功的账号反而变空。
-          const latest = this.runtime.store.getAccount(accountId);
-          if (latest) this.events.publish("account.changed", publicAccount(latest, this.runtime));
           update({ stage: "complete", message: task.message ?? "登录成功" });
           return task;
         }

@@ -621,13 +621,14 @@ export interface OpenPageMap {
 export interface LoginTaskResult {
   accountId: string;
   force: boolean;
-  status: "opening" | "clearing" | "waiting" | "promo" | "saving" | "success" | "failed" | "timeout";
+  status: "opening" | "clearing" | "waiting" | "promo" | "token" | "saving" | "success" | "failed" | "timeout";
   message: string;
   startedAt: string;
   finishedAt?: string;
   code?: string;
   conflictTaskId?: string;
   email?: string | null;
+  tokenStatus?: "saved" | "unavailable" | "failed";
 }
 /**
  * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema

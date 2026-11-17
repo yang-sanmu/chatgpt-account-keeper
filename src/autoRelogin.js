@@ -582,6 +582,11 @@ export async function autoReloginAccount(account, runtime = {}, options = {}) {
       throw new Error("清理过期会话超时，可能是浏览器页卡住");
     }
   );
+  try {
+    accountPlans?.clearToken?.(account.id);
+  } catch (error) {
+    log.warn?.(`[autoRelogin:${account.id}] 清除旧 accessToken 失败：${String(error?.message || error)}`);
+  }
 
   const deadline = Date.now() + timeoutMs;
   const state = {

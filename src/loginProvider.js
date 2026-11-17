@@ -109,13 +109,25 @@ export async function closeAllLoginTasks() {
  * 这类账号的旧 cookie 仍能让 /api/auth/session 返回 email，若不清就会一进来
  * 立刻被判定成功、窗口秒关，用户根本没机会重新登录。
  */
+function clearStoredToken(accountPlans, accountId) {
+  if (!accountPlans?.clearToken) return;
+  try {
+    accountPlans.clearToken(accountId);
+  } catch (error) {
+    log.warn(`账号 ${accountId} 清理旧 accessToken 失败: ${String(error?.message || error)}`);
+  }
+}
+
 export async function startLogin(account, opts = {}, runtime = {}) {
   pruneLoginTasks();
+  const findAccount = runtime.getAccount ?? getAccount;
+  const persistAccount = runtime.updateAccount ?? updateAccount;
   const launchBrowser = runtime.launchForAccount ?? launchForAccount;
   const inspectSession = runtime.checkSession ?? checkSession;
   const inspectPromo = runtime.checkPromoEligibility ?? checkPromoEligibility;
   const clearBrowserSession = runtime.clearSession ?? clearSession;
   const cacheStatus = runtime.setCachedStatus ?? setCachedStatus;
+  const accountPlans = runtime.accountPlans ?? null;
   const requestedForce = shouldClearSessionBeforeLogin(opts);
   let lastCachedObservation = null;
   const cacheChangedNonOkObservation = (observation, options = {}) => {
@@ -136,6 +148,9 @@ export async function startLogin(account, opts = {}, runtime = {}) {
     }
     lastCachedObservation = next;
     cacheStatus(account.id, next.state, next.email, next.detail);
+    if (next.state === SESSION_OUT || next.state === SESSION_REAUTH) {
+      clearStoredToken(accountPlans, account.id);
+    }
   };
   const existingTaskId = activeTaskByAccount.get(account.id);
   if (existingTaskId) {
@@ -181,7 +196,7 @@ export async function startLogin(account, opts = {}, runtime = {}) {
   const task = {
     accountId: account.id,
     force: requestedForce,
-    // opening -> waiting -> [promo] -> saving -> success | failed | timeout
+    // opening -> waiting -> [promo] -> [token] -> saving -> success | failed | timeout
     status: "opening",
     message: "正在打开浏览器…",
     startedAt: new Date().toISOString(),
@@ -233,7 +248,7 @@ export async function startLogin(account, opts = {}, runtime = {}) {
   withAccountLock(account.id, async () => {
     let context;
     try {
-      const liveAccount = getAccount(account.id) ?? account;
+      const liveAccount = findAccount(account.id) ?? account;
       const launched = acquireChrome
         ? await acquireChrome({
             accountId: liveAccount.id,
@@ -248,7 +263,7 @@ export async function startLogin(account, opts = {}, runtime = {}) {
       task.context = context;
       task.page = page;
 
-      const completeLogin = async (health) => {
+      const completeLogin = async (health, { refreshToken = false } = {}) => {
         let promo;
         if (opts.checkPromoOnSuccess === true) {
           // 单独的 promo 阶段，不复用 saving：前端要能说出"正在检查优惠资格"，
@@ -261,7 +276,65 @@ export async function startLogin(account, opts = {}, runtime = {}) {
             promo = { ok: false, detail: `优惠资格检查失败：${String(error?.message || error)}` };
           }
         }
-        const finish = () => finishSuccess(task, account, health, cacheStatus, promo);
+        let resolvedHealth = health;
+        let accessToken = health?.accessToken ?? null;
+        let tokenDetail = null;
+        if (accountPlans) {
+          const shouldProbeToken =
+            refreshToken || opts.checkPromoOnSuccess === true || !accessToken;
+          if (shouldProbeToken) {
+            if (!page.isClosed?.()) {
+              task.status = "token";
+              task.message = "登录成功，正在获取 accessToken…";
+              let tokenProbe = null;
+              try {
+                tokenProbe = await inspectSession(page, {
+                  captureAccessToken: true,
+                });
+              } catch (error) {
+                if (!accessToken) {
+                  tokenDetail = String(error?.message || error);
+                }
+              }
+              if (tokenProbe?.state === SESSION_OK && tokenProbe.accessToken) {
+                resolvedHealth = tokenProbe;
+                accessToken = tokenProbe.accessToken;
+              } else if (
+                tokenProbe?.state === SESSION_OUT ||
+                tokenProbe?.state === SESSION_REAUTH
+              ) {
+                cacheStatus(
+                  account.id,
+                  tokenProbe.state,
+                  tokenProbe.email ?? null,
+                  tokenProbe.detail ?? null
+                );
+                clearStoredToken(accountPlans, account.id);
+                throw new Error(tokenProbe.detail || "登录后会话已失效，请重新登录");
+              } else if (tokenProbe) {
+                const sameIdentity =
+                  !tokenProbe.email ||
+                  !health?.email ||
+                  tokenProbe.email.trim().toLowerCase() ===
+                    health.email.trim().toLowerCase();
+                if (!sameIdentity || !accessToken) {
+                  accessToken = null;
+                  tokenDetail = tokenProbe.detail ?? null;
+                }
+              }
+            } else if (!accessToken) {
+              tokenDetail = "浏览器页面已关闭，未能获取 accessToken";
+            }
+          }
+        }
+        const finish = () =>
+          finishSuccess(task, account, resolvedHealth, cacheStatus, promo, {
+            accountPlans,
+            accessToken,
+            tokenDetail,
+            getAccount: findAccount,
+            updateAccount: persistAccount,
+          });
         if (opts.closeOnSuccess === false && !page.isClosed?.()) {
           // 交给打开网页管理器，登录任务完成后仍持有当前账号锁，直到窗口关闭。
           const retained = { context, page, release: releaseChrome };
@@ -297,15 +370,21 @@ export async function startLogin(account, opts = {}, runtime = {}) {
         context,
         page,
         url: selectors.url,
-        checkSession: inspectSession,
+        checkSession: (targetPage) =>
+          inspectSession(
+            targetPage,
+            accountPlans ? { captureAccessToken: true } : undefined
+          ),
         clearSession: clearBrowserSession,
-        onCleared: () =>
+        onCleared: () => {
           cacheStatus(
             account.id,
             SESSION_OUT,
             null,
             "用户已强制清理旧登录态，等待完成新登录"
-          ),
+          );
+          clearStoredToken(accountPlans, account.id);
+        },
       });
       if (!force) cacheChangedNonOkObservation(current);
 
@@ -329,7 +408,10 @@ export async function startLogin(account, opts = {}, runtime = {}) {
       const deadline = Date.now() + 5 * 60 * 1000;
       let health = null;
       while (Date.now() < deadline) {
-        health = await inspectSession(page, { attempts: 1 });
+        health = await inspectSession(page, {
+          attempts: 1,
+          ...(accountPlans ? { captureAccessToken: true } : {}),
+        });
         if (health.state === SESSION_OK) break;
         if (!force) cacheChangedNonOkObservation(health);
         await page.waitForTimeout(1000);
@@ -341,7 +423,7 @@ export async function startLogin(account, opts = {}, runtime = {}) {
 
       if (health?.state === SESSION_OK) {
         await page.waitForTimeout(1000); // 确保登录态落盘（关窗口前必须等，Cookie 才写得进 Profile）
-        await completeLogin(health);
+        await completeLogin(health, { refreshToken: true });
       } else {
         task.status = "timeout";
         task.finishedAt = new Date().toISOString();
@@ -374,26 +456,91 @@ export async function startLogin(account, opts = {}, runtime = {}) {
   return { taskId, status: task.status, force: task.force };
 }
 
-function finishSuccess(task, account, health, cacheStatus = setCachedStatus, promo) {
-  updateAccount(account.id, {
-    email: health.email,
+function formatLoginSuccessMessage(email, promo, tokenStatus, tokenDetail) {
+  const emailLabel = email || "当前账号";
+  if (tokenStatus === undefined) {
+    // 优惠检查失败时必须说清原因：只说「待复核」既不是结果也不是线索，用户无从判断是页面
+    // 关早了、接口不可用，还是网络超时。登录本身的成败与优惠检查无关，措辞上要分开。
+    return promo === undefined
+      ? `登录成功: ${emailLabel}`
+      : promo.ok === true
+        ? "登录成功，优惠资格检查完成"
+        : `登录成功；优惠资格未查到：${promo.detail || "本次未能确认优惠资格"}`;
+  }
+  const tokenText = tokenStatus === "saved"
+    ? "已保存 accessToken"
+    : tokenStatus === "failed"
+      ? "保存 accessToken 失败"
+      : tokenDetail
+        ? `未获取到 accessToken：${String(tokenDetail).split("\n", 1)[0]}`
+        : "未获取到 accessToken";
+  if (promo === undefined) {
+    return tokenStatus === "saved"
+      ? `登录成功，${tokenText}: ${emailLabel}`
+      : `登录成功（${emailLabel}）；${tokenText}`;
+  }
+  if (promo.ok === true) {
+    return tokenStatus === "saved"
+      ? `登录成功，优惠资格检查完成，${tokenText}`
+      : `登录成功，优惠资格检查完成；${tokenText}`;
+  }
+  const promoText = `优惠资格未查到：${promo.detail || "本次未能确认优惠资格"}`;
+  return `登录成功；${tokenText}；${promoText}`;
+}
+
+function finishSuccess(
+  task,
+  account,
+  health,
+  cacheStatus = setCachedStatus,
+  promo,
+  options = {}
+) {
+  const findAccount = options.getAccount ?? getAccount;
+  const persistAccount = options.updateAccount ?? updateAccount;
+  const accountPlans = options.accountPlans ?? null;
+  const previousAccount = findAccount?.(account.id) ?? account;
+  const previousEmail = previousAccount?.email?.trim().toLowerCase() || null;
+  const nextEmail = health.email?.trim().toLowerCase() || null;
+
+  persistAccount(account.id, {
+    ...(health.email ? { email: health.email } : {}),
     gptName: health.name ?? null,
   });
   if (promo !== undefined) {
-    cacheStatus(account.id, SESSION_OK, health.email, null, { promo });
+    cacheStatus(account.id, SESSION_OK, health.email ?? null, null, { promo });
   } else {
-    cacheStatus(account.id, SESSION_OK, health.email);
+    cacheStatus(account.id, SESSION_OK, health.email ?? null);
   }
+
+  let tokenStatus;
+  if (accountPlans) {
+    if (options.accessToken) {
+      try {
+        accountPlans.saveToken(account.id, health.email, options.accessToken);
+        tokenStatus = "saved";
+      } catch (error) {
+        log.warn(`账号 ${account.id} 更新本地 accessToken 失败: ${String(error?.message || error)}`);
+        tokenStatus = "failed";
+      }
+    } else {
+      tokenStatus = "unavailable";
+      if (previousEmail && nextEmail && previousEmail !== nextEmail) {
+        clearStoredToken(accountPlans, account.id);
+      }
+    }
+    task.tokenStatus = tokenStatus;
+  }
+
   task.email = health.email;
   task.status = "success";
   task.finishedAt = new Date().toISOString();
-  // 优惠检查失败时必须说清原因：只说「待复核」既不是结果也不是线索，用户无从判断是页面
-  // 关早了、接口不可用，还是网络超时。登录本身的成败与优惠检查无关，措辞上要分开。
-  task.message = promo === undefined
-    ? `登录成功: ${health.email}`
-    : promo.ok === true
-      ? "登录成功，优惠资格检查完成"
-      : `登录成功；优惠资格未查到：${promo.detail || "本次未能确认优惠资格"}`;
+  task.message = formatLoginSuccessMessage(
+    health.email,
+    promo,
+    tokenStatus,
+    options.tokenDetail
+  );
   log.info(`账号 ${account.id} 绑定邮箱: ${health.email}`);
 }
 

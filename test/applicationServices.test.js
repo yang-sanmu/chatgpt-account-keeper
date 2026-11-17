@@ -1310,3 +1310,105 @@ test("concurrent profile scan requests share one background scan", async () => {
     services.dispose();
   }
 });
+
+test("browser.startLogin 在同步已有会话及清除重登后保存 accessToken 并推送完整账号事件", async () => {
+  const Database = (await import("better-sqlite3")).default;
+  const { MIGRATIONS } = await import("../src/persistence/schema.js");
+  const { KeeperRepository } = await import("../src/persistence/sqliteRepository.js");
+  const { createSqliteRuntimeAdapters } = await import("../src/persistence/runtimeAdapters.js");
+  const { AccountPlanStore } = await import("../src/persistence/accountPlans.js");
+  const { startLogin, getLoginTask } = await import("../src/loginProvider.js");
+
+  const db = new Database(":memory:");
+  db.pragma("foreign_keys = ON");
+  for (const migration of MIGRATIONS) db.exec(migration.sql);
+  const repository = new KeeperRepository(db);
+  const adapters = createSqliteRuntimeAdapters(repository);
+  const accountPlans = new AccountPlanStore(db, "test-ipc-key");
+  const created = adapters.store.addAccount({ note: "login-token-e2e" });
+
+  const makeJwt = (expSec) =>
+    `hdr.${Buffer.from(JSON.stringify({ exp: expSec })).toString("base64url")}.sig`;
+  const firstToken = makeJwt(Math.floor(Date.now() / 1000) + 3600);
+  const secondToken = makeJwt(Math.floor(Date.now() / 1000) + 7200);
+
+  let scenario = "sync";
+  let checks = 0;
+  const services = new ApplicationServices({
+    runtime: fakeRuntime({
+      store: adapters.store,
+      accountPlans,
+      getCachedStatus: (id) => adapters.status.readPersistedStatuses()[id] ?? { state: null, loggedIn: false },
+      setCachedStatus: (id, state, email, detail) => {
+        repository.upsertStatus(id, { state, loggedIn: state === "ok", email, detail });
+      },
+      getLoginTask,
+      startLogin: (account, opts, loginRuntime) =>
+        startLogin(account, opts, {
+          ...loginRuntime,
+          launchForAccount: async () => ({
+            context: { close: async () => {} },
+            page: { goto: async () => {}, waitForTimeout: async () => {} },
+          }),
+          clearSession: async () => ({ ok: true, errors: [] }),
+          checkSession: async (_page, options) => {
+            assert.equal(options?.captureAccessToken, true);
+            checks++;
+            if (scenario === "sync") {
+              return { state: "ok", email: "user@example.com", name: "User", accessToken: firstToken };
+            }
+            if (scenario === "force-abort") {
+              if (checks === 1) return { state: "out", email: null };
+              throw new Error("Target page, context or browser has been closed");
+            }
+            if (checks === 1) return { state: "out", email: null };
+            return { state: "ok", email: "relogged@example.com", name: "Relogged", accessToken: secondToken };
+          },
+        }),
+    }),
+  });
+
+  const publishedAccounts = [];
+  services.events.subscribe((event) => {
+    if (event.event === "account.changed") publishedAccounts.push(event.payload);
+  });
+
+  try {
+    // 1. 同步已有会话
+    const syncOp = await services.execute(
+      request("browser.startLogin", { accountId: created.id, force: false })
+    );
+    const syncDone = await services.operations.waitForTerminal(syncOp.id);
+    assert.equal(syncDone.state, "succeeded");
+    assert.equal(accountPlans.getToken(created.id)?.token, firstToken);
+    assert.equal(publishedAccounts.at(-1)?.hasAccessToken, true);
+    assert.equal(publishedAccounts.at(-1)?.email, "user@example.com");
+
+    // 2. 清除状态后重新登录（更换为新账号邮箱）
+    scenario = "force";
+    checks = 0;
+    const forceOp = await services.execute(
+      request("browser.startLogin", { accountId: created.id, force: true })
+    );
+    const forceDone = await services.operations.waitForTerminal(forceOp.id);
+    assert.equal(forceDone.state, "succeeded");
+    assert.equal(accountPlans.getToken(created.id)?.token, secondToken);
+    assert.equal(publishedAccounts.at(-1)?.hasAccessToken, true);
+    assert.equal(publishedAccounts.at(-1)?.email, "relogged@example.com");
+
+    // 3. 清除状态后中途关闭窗口未完成登录，旧 Token 必须清除并通知界面
+    scenario = "force-abort";
+    checks = 0;
+    const abortOp = await services.execute(
+      request("browser.startLogin", { accountId: created.id, force: true })
+    );
+    const abortDone = await services.operations.waitForTerminal(abortOp.id);
+    assert.equal(abortDone.state, "failed");
+    assert.equal(accountPlans.getToken(created.id), null);
+    assert.equal(publishedAccounts.at(-1)?.hasAccessToken, false);
+    assert.equal(publishedAccounts.at(-1)?.state, "out");
+  } finally {
+    services.dispose();
+    db.close();
+  }
+});

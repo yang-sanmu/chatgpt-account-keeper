@@ -810,6 +810,16 @@ describe("账号编辑经由 store", () => {
     expect(created?.id).toBe("acc-new");
     expect(tauri.methodSequence()).toContain("browser.startLogin");
     expect(store().login?.accountId).toBe("acc-new");
+
+    tauri.emitAgentEvent("account.changed", makeAccount({
+      id: "acc-new",
+      email: "identified@example.com",
+      note: "新号",
+      status: "ok",
+      hasAccessToken: true,
+    }));
+    expect(store().login?.accountEmail).toBe("identified@example.com");
+    expect(store().accounts["acc-new"]?.effective.hasAccessToken).toBe(true);
   });
 });
 

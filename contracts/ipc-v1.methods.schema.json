@@ -358,14 +358,15 @@
         "accountId": { "type": "string", "minLength": 1 },
         "force": { "type": "boolean" },
         "status": {
-          "enum": ["opening", "clearing", "waiting", "promo", "saving", "success", "failed", "timeout"]
+          "enum": ["opening", "clearing", "waiting", "promo", "token", "saving", "success", "failed", "timeout"]
         },
         "message": { "type": "string" },
         "startedAt": { "type": "string", "format": "date-time" },
         "finishedAt": { "type": "string", "format": "date-time" },
         "code": { "type": "string" },
         "conflictTaskId": { "type": "string" },
-        "email": { "type": ["string", "null"] }
+        "email": { "type": ["string", "null"] },
+        "tokenStatus": { "enum": ["saved", "unavailable", "failed"] }
       }
     },
     "accountResult": {

@@ -32,10 +32,16 @@ beforeEach(() => {
 });
 
 describe("登录进度弹窗的阶段标题", () => {
-  it("优惠检查阶段说出正在检查优惠资格，而不是正在登录", () => {
+  it("优惠检查与获取 Token 阶段各有自己的标题", () => {
     showLogin("promo");
-    render(<LoginProgressDialog />);
+    const { unmount } = render(<LoginProgressDialog />);
     expect(screen.getByText("正在检查优惠资格")).toBeInTheDocument();
+    expect(screen.queryByText("正在登录")).not.toBeInTheDocument();
+    unmount();
+
+    showLogin("token");
+    render(<LoginProgressDialog />);
+    expect(screen.getByText("正在获取 accessToken")).toBeInTheDocument();
     expect(screen.queryByText("正在登录")).not.toBeInTheDocument();
   });
 

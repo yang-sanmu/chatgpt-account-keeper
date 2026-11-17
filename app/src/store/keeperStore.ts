@@ -677,9 +677,18 @@ export const useKeeperStore = create<KeeperStore>()((set, get) => {
         if (!account.id) break;
         set((state) => {
           const { records, isNew } = applyAccountChanged(state.accounts, account);
+          const login =
+            state.login && state.login.accountId === account.id
+              ? {
+                  ...state.login,
+                  accountEmail: account.email,
+                  accountNote: account.note,
+                }
+              : state.login;
           return {
             accounts: records,
             accountIds: isNew ? [...state.accountIds, account.id] : state.accountIds,
+            login,
           };
         });
         break;

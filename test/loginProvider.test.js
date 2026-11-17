@@ -869,3 +869,224 @@ test("登录等待轮询每轮只做一次会话探测", async () => {
   }
 });
 
+test("普通登录与同步已有会话在结束后自动获取并保存 accessToken，不泄露明文", async () => {
+  const secretToken = "hdr.sync-secret-payload.sig";
+  const account = { id: `login-sync-token-${Date.now()}`, email: null, gptName: null };
+  const savedTokens = [];
+  const updates = [];
+  const statuses = [];
+  const started = await startLogin(account, { force: false, closeOnSuccess: true }, {
+    getAccount: () => account,
+    updateAccount: (_id, patch) => {
+      updates.push(patch);
+      Object.assign(account, patch);
+    },
+    launchForAccount: async () => ({
+      context: { close: async () => {} },
+      page: { goto: async () => {}, waitForTimeout: async () => {} },
+    }),
+    checkSession: async (_page, options) => {
+      assert.equal(options?.captureAccessToken, true);
+      return {
+        state: "ok",
+        email: "synced@example.com",
+        name: "Synced",
+        accessToken: secretToken,
+      };
+    },
+    setCachedStatus: (...args) => statuses.push(args),
+    accountPlans: {
+      saveToken: (id, email, token) => {
+        assert.equal(account.email, email, "saveToken 前必须先更新账号邮箱");
+        savedTokens.push({ id, email, token });
+      },
+    },
+  });
+
+  await waitForLogin(() => getLoginTask(started.taskId)?.status === "success");
+  const finished = getLoginTask(started.taskId);
+  assert.equal(finished.tokenStatus, "saved");
+  assert.match(finished.message, /已保存 accessToken/);
+  assert.ok(!JSON.stringify(finished).includes(secretToken), "任务对象不得泄露 accessToken 明文");
+  assert.deepEqual(savedTokens, [{ id: account.id, email: "synced@example.com", token: secretToken }]);
+  assert.deepEqual(updates, [{ email: "synced@example.com", gptName: "Synced" }]);
+  assert.deepEqual(statuses.at(-1), [account.id, "ok", "synced@example.com"]);
+});
+
+test("清除状态后重新登录会先清理旧 Token，并在登录后进入 token 阶段获取最新 Token", async () => {
+  const rotatedToken = "hdr.fresh-rotated-token.sig";
+  const account = { id: `login-force-token-${Date.now()}`, email: "old@example.com", gptName: "Old" };
+  const timeline = [];
+  let checks = 0;
+  let releaseTokenProbe;
+  const tokenProbeGate = new Promise((resolve) => { releaseTokenProbe = resolve; });
+
+  const started = await startLogin(account, { force: true, closeOnSuccess: true }, {
+    getAccount: () => account,
+    updateAccount: (_id, patch) => {
+      timeline.push(`updateAccount:${patch.email}`);
+      Object.assign(account, patch);
+    },
+    launchForAccount: async () => ({
+      context: { close: async () => { timeline.push("close"); } },
+      page: { goto: async () => {}, waitForTimeout: async () => {} },
+    }),
+    clearSession: async () => {
+      timeline.push("clearSession");
+      return { ok: true, errors: [] };
+    },
+    checkSession: async (_page, options) => {
+      checks++;
+      // 1: 清理后验证（非 ok）
+      if (checks === 1) return { state: "out", email: null };
+      // 2: 轮询等待用户登录
+      if (checks === 2) return { state: "out", email: null };
+      // 3: 轮询检测到登录成功（返回初始 token）
+      if (checks === 3) {
+        assert.equal(options?.attempts, 1);
+        assert.equal(options?.captureAccessToken, true);
+        return { state: "ok", email: "new@example.com", name: "New", accessToken: "hdr.initial-token.sig" };
+      }
+      // 4: completeLogin 阶段进入 token 阶段，重新获取一次最新 token
+      assert.equal(options?.captureAccessToken, true);
+      assert.equal(options?.attempts, undefined);
+      timeline.push(`tokenStage:${getLoginTask(started.taskId)?.status}`);
+      await tokenProbeGate;
+      return { state: "ok", email: "new@example.com", name: "New", accessToken: rotatedToken };
+    },
+    setCachedStatus: (_id, state) => timeline.push(`status:${state}`),
+    accountPlans: {
+      clearToken: (id) => timeline.push(`clearToken:${id}`),
+      saveToken: (id, email, token) => timeline.push(`saveToken:${id}:${email}:${token}`),
+    },
+  });
+
+  await waitForLogin(() => timeline.some((entry) => entry.startsWith("tokenStage:")));
+  assert.ok(timeline.includes(`clearToken:${account.id}`), "强制清理旧登录态时必须同步清除旧 Token");
+  assert.ok(timeline.includes("tokenStage:token"), "获取 token 期间应处于独立的 token 阶段");
+  releaseTokenProbe();
+
+  await waitForLogin(() => getLoginTask(started.taskId)?.status === "success");
+  const finished = getLoginTask(started.taskId);
+  assert.equal(finished.tokenStatus, "saved");
+  assert.match(finished.message, /已保存 accessToken/);
+  assert.ok(timeline.includes(`saveToken:${account.id}:new@example.com:${rotatedToken}`));
+});
+
+test("登录后未获取到新 Token 时仍保留登录成功，且切换邮箱时清理旧邮箱 Token", async () => {
+  const account = { id: `login-token-unavailable-${Date.now()}`, email: "old@example.com" };
+  const cleared = [];
+  let checks = 0;
+
+  const started = await startLogin(account, { force: false, closeOnSuccess: true }, {
+    getAccount: () => account,
+    updateAccount: (_id, patch) => Object.assign(account, patch),
+    launchForAccount: async () => ({
+      context: { close: async () => {} },
+      page: { goto: async () => {}, waitForTimeout: async () => {} },
+    }),
+    checkSession: async () => {
+      checks++;
+      if (checks === 1) return { state: "unknown", email: null, detail: "WAF" };
+      if (checks === 2) return { state: "ok", email: "switched@example.com", detail: null };
+      return { state: "unknown", email: "switched@example.com", detail: "会话接口返回 503" };
+    },
+    setCachedStatus: () => {},
+    accountPlans: {
+      clearToken: (id) => cleared.push(id),
+      saveToken: () => assert.fail("无可用 token 时不应调用 saveToken"),
+    },
+  });
+
+  await waitForLogin(() => getLoginTask(started.taskId)?.status === "success");
+  const finished = getLoginTask(started.taskId);
+  assert.equal(finished.tokenStatus, "unavailable");
+  assert.match(finished.message, /登录成功.*未获取到 accessToken：会话接口返回 503/);
+  assert.deepEqual(cleared, [account.id], "未拿到新 token 且账号邮箱已切换时必须清除旧邮箱的 Token");
+});
+
+test("保留窗口且开启优惠检查时，在优惠检查之后自动获取一次 Token", async (t) => {
+  const account = { id: `login-retained-promo-token-${Date.now()}`, email: null };
+  const calls = [];
+  const page = {
+    goto: async () => {},
+    waitForTimeout: async () => {},
+    url: () => "https://chatgpt.com/",
+    isClosed: () => false,
+  };
+  const context = new EventEmitter();
+  let closed = false;
+  context.pages = () => closed ? [] : [page];
+  context.close = async () => {
+    if (closed) return;
+    closed = true;
+    context.emit("close");
+  };
+  t.after(async () => {
+    await closePageForAccount(account.id);
+    await context.close();
+  });
+
+  let checks = 0;
+  const started = await startLogin(account, { closeOnSuccess: false, checkPromoOnSuccess: true }, {
+    getAccount: () => account,
+    updateAccount: (_id, patch) => Object.assign(account, patch),
+    launchForAccount: async () => ({ context, page }),
+    checkSession: async (_page, options) => {
+      checks++;
+      if (checks === 1) return { state: "out", email: null };
+      if (checks === 2) return { state: "ok", email: "retained@example.com", accessToken: "tok-poll" };
+      assert.equal(options?.captureAccessToken, true);
+      calls.push("token-probe");
+      return { state: "ok", email: "retained@example.com", accessToken: "tok-post-promo" };
+    },
+    checkPromoEligibility: async () => {
+      calls.push("promo");
+      return { ok: true, eligibility: "free_trial" };
+    },
+    setCachedStatus: () => {},
+    accountPlans: {
+      saveToken: (_id, _email, token) => calls.push(`save:${token}`),
+    },
+  });
+
+  await waitForLogin(() => getLoginTask(started.taskId)?.status === "success");
+  assert.deepEqual(calls, ["promo", "token-probe", "save:tok-post-promo"]);
+  assert.equal(getLoginTask(started.taskId).tokenStatus, "saved");
+  assert.match(getLoginTask(started.taskId).message, /优惠资格检查完成.*已保存 accessToken/);
+});
+
+test("token 阶段探测到会话已退出或失效时，立即失败并清理 Token，不误报成功", async () => {
+  const account = { id: `login-token-reauth-${Date.now()}`, email: "old@example.com" };
+  const statuses = [];
+  const cleared = [];
+  let checks = 0;
+
+  const started = await startLogin(account, { force: false, closeOnSuccess: true }, {
+    getAccount: () => account,
+    updateAccount: (_id, patch) => Object.assign(account, patch),
+    launchForAccount: async () => ({
+      context: { close: async () => {} },
+      page: { goto: async () => {}, waitForTimeout: async () => {} },
+    }),
+    checkSession: async () => {
+      checks++;
+      if (checks === 1) return { state: "out", email: null };
+      if (checks === 2) return { state: "ok", email: "user@example.com", accessToken: "tok-poll" };
+      return { state: "reauth", email: "user@example.com", detail: "认证令牌已失效，需重新登录" };
+    },
+    setCachedStatus: (...args) => statuses.push(args),
+    accountPlans: {
+      clearToken: (id) => cleared.push(id),
+      saveToken: () => assert.fail("会话已失效时不得保存 Token"),
+    },
+  });
+
+  await waitForLogin(() => getLoginTask(started.taskId)?.status === "failed");
+  const finished = getLoginTask(started.taskId);
+  assert.match(finished.message, /认证令牌已失效/);
+  assert.deepEqual(statuses.at(-1), [account.id, "reauth", "user@example.com", "认证令牌已失效，需重新登录"]);
+  assert.equal(cleared.length, 2);
+});
+
+

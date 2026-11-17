@@ -325,9 +325,12 @@ test("登录任务的所有阶段都被 browser.getTask 的结果契约接受", 
     startedAt: new Date().toISOString(),
   };
   for (const status of [
-    "opening", "clearing", "waiting", "promo", "saving", "success", "failed", "timeout",
+    "opening", "clearing", "waiting", "promo", "token", "saving", "success", "failed", "timeout",
   ]) {
     assertMethodResultContract("browser.getTask", { ...base, status });
+  }
+  for (const tokenStatus of ["saved", "unavailable", "failed"]) {
+    assertMethodResultContract("browser.getTask", { ...base, status: "success", tokenStatus });
   }
   assert.throws(
     () => assertMethodResultContract("browser.getTask", { ...base, status: "not-a-stage" }),

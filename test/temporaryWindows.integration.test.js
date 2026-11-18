@@ -43,7 +43,7 @@ test("temporary Chrome windows retain isolated sessions, apply exit timezone and
       } else if (target.hostname === "temporary-window.test") {
         res.setHeader("Content-Type", "text/html");
         res.end(`<!doctype html><title>Temporary window fixture</title><script>
-          window.initial = { timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          window.initial = { timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, locale: navigator.language,
             cookie: document.cookie, storage: localStorage.getItem('session') };
           </script><h1>Temporary window fixture</h1>`);
       } else { res.statusCode = 403; res.end(); }
@@ -96,9 +96,15 @@ test("temporary Chrome windows retain isolated sessions, apply exit timezone and
     await page.evaluate(value => { localStorage.setItem("session", value); document.cookie = `session=${value}; Max-Age=3600; Path=/`; }, `window-${index}`);
     await manager.close(window.id);
   }
+  manager.save({ ...windows[0], timezoneMode: "fixed", timezone: "UTC", localeMode: "fixed", locale: "fr-FR" });
+  manager.save({ ...windows[1], timezoneMode: "fixed", timezone: "UTC", localeMode: "auto" });
+  // The second proxy can still identify the exit country when it has no timezone.
+  delete regionFixtures[1].timezone;
   for (const [index, window] of windows.entries()) {
     await manager.open(window.id);
     const initial = await launched.get(window.id).page.evaluate(() => window.initial);
+    assert.equal(initial.timezone, "UTC");
+    assert.equal(initial.locale, index === 0 ? "fr-FR" : "de-DE");
     assert.equal(initial.storage, `window-${index}`); assert.match(initial.cookie, new RegExp(`session=window-${index}`));
     await manager.close(window.id);
   }

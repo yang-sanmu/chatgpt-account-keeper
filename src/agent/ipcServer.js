@@ -27,12 +27,26 @@ function validateRequest(request) {
   }
 }
 
-function writeEnvelope(socket, envelope, maxFrameBytes) {
+function omitWindowRegionModes(window) {
+  delete window.timezoneMode;
+  delete window.localeMode;
+}
+
+function writeEnvelope(client, envelope, maxFrameBytes, method) {
+  const { socket, protocolMinor } = client;
   if (socket.destroyed || !socket.writable) return false;
   try {
     // Validate the exact JSON representation that will cross the process
     // boundary. JSON.stringify intentionally removes optional undefined fields.
     const jsonEnvelope = JSON.parse(JSON.stringify(envelope));
+    // Older clients validate window records with additionalProperties: false.
+    // Adapt only this connection's wire copy, including responses replayed from receipts.
+    if (protocolMinor !== null && protocolMinor < 14) {
+      if (method === "temporaryWindows.save") omitWindowRegionModes(jsonEnvelope.result);
+      if (method === "temporaryWindows.list") jsonEnvelope.result.forEach(omitWindowRegionModes);
+      if (method === "system.bootstrap") jsonEnvelope.result.temporaryWindows?.forEach(omitWindowRegionModes);
+      if (jsonEnvelope.event === "temporaryWindows.changed") jsonEnvelope.payload.forEach(omitWindowRegionModes);
+    }
     assertOutgoingContract(jsonEnvelope);
     return socket.write(encodeFrame(jsonEnvelope, { maxFrameBytes }));
   } catch {
@@ -146,7 +160,7 @@ export class AgentIpcServer {
     const client = {
       socket,
       decoder: new FrameDecoder({ maxFrameBytes: this.maxFrameBytes }),
-      helloComplete: false,
+      protocolMinor: null,
       queue: Promise.resolve(),
     };
     this.clients.add(client);
@@ -155,7 +169,7 @@ export class AgentIpcServer {
       try {
         frames = client.decoder.push(chunk);
       } catch (error) {
-        writeEnvelope(socket, { id: null, error: errorEnvelope(error) }, this.maxFrameBytes);
+        writeEnvelope(client, { id: null, error: errorEnvelope(error) }, this.maxFrameBytes);
         socket.end();
         return;
       }
@@ -177,7 +191,7 @@ export class AgentIpcServer {
     try {
       request = decodeJsonFrame(frame);
       validateRequest(request);
-      if (!client.helloComplete && request.method !== "system.hello") {
+      if (client.protocolMinor === null && request.method !== "system.hello") {
         throw new ApplicationError(
           ERROR_CODES.PROTOCOL_MISMATCH,
           "连接的第一个请求必须是 system.hello"
@@ -192,21 +206,21 @@ export class AgentIpcServer {
       }
       const result = await this.services.execute(request);
       assertMethodResultContract(request.method, result);
-      if (request.method === "system.hello") client.helloComplete = true;
-      writeEnvelope(client.socket, { id: request.id, result }, this.maxFrameBytes);
+      if (request.method === "system.hello") client.protocolMinor = request.params.protocol.minor;
+      writeEnvelope(client, { id: request.id, result }, this.maxFrameBytes, request.method);
     } catch (error) {
       writeEnvelope(
-        client.socket,
+        client,
         { id: request?.id ?? null, error: errorEnvelope(error) },
         this.maxFrameBytes
       );
-      if (!client.helloComplete) client.socket.end();
+      if (client.protocolMinor === null) client.socket.end();
     }
   }
 
   _broadcastEvent(event) {
     for (const client of this.clients) {
-      if (client.helloComplete) writeEnvelope(client.socket, event, this.maxFrameBytes);
+      if (client.protocolMinor !== null) writeEnvelope(client, event, this.maxFrameBytes);
     }
   }
 }

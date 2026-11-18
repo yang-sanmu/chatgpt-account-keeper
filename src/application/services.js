@@ -67,8 +67,8 @@ import { getStrictNetworkCapabilities } from "../network/strictConfig.js";
 import { createPlanClient } from "../accountPlan.js";
 import { cancellableSleep, raceSignal, throwIfCancelled } from "../cancellation.js";
 
-// Minor 13 adds icloud.cancelDelete for stopping background batch deletions.
-export const PROTOCOL_VERSION = Object.freeze({ major: 1, minor: 13 });
+// Minor 14 adds configurable auto/fixed timezone and locale fields on temporary windows.
+export const PROTOCOL_VERSION = Object.freeze({ major: 1, minor: 14 });
 
 export const MUTATING_METHODS = new Set([
   "icloud.saveConfig", "icloud.open", "icloud.close", "icloud.sync", "icloud.create", "icloud.runNow", "icloud.delete", "icloud.cancelDelete", "icloud.stop", "icloud.updateLocal", "icloud.acknowledge",

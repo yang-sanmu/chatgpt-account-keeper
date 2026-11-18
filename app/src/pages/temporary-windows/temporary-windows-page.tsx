@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { Page, PageHeader, PageBody } from "@/components/layout/page";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -52,6 +53,104 @@ import { useKeeperStore } from "@/store/keeperStore";
 
 type WindowAction = "open" | "close" | "detectRegion" | "clearData" | "remove";
 type StatusFilter = "all" | "open" | "closed" | "issue";
+type RegionMode = "auto" | "fixed";
+
+interface TemporaryWindowDraft {
+  id?: string;
+  name: string;
+  note: string;
+  homepage: string;
+  proxyId: string;
+  timezoneMode: RegionMode;
+  localeMode: RegionMode;
+  timezone: string;
+  locale: string;
+}
+
+const REGION_PRESETS: readonly { label: string; timezone: string; locale: string }[] = [
+  { label: "美西 · en-US", timezone: "America/Los_Angeles", locale: "en-US" },
+  { label: "美东 · en-US", timezone: "America/New_York", locale: "en-US" },
+  { label: "日本 · ja-JP", timezone: "Asia/Tokyo", locale: "ja-JP" },
+  { label: "新加坡 · en-SG", timezone: "Asia/Singapore", locale: "en-SG" },
+  { label: "英国 · en-GB", timezone: "Europe/London", locale: "en-GB" },
+  { label: "德国 · de-DE", timezone: "Europe/Berlin", locale: "de-DE" },
+  { label: "香港 · zh-HK", timezone: "Asia/Hong_Kong", locale: "zh-HK" },
+  { label: "台湾 · zh-TW", timezone: "Asia/Taipei", locale: "zh-TW" },
+  { label: "中国 · zh-CN", timezone: "Asia/Shanghai", locale: "zh-CN" },
+];
+
+const LOCALE_PRESETS: readonly string[] = [
+  "en-US",
+  "zh-CN",
+  "ja-JP",
+  "en-GB",
+  "de-DE",
+  "ko-KR",
+  "zh-HK",
+  "zh-TW",
+];
+
+function isValidTimezoneInput(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > 80 || /^[+-]/u.test(trimmed)) return false;
+  try {
+    return Boolean(new Intl.DateTimeFormat("en", { timeZone: trimmed }).resolvedOptions().timeZone);
+  } catch {
+    return false;
+  }
+}
+
+function isValidLocaleInput(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > 80) return false;
+  try {
+    const canonical = Intl.getCanonicalLocales(trimmed)[0];
+    return Boolean(canonical && canonical !== "und");
+  } catch {
+    return false;
+  }
+}
+
+function createDraft(window?: TemporaryWindowResult): TemporaryWindowDraft {
+  if (!window) {
+    return {
+      name: "",
+      note: "",
+      homepage: "https://chatgpt.com/",
+      proxyId: "",
+      timezoneMode: "auto",
+      localeMode: "auto",
+      timezone: "",
+      locale: "",
+    };
+  }
+  return {
+    id: window.id,
+    name: window.name,
+    note: window.note,
+    homepage: window.homepage,
+    proxyId: window.proxyId,
+    timezoneMode: window.timezoneMode ?? "auto",
+    localeMode: window.localeMode ?? "auto",
+    timezone: window.timezone ?? "",
+    locale: window.locale ?? "",
+  };
+}
+
+function windowRegionMeta(window: TemporaryWindowResult) {
+  const timezoneMode: RegionMode = window.timezoneMode ?? "auto";
+  const localeMode: RegionMode = window.localeMode ?? "auto";
+  const fullyFixed = timezoneMode === "fixed" && localeMode === "fixed";
+  const fullyAuto = timezoneMode === "auto" && localeMode === "auto";
+  const modeLabel = fullyFixed
+    ? "固定"
+    : fullyAuto
+      ? "自动"
+      : timezoneMode === "fixed"
+        ? "时区固定 · 语言自动"
+        : "时区自动 · 语言固定";
+  return { timezoneMode, localeMode, fullyFixed, fullyAuto, modeLabel };
+}
 
 const ACTION_LABELS: Record<WindowAction, string> = {
   open: "打开窗口",
@@ -130,7 +229,7 @@ export function TemporaryWindowsPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState(false);
-  const [draft, setDraft] = useState<TemporaryWindowSaveParams | null>(null);
+  const [draft, setDraft] = useState<TemporaryWindowDraft | null>(null);
   const [saving, setSaving] = useState(false);
   const [pending, setPending] = useState<Map<string, WindowAction>>(new Map());
   const [confirmation, setConfirmation] = useState<{
@@ -206,7 +305,18 @@ export function TemporaryWindowsPage() {
     if (!draft || saving) return;
     setSaving(true);
     try {
-      const saved = await agentCall("temporaryWindows.save", draft, await newCommandId());
+      const payload: TemporaryWindowSaveParams = {
+        ...(draft.id ? { id: draft.id } : {}),
+        name: draft.name,
+        note: draft.note,
+        homepage: draft.homepage,
+        proxyId: draft.proxyId,
+        timezoneMode: draft.timezoneMode,
+        localeMode: draft.localeMode,
+        ...(draft.timezoneMode === "fixed" ? { timezone: draft.timezone.trim() } : {}),
+        ...(draft.localeMode === "fixed" ? { locale: draft.locale.trim() } : {}),
+      };
+      const saved = await agentCall("temporaryWindows.save", payload, await newCommandId());
       useKeeperStore.setState((state) => ({
         temporaryWindows: state.temporaryWindows.some((item) => item.id === saved.id)
           ? state.temporaryWindows.map((item) => (item.id === saved.id ? saved : item))
@@ -214,7 +324,12 @@ export function TemporaryWindowsPage() {
       }));
       setDraft(null);
       notify.success("临时窗口已保存");
-      if (!saved.timezone) void perform("detectRegion", saved);
+      const savedTimezoneMode = saved.timezoneMode ?? "auto";
+      const savedLocaleMode = saved.localeMode ?? "auto";
+      const needsDetect =
+        (savedTimezoneMode === "auto" && !saved.timezone) ||
+        (savedLocaleMode === "auto" && !saved.locale);
+      if (needsDetect) void perform("detectRegion", saved);
     } catch (error) {
       notify.error("保存临时窗口失败", error);
     } finally {
@@ -262,6 +377,7 @@ export function TemporaryWindowsPage() {
       window.note,
       window.homepage,
       window.timezone ?? "",
+      window.locale ?? "",
       window.exitIp ?? "",
       nodeName,
     ]
@@ -269,6 +385,25 @@ export function TemporaryWindowsPage() {
       .toLocaleLowerCase()
       .includes(normalizedQuery);
   });
+
+  const timezoneInvalid =
+    draft !== null &&
+    draft.timezoneMode === "fixed" &&
+    draft.timezone.trim().length > 0 &&
+    !isValidTimezoneInput(draft.timezone);
+  const localeInvalid =
+    draft !== null &&
+    draft.localeMode === "fixed" &&
+    draft.locale.trim().length > 0 &&
+    !isValidLocaleInput(draft.locale);
+  const timezoneMissing =
+    draft !== null &&
+    draft.timezoneMode === "fixed" &&
+    draft.timezone.trim().length === 0;
+  const localeMissing =
+    draft !== null &&
+    draft.localeMode === "fixed" &&
+    draft.locale.trim().length === 0;
 
   const filterTabs: { id: StatusFilter; label: string; count: number; dot?: StatusDotProps["status"] }[] = [
     { id: "all", label: "全部", count: windows.length },
@@ -283,7 +418,7 @@ export function TemporaryWindowsPage() {
     <Page>
       <PageHeader
         title="临时窗口"
-        description="独立选择出口节点，按实际出口 IP 自动设置时区。关闭后保留浏览数据。"
+        description="独立选择出口节点，支持按出口 IP 自动推测或固定设置时区与语言。关闭后保留浏览数据。"
         actions={
           <>
             <Button
@@ -300,14 +435,7 @@ export function TemporaryWindowsPage() {
               size="sm"
               className="h-8 text-xs gap-1.5"
               disabled={disabled}
-              onClick={() =>
-                setDraft({
-                  name: "",
-                  note: "",
-                  homepage: "https://chatgpt.com/",
-                  proxyId: "",
-                })
-              }
+              onClick={() => setDraft(createDraft())}
             >
               <Plus className="size-3.5" />
               新增窗口
@@ -419,7 +547,7 @@ export function TemporaryWindowsPage() {
             description={
               hasActiveFilter
                 ? "当前搜索或状态筛选下没有匹配的窗口，请尝试放宽条件。"
-                : "每个临时窗口拥有独立的浏览器 Profile 与出口节点，按实际出口 IP 自动匹配语言和时区。"
+                : "每个临时窗口拥有独立的浏览器 Profile 与出口节点，可按出口 IP 自动推测或固定设置时区和语言。"
             }
             action={
               hasActiveFilter ? (
@@ -437,14 +565,7 @@ export function TemporaryWindowsPage() {
                 <Button
                   size="sm"
                   disabled={disabled}
-                  onClick={() =>
-                    setDraft({
-                      name: "",
-                      note: "",
-                      homepage: "https://chatgpt.com/",
-                      proxyId: "",
-                    })
-                  }
+                  onClick={() => setDraft(createDraft())}
                 >
                   <Plus className="size-3.5" />
                   创建第一个窗口
@@ -465,6 +586,7 @@ export function TemporaryWindowsPage() {
               const probing = isProbing(window);
               const isClosed = window.state === "closed";
               const statusMeta = getWindowStatusMeta(window, isBusy);
+              const region = windowRegionMeta(window);
 
               return (
                 <article
@@ -535,10 +657,22 @@ export function TemporaryWindowsPage() {
                     {/* 凹陷环境快照区 */}
                     <div className="rounded-control border border-subtle/70 bg-sunken/70 px-2.5 py-2 space-y-1">
                       <div className="flex items-center justify-between gap-2">
-                        <span className="shrink-0 text-2xs text-muted">时区环境</span>
+                        <div className="flex shrink-0 items-center gap-1.5">
+                          <span className="text-2xs text-muted">时区环境</span>
+                          <span
+                            className={cn(
+                              "rounded-sm border px-1 py-px text-2xs leading-none",
+                              region.fullyAuto
+                                ? "border-subtle bg-panel text-muted"
+                                : "border-accent/30 bg-accent-soft text-accent"
+                            )}
+                          >
+                            {region.modeLabel}
+                          </span>
+                        </div>
                         <div className="flex min-w-0 items-center gap-1.5">
                           <span className="truncate font-mono text-2xs text-primary">
-                            {window.timezone || "待探测"}
+                            {window.timezone || (region.timezoneMode === "auto" ? "待探测" : "未设置")}
                           </span>
                           {window.locale && (
                             <span className="shrink-0 rounded-sm bg-panel px-1 py-px font-mono text-2xs text-muted border border-subtle">
@@ -569,17 +703,23 @@ export function TemporaryWindowsPage() {
                         <span
                           className="truncate"
                           title={
-                            window.detectedAt
+                            !region.fullyFixed && window.detectedAt
                               ? `上次探测：${formatDateTime(window.detectedAt, { seconds: true })}`
                               : undefined
                           }
                         >
-                          {window.detectedAt ? (
+                          {region.fullyFixed ? (
+                            "固定时区与语言，打开时不探测"
+                          ) : window.detectedAt ? (
                             <>
                               探测于 <RelativeTime value={window.detectedAt} />
                             </>
-                          ) : (
+                          ) : region.fullyAuto ? (
                             "保存及打开时自动探测"
+                          ) : region.timezoneMode === "auto" ? (
+                            "保存及打开时探测时区"
+                          ) : (
+                            "保存及打开时探测语言"
                           )}
                         </span>
                         {!isClosed && (
@@ -630,8 +770,8 @@ export function TemporaryWindowsPage() {
                         variant="ghost"
                         className="size-7"
                         aria-label="探测时区"
-                        title="探测时区"
-                        disabled={disabled || isBusy || !isClosed || unavailable}
+                        title={region.fullyFixed ? "当前已固定时区与语言，无需探测" : "探测时区与语言"}
+                        disabled={disabled || isBusy || !isClosed || unavailable || region.fullyFixed}
                         onClick={() => void perform("detectRegion", window)}
                       >
                         <Globe className={cn("size-3.5", probing && "animate-spin text-accent")} />
@@ -644,15 +784,7 @@ export function TemporaryWindowsPage() {
                         aria-label="编辑"
                         title="编辑配置"
                         disabled={disabled || isBusy || !isClosed}
-                        onClick={() =>
-                          setDraft({
-                            id: window.id,
-                            name: window.name,
-                            note: window.note,
-                            homepage: window.homepage,
-                            proxyId: window.proxyId,
-                          })
-                        }
+                        onClick={() => setDraft(createDraft(window))}
                       >
                         <Pencil className="size-3.5" />
                       </Button>
@@ -695,7 +827,7 @@ export function TemporaryWindowsPage() {
           if (!open && !saving) setDraft(null);
         }}
       >
-        <DialogContent>
+        <DialogContent className="max-h-[90vh] overflow-y-auto scroll-slim">
           <DialogHeader>
             <DialogTitle>{draft?.id ? "编辑临时窗口" : "新增临时窗口"}</DialogTitle>
             <DialogDescription>
@@ -741,6 +873,222 @@ export function TemporaryWindowsPage() {
                     )}
                 </div>
 
+                <div className="space-y-3 rounded-control border border-subtle bg-sunken/50 p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <Label>时区与语言</Label>
+                    <div
+                      role="group"
+                      aria-label="时区与语言配置模式"
+                      className="inline-flex h-7 items-center gap-0.5 rounded-control border border-subtle bg-sunken p-0.5"
+                    >
+                      <button
+                        type="button"
+                        aria-pressed={draft.timezoneMode === "auto" && draft.localeMode === "auto"}
+                        onClick={() =>
+                          setDraft({
+                            ...draft,
+                            timezoneMode: "auto",
+                            localeMode: "auto",
+                          })
+                        }
+                        className={cn(
+                          "inline-flex h-full items-center rounded-chip px-2.5 text-xs transition-colors",
+                          draft.timezoneMode === "auto" && draft.localeMode === "auto"
+                            ? "bg-panel font-medium text-primary shadow-panel"
+                            : "text-secondary hover:text-primary"
+                        )}
+                      >
+                        自动推测
+                      </button>
+                      <button
+                        type="button"
+                        aria-pressed={draft.timezoneMode === "fixed" || draft.localeMode === "fixed"}
+                        onClick={() =>
+                          setDraft({
+                            ...draft,
+                            timezoneMode:
+                              draft.timezoneMode === "auto" && draft.localeMode === "auto"
+                                ? "fixed"
+                                : draft.timezoneMode,
+                            localeMode:
+                              draft.timezoneMode === "auto" && draft.localeMode === "auto"
+                                ? "fixed"
+                                : draft.localeMode,
+                          })
+                        }
+                        className={cn(
+                          "inline-flex h-full items-center rounded-chip px-2.5 text-xs transition-colors",
+                          draft.timezoneMode === "fixed" || draft.localeMode === "fixed"
+                            ? "bg-panel font-medium text-primary shadow-panel"
+                            : "text-secondary hover:text-primary"
+                        )}
+                      >
+                        固定配置
+                      </button>
+                    </div>
+                  </div>
+
+                  {draft.timezoneMode === "auto" && draft.localeMode === "auto" ? (
+                    <p className="text-xs leading-relaxed text-muted">
+                      由节点实际出口 IP 自动推测时区和语言，每次打开前重新探测。
+                    </p>
+                  ) : (
+                    <div className="space-y-3">
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <Label htmlFor="temporary-timezone">时区 (IANA)</Label>
+                          <div className="flex items-center gap-1.5">
+                            <Checkbox
+                              id="temporary-timezone-auto"
+                              checked={draft.timezoneMode === "auto"}
+                              onCheckedChange={(checked) =>
+                                setDraft({
+                                  ...draft,
+                                  timezoneMode: checked === true ? "auto" : "fixed",
+                                })
+                              }
+                            />
+                            <Label
+                              htmlFor="temporary-timezone-auto"
+                              className="cursor-pointer text-2xs font-normal text-muted"
+                            >
+                              时区自动推测
+                            </Label>
+                          </div>
+                        </div>
+                        <Input
+                          id="temporary-timezone"
+                          disabled={draft.timezoneMode === "auto"}
+                          maxLength={80}
+                          value={draft.timezoneMode === "auto" ? "" : draft.timezone}
+                          onChange={(event) =>
+                            setDraft({ ...draft, timezone: event.target.value })
+                          }
+                          placeholder={
+                            draft.timezoneMode === "auto"
+                              ? "打开时按出口 IP 自动推测"
+                              : "例如：America/Los_Angeles"
+                          }
+                          className="h-8 font-mono text-xs"
+                        />
+                        {timezoneInvalid && (
+                          <p role="alert" className="text-2xs text-danger">
+                            请输入有效的 IANA 时区，例如 Asia/Shanghai 或 America/Los_Angeles
+                          </p>
+                        )}
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <Label htmlFor="temporary-locale">语言 (BCP 47)</Label>
+                          <div className="flex items-center gap-1.5">
+                            <Checkbox
+                              id="temporary-locale-auto"
+                              checked={draft.localeMode === "auto"}
+                              onCheckedChange={(checked) =>
+                                setDraft({
+                                  ...draft,
+                                  localeMode: checked === true ? "auto" : "fixed",
+                                })
+                              }
+                            />
+                            <Label
+                              htmlFor="temporary-locale-auto"
+                              className="cursor-pointer text-2xs font-normal text-muted"
+                            >
+                              语言自动推测
+                            </Label>
+                          </div>
+                        </div>
+                        <Input
+                          id="temporary-locale"
+                          disabled={draft.localeMode === "auto"}
+                          maxLength={80}
+                          value={draft.localeMode === "auto" ? "" : draft.locale}
+                          onChange={(event) =>
+                            setDraft({ ...draft, locale: event.target.value })
+                          }
+                          placeholder={
+                            draft.localeMode === "auto"
+                              ? "打开时按出口 IP 自动匹配"
+                              : "例如：en-US"
+                          }
+                          className="h-8 font-mono text-xs"
+                        />
+                        {localeInvalid && (
+                          <p role="alert" className="text-2xs text-danger">
+                            请输入有效的语言标签（连字符格式），例如 zh-CN 或 en-US
+                          </p>
+                        )}
+                      </div>
+
+                      {draft.timezoneMode === "fixed" ? (
+                        <div className="space-y-1.5">
+                          <span className="block text-2xs text-muted">常用区域快填</span>
+                          <div className="flex flex-wrap gap-1.5">
+                            {REGION_PRESETS.map((preset) => {
+                              const active =
+                                draft.timezone.trim() === preset.timezone &&
+                                (draft.localeMode === "auto" ||
+                                  draft.locale.trim() === preset.locale);
+                              return (
+                                <button
+                                  key={preset.label}
+                                  type="button"
+                                  onClick={() =>
+                                    setDraft({
+                                      ...draft,
+                                      timezone: preset.timezone,
+                                      locale:
+                                        draft.localeMode === "fixed"
+                                          ? preset.locale
+                                          : draft.locale,
+                                    })
+                                  }
+                                  className={cn(
+                                    "rounded-chip border px-2 py-0.5 text-2xs transition-colors",
+                                    active
+                                      ? "border-accent bg-accent-soft text-accent"
+                                      : "border-subtle bg-panel text-secondary hover:bg-hover hover:text-primary"
+                                  )}
+                                >
+                                  {preset.label}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="space-y-1.5">
+                          <span className="block text-2xs text-muted">常用语言快填</span>
+                          <div className="flex flex-wrap gap-1.5">
+                            {LOCALE_PRESETS.map((presetLocale) => {
+                              const active = draft.locale.trim() === presetLocale;
+                              return (
+                                <button
+                                  key={presetLocale}
+                                  type="button"
+                                  onClick={() =>
+                                    setDraft({ ...draft, locale: presetLocale })
+                                  }
+                                  className={cn(
+                                    "rounded-chip border px-2 py-0.5 font-mono text-2xs transition-colors",
+                                    active
+                                      ? "border-accent bg-accent-soft text-accent"
+                                      : "border-subtle bg-panel text-secondary hover:bg-hover hover:text-primary"
+                                  )}
+                                >
+                                  {presetLocale}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
                 <div className="space-y-1.5">
                   <Label htmlFor="temporary-homepage">默认主页</Label>
                   <Input
@@ -768,7 +1116,7 @@ export function TemporaryWindowsPage() {
                 </div>
 
                 <p className="rounded-control bg-sunken px-3 py-2 text-xs text-muted">
-                  时区由节点实际出口 IP 自动推测，每次打开前重新探测。前置网络连接沿用“网络配置”。
+                  前置网络连接沿用“网络配置”。
                 </p>
               </fieldset>
             </form>
@@ -784,7 +1132,11 @@ export function TemporaryWindowsPage() {
                 disabled ||
                 saving ||
                 !draft?.name.trim() ||
-                !usableNodes.some((node) => node.id === draft?.proxyId)
+                !usableNodes.some((node) => node.id === draft?.proxyId) ||
+                timezoneMissing ||
+                timezoneInvalid ||
+                localeMissing ||
+                localeInvalid
               }
             >
               {saving && <Loader2 className="size-4 animate-spin" />}

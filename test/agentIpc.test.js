@@ -7,6 +7,7 @@ import fs from "node:fs";
 import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { ApplicationServices } from "../src/application/services.js";
+import { DEFAULT_SETTINGS } from "../src/statusSettings.js";
 import {
   FrameDecoder,
   FrameProtocolError,
@@ -220,7 +221,7 @@ test("Unix IPC never removes a live listener or a non-socket path", async (t) =>
 });
 
 function minimalRuntime() {
-  const settings = { headless: true };
+  const settings = { ...DEFAULT_SETTINGS };
   return {
     store: {
       getAccounts: () => [],
@@ -244,7 +245,10 @@ function minimalRuntime() {
     },
     proxies: {
       getNodes: () => [],
-      status: () => ({ running: false }),
+      status: () => ({
+        running: false, mihomo: { path: null, found: false }, nodeCount: 0, routedNodeCount: 0,
+        subscription: null, clashVergeDir: null, basePort: 18000, basePortShifted: false,
+      }),
       getSubscriptionInfo: () => null,
       getMihomoInfo: () => null,
     },
@@ -354,6 +358,46 @@ test("IPC requires hello, returns stable envelopes, and streams events", async (
   assert.equal(response.result.running, true);
   assert.equal(event.instanceId, hello.result.instanceId);
   assert.equal(typeof event.seq, "number");
+});
+
+test("1.13 and 1.14 connections receive their respective window shape for reads, receipts and events", { timeout: 10000 }, async t => {
+  const legacyWindow = {
+    id: "tmp_test", name: "Fixture", note: "", homepage: "https://example.org/", proxyId: "jp",
+    createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z",
+    timezone: "UTC", locale: "ja-JP", exitIp: null, detectedAt: null,
+    proxyName: "Japan", proxyUnavailable: false, state: "closed", openedAt: null,
+  };
+  const currentWindow = { ...legacyWindow, timezoneMode: "fixed", localeMode: "fixed" };
+  const runtime = minimalRuntime();
+  const save = t.mock.fn(() => currentWindow);
+  runtime.temporaryWindows = { list: () => [currentWindow], save };
+  const services = new ApplicationServices({ runtime });
+  const server = new AgentIpcServer({ services, endpoint: testEndpoint() });
+  await server.listen();
+  t.after(async () => { await server.close(); services.dispose(); });
+  const clients = [];
+  const commandId = randomUUID();
+  for (const [minor, expected] of [[13, legacyWindow], [14, currentWindow]]) {
+    const client = await connect(server.endpoint);
+    clients.push({ client, expected });
+    async function call(method, params, extra = {}) {
+      client.send({ id: method, method, params, ...extra });
+      const response = await client.next();
+      assert.equal(response.id, method);
+      assert.equal(response.error, undefined, JSON.stringify(response.error));
+      return response.result;
+    }
+    await call("system.hello", { protocol: { major: 1, minor }, clientVersion: "test", capabilities: [] });
+    assert.deepEqual(await call("temporaryWindows.list", {}), [expected]);
+    assert.deepEqual((await call("system.bootstrap", {})).temporaryWindows, [expected]);
+    assert.deepEqual(await call("temporaryWindows.save",
+      { id: legacyWindow.id, name: legacyWindow.name, proxyId: legacyWindow.proxyId }, { commandId }), expected);
+  }
+  assert.equal(save.mock.callCount(), 1);
+  const published = services.events.publish("temporaryWindows.changed", [currentWindow]);
+  for (const { client, expected } of clients) {
+    assert.deepEqual(await client.next(), { ...published, payload: [expected] });
+  }
 });
 
 test("新增账号登录参数经真实 IPC 到达业务层，不被入站契约拒绝", { timeout: 5000 }, async (t) => {

@@ -491,6 +491,10 @@ export interface TemporaryWindowSaveParams {
   note?: string;
   homepage?: string;
   proxyId: string;
+  timezoneMode?: "auto" | "fixed";
+  localeMode?: "auto" | "fixed";
+  timezone?: string | null;
+  locale?: string | null;
 }
 /**
  * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
@@ -502,6 +506,8 @@ export interface TemporaryWindowResult {
   note: string;
   homepage: string;
   proxyId: string;
+  timezoneMode?: "auto" | "fixed";
+  localeMode?: "auto" | "fixed";
   createdAt: string;
   updatedAt: string;
   timezone: string | null;

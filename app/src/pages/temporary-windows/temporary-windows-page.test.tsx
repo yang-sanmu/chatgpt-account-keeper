@@ -35,9 +35,144 @@ it("creates a named window with a node selected directly, then starts automatic 
   expect(screen.queryByRole("option", { name: /停用节点/ })).not.toBeInTheDocument();
   await user.click(screen.getByRole("option", { name: /日本直连/ }));
   await user.click(screen.getByRole("button", { name: "保存" }));
-  await waitFor(() => expect(submitted).toEqual({ name: "临时购物", note: "独立登录态", homepage: "https://example.org/", proxyId: "custom_jp" }));
+  await waitFor(() => expect(submitted).toEqual({
+    name: "临时购物",
+    note: "独立登录态",
+    homepage: "https://example.org/",
+    proxyId: "custom_jp",
+    timezoneMode: "auto",
+    localeMode: "auto",
+  }));
   await waitFor(() => expect(tauri.methodSequence()).toContain("temporaryWindows.detectRegion"));
   expect(tauri.calls.find(call => call.args?.method === "temporaryWindows.save")?.args?.commandId).toBeDefined();
+});
+
+it("creates a fixed timezone/locale window without running exit detection and disables probe action", async () => {
+  const user = userEvent.setup();
+  let submitted: Record<string, unknown> | undefined;
+  tauri.onMethod("temporaryWindows.save", params => {
+    submitted = params;
+    return {
+      ...windowRecord,
+      ...params,
+      id: "tmp_fixed",
+      exitIp: null,
+      detectedAt: null,
+    };
+  });
+  render(<TemporaryWindowsPage />);
+  await user.click(screen.getByRole("button", { name: "新增窗口" }));
+  await user.click(screen.getByLabelText("名称"));
+  await user.paste("固定美西窗口");
+  await user.click(screen.getByRole("combobox", { name: "选择出口节点" }));
+  await user.click(screen.getByRole("option", { name: /日本直连/ }));
+  await user.click(screen.getByRole("button", { name: "固定配置" }));
+  expect(screen.getByRole("button", { name: "保存" })).toBeDisabled();
+  await user.click(screen.getByRole("button", { name: "美西 · en-US" }));
+  expect(screen.getByLabelText("时区 (IANA)")).toHaveValue("America/Los_Angeles");
+  expect(screen.getByLabelText("语言 (BCP 47)")).toHaveValue("en-US");
+  await user.click(screen.getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(submitted).toEqual({
+    name: "固定美西窗口",
+    note: "",
+    homepage: "https://chatgpt.com/",
+    proxyId: "custom_jp",
+    timezoneMode: "fixed",
+    localeMode: "fixed",
+    timezone: "America/Los_Angeles",
+    locale: "en-US",
+  }));
+  expect(tauri.methodSequence()).not.toContain("temporaryWindows.detectRegion");
+  const card = within(screen.getByRole("article", { name: "临时窗口 固定美西窗口" }));
+  expect(card.getByText("固定")).toBeInTheDocument();
+  expect(card.getByText("America/Los_Angeles")).toBeInTheDocument();
+  expect(card.getByText("en-US")).toBeInTheDocument();
+  expect(card.getByText("固定时区与语言，打开时不探测")).toBeInTheDocument();
+  expect(card.getByRole("button", { name: "探测时区" })).toBeDisabled();
+});
+
+it("supports mixed auto/fixed configuration and validates invalid timezone or locale inputs", async () => {
+  const user = userEvent.setup();
+  let submitted: Record<string, unknown> | undefined;
+  tauri.onMethod("temporaryWindows.save", params => {
+    submitted = params;
+    return {
+      ...windowRecord,
+      ...params,
+      id: "tmp_mixed",
+      timezone: null,
+      exitIp: null,
+      detectedAt: null,
+    };
+  });
+  tauri.onMethod("temporaryWindows.detectRegion", () => makeOperation({ state: "succeeded" }));
+  render(<TemporaryWindowsPage />);
+  await user.click(screen.getByRole("button", { name: "新增窗口" }));
+  await user.click(screen.getByLabelText("名称"));
+  await user.paste("混合窗口");
+  await user.click(screen.getByRole("combobox", { name: "选择出口节点" }));
+  await user.click(screen.getByRole("option", { name: /日本直连/ }));
+  await user.click(screen.getByRole("button", { name: "固定配置" }));
+  await user.click(screen.getByLabelText("时区 (IANA)"));
+  await user.paste("Invalid/Zone");
+  expect(screen.getByText(/请输入有效的 IANA 时区/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "保存" })).toBeDisabled();
+
+  await user.click(screen.getByRole("checkbox", { name: "时区自动推测" }));
+  expect(screen.getByLabelText("时区 (IANA)")).toBeDisabled();
+  await user.click(screen.getByLabelText("语言 (BCP 47)"));
+  await user.paste("zh_CN");
+  expect(screen.getByText(/请输入有效的语言标签/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "保存" })).toBeDisabled();
+
+  await user.clear(screen.getByLabelText("语言 (BCP 47)"));
+  await user.paste("en-US");
+  await user.click(screen.getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(submitted).toEqual({
+    name: "混合窗口",
+    note: "",
+    homepage: "https://chatgpt.com/",
+    proxyId: "custom_jp",
+    timezoneMode: "auto",
+    localeMode: "fixed",
+    locale: "en-US",
+  }));
+  await waitFor(() => expect(tauri.methodSequence()).toContain("temporaryWindows.detectRegion"));
+  const card = within(screen.getByRole("article", { name: "临时窗口 混合窗口" }));
+  expect(card.getByText("时区自动 · 语言固定")).toBeInTheDocument();
+  expect(card.getByRole("button", { name: "探测时区" })).toBeEnabled();
+});
+
+it("switches an existing window between auto and fixed modes during editing", async () => {
+  const user = userEvent.setup();
+  let submitted: Record<string, unknown> | undefined;
+  tauri.onMethod("temporaryWindows.save", params => {
+    submitted = params;
+    return {
+      ...windowRecord,
+      ...params,
+      timezone: params.timezoneMode === "auto" ? null : String(params.timezone),
+      locale: params.localeMode === "auto" ? null : String(params.locale),
+      exitIp: null,
+      detectedAt: null,
+    };
+  });
+  tauri.onMethod("temporaryWindows.detectRegion", () => makeOperation({ state: "succeeded" }));
+  render(<TemporaryWindowsPage />);
+
+  await user.click(screen.getByRole("button", { name: "编辑" }));
+  await user.click(screen.getByRole("button", { name: "固定配置" }));
+  expect(screen.getByLabelText("时区 (IANA)")).toHaveValue("Asia/Tokyo");
+  expect(screen.getByLabelText("语言 (BCP 47)")).toHaveValue("ja-JP");
+  await user.click(screen.getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(submitted?.timezoneMode).toBe("fixed"));
+  expect(tauri.methodSequence()).not.toContain("temporaryWindows.detectRegion");
+
+  await user.click(screen.getByRole("button", { name: "编辑" }));
+  await user.click(screen.getByRole("button", { name: "自动推测" }));
+  await user.click(screen.getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(submitted?.timezoneMode).toBe("auto"));
+  await waitFor(() => expect(tauri.methodSequence()).toContain("temporaryWindows.detectRegion"));
 });
 
 it("cleans only the selected window after explicit confirmation, keeping its configuration visible", async () => {

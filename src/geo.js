@@ -149,8 +149,9 @@ const LOCALE_BY_TIMEZONE_PREFIX = [
  * 标准 HTTP 代理端口，对明文 http 目标只要把绝对 URL 放进请求行即可，
  * 不需要额外依赖。
  */
-export function lookupThroughProxy(server, { signal } = {}) {
-  const target = "http://ip-api.com/json/?fields=status,query,countryCode,timezone";
+export function lookupThroughProxy(server, { signal, localeOnly = false } = {}) {
+  const fields = localeOnly ? "status,query,countryCode" : "status,query,countryCode,timezone";
+  const target = `http://ip-api.com/json/?fields=${fields}`;
   let proxyUrl;
   try {
     proxyUrl = new URL(server);
@@ -184,11 +185,17 @@ export function lookupThroughProxy(server, { signal } = {}) {
         res.on("end", () => {
           try {
             const data = JSON.parse(body);
-            if (data.status !== "success" || !data.timezone) return resolve(null);
-            new Intl.DateTimeFormat("en", { timeZone: data.timezone });
+            if (data.status !== "success") return resolve(null);
+            const locale = localeForCountry(data.countryCode);
+            if (localeOnly) {
+              if (!locale) return resolve(null);
+            } else {
+              if (!data.timezone) return resolve(null);
+              new Intl.DateTimeFormat("en", { timeZone: data.timezone });
+            }
             resolve({
-              timezone: data.timezone,
-              locale: localeForCountry(data.countryCode),
+              timezone: localeOnly ? null : data.timezone,
+              locale,
               ip: typeof data.query === "string" ? data.query : null,
             });
           } catch {

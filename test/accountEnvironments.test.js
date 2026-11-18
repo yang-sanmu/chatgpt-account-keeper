@@ -56,6 +56,8 @@ test("environment snapshots are immutable; fixed and inherited group movement ha
   const detected = environmentSnapshot({ account, environment: { mode: "inherit", version: 0 }, system,
     group: { tzManual: false }, region: { timezoneId: "Europe/Berlin", locale: "de-DE" } });
   assert.equal(environmentPending(inherit, detected), true);
+  assert.deepEqual(validateFixedEnvironment({ locale: "und", timezone: "UTC" }),
+    { mode: "fixed", locale: "und", timezone: "UTC" });
   for (const values of [{ locale: "bogus_underscore", timezone: "UTC" }, { locale: "en", timezone: "+08:00" }, { locale: "en", timezone: "Nowhere/Invalid" }]) {
     assert.throws(() => validateFixedEnvironment(values), { statusCode: 400 });
   }

@@ -249,3 +249,208 @@ test("exit lookup traverses the selected proxy and validates the returned IANA t
   assert.match(seen, /^http:\/\/ip-api.com\/json\//);
   invalid = true; assert.equal(await lookupThroughProxy(endpoint), null);
 });
+
+test("fixed timezone and locale skip exit probing, survive proxy switches and reset cleanly when switched back to auto", async t => {
+  let probeCalls = 0;
+  let probeResult = null;
+  const { root, manager, launched } = await fixture(t, {
+    probe: async () => {
+      probeCalls += 1;
+      return probeResult;
+    },
+  });
+
+  const saved = manager.save({
+    ...config,
+    timezoneMode: "fixed",
+    localeMode: "fixed",
+    timezone: "asia/shanghai",
+    locale: "en-us",
+  });
+  assertMethodResultContract("temporaryWindows.save", saved);
+  assert.equal(saved.timezoneMode, "fixed");
+  assert.equal(saved.localeMode, "fixed");
+  assert.equal(saved.timezone, "Asia/Shanghai");
+  assert.equal(saved.locale, "en-US");
+  assert.equal(saved.exitIp, null);
+  assert.equal(saved.detectedAt, null);
+  await manager.detect(saved.id);
+  assert.equal(probeCalls, 0);
+
+  // Opening a fully fixed window succeeds even if probe fails, without invoking probe.
+  await manager.open(saved.id);
+  assert.equal(probeCalls, 0);
+  assert.equal(launched[0].request.launchOptions.temporaryWindow.timezone, "Asia/Shanghai");
+  assert.equal(launched[0].request.launchOptions.temporaryWindow.locale, "en-US");
+  await manager.close(saved.id); await tick();
+
+  // Changing proxy node preserves fixed timezone/locale.
+  const moved = manager.save({
+    ...config,
+    id: saved.id,
+    proxyId: "custom_berlin",
+    timezoneMode: "fixed",
+    localeMode: "fixed",
+    timezone: "America/Los_Angeles",
+    locale: "en-US",
+  });
+  assert.equal(moved.timezone, "America/Los_Angeles");
+  assert.equal(moved.locale, "en-US");
+
+  // Reopening database preserves fixed modes and values.
+  const reopened = await openKeeperRepository({ filePath: path.join(root, "keeper.db") });
+  try {
+    const persisted = new SqliteTemporaryWindowStore(reopened).get(saved.id);
+    assert.equal(persisted.timezoneMode, "fixed");
+    assert.equal(persisted.localeMode, "fixed");
+    assert.equal(persisted.timezone, "America/Los_Angeles");
+    assert.equal(persisted.locale, "en-US");
+  } finally { reopened.close(); }
+
+  // Switching back to auto clears fixed timezone/locale and resumes probing.
+  const backToAuto = manager.save({
+    ...config,
+    id: saved.id,
+    proxyId: "custom_berlin",
+    timezoneMode: "auto",
+    localeMode: "auto",
+  });
+  assert.equal(backToAuto.timezoneMode, "auto");
+  assert.equal(backToAuto.localeMode, "auto");
+  assert.equal(backToAuto.timezone, null);
+  assert.equal(backToAuto.locale, null);
+  probeResult = { timezone: "Europe/Berlin", locale: "de-DE", ip: "198.51.100.2" };
+  await manager.open(saved.id);
+  assert.equal(probeCalls, 1);
+  assert.equal(launched[1].request.launchOptions.temporaryWindow.timezone, "Europe/Berlin");
+  assert.equal(launched[1].request.launchOptions.temporaryWindow.locale, "de-DE");
+  await manager.close(saved.id); await tick();
+});
+
+test("legacy and partial edits preserve each omitted fixed setting", async t => {
+  const { manager } = await fixture(t);
+  const { id } = manager.save({ ...config, timezoneMode: "fixed", timezone: "UTC", localeMode: "fixed", locale: "ja-JP" });
+  const edit = { ...config, id, name: "Renamed", proxyId: "custom_berlin" };
+  const renamed = manager.save(edit);
+  assert.equal(renamed.timezoneMode, "fixed");
+  assert.equal(renamed.timezone, "UTC");
+  assert.equal(renamed.localeMode, "fixed");
+  assert.equal(renamed.locale, "ja-JP");
+
+  const changedLocale = manager.save({ ...edit, localeMode: "auto" });
+  assert.equal(changedLocale.timezone, "UTC");
+  assert.equal(changedLocale.locale, null);
+  await manager.detect(id);
+  assert.throws(() => manager.save({ ...edit, localeMode: "fixed" }), { code: "VALIDATION_FAILED" });
+  assert.throws(() => manager.save({ ...edit, timezone: null }), { code: "VALIDATION_FAILED" });
+  const changedTimezone = manager.save({ ...edit, timezoneMode: "auto" });
+  assert.equal(changedTimezone.timezone, null);
+  assert.equal(changedTimezone.locale, "ja-JP");
+});
+
+test("a fixed timezone needs only a country code for automatic language at launch", async t => {
+  let countryCode = "JP";
+  const server = http.createServer((_req, res) => {
+    res.end(JSON.stringify({ status: "success", countryCode, query: "203.0.113.3" }));
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+  const { manager, launched } = await fixture(t, { probe: lookupThroughProxy });
+  manager.proxies.proxyForNode = () => ({ server: `http://127.0.0.1:${server.address().port}` });
+  const { id } = manager.save({ ...config, timezoneMode: "fixed", timezone: "UTC" });
+  await manager.open(id);
+  const region = launched[0].request.launchOptions.temporaryWindow;
+  assert.equal(region.timezone, "UTC");
+  assert.equal(region.locale, "ja-JP");
+  await manager.close(id);
+
+  countryCode = null;
+  await assert.rejects(manager.open(id), { code: "PROXY_UNAVAILABLE" });
+  assert.equal(manager.require(id).timezone, "UTC");
+  assert.equal(manager.require(id).locale, null);
+
+  countryCode = "JP";
+  manager.save({ ...config, id, timezoneMode: "auto", localeMode: "fixed", locale: "de-DE" });
+  await assert.rejects(manager.open(id), { code: "PROXY_UNAVAILABLE" });
+  assert.equal(manager.require(id).locale, "de-DE");
+});
+
+test("mixed auto/fixed modes probe only the auto side and never wipe the fixed value on probe failure", async t => {
+  let probeResult = { timezone: "Asia/Tokyo", locale: "ja-JP", ip: "203.0.113.9" };
+  const { manager, launched } = await fixture(t, { probe: async () => probeResult });
+
+  const autoTzFixedLocale = manager.save({
+    ...config,
+    timezoneMode: "auto",
+    localeMode: "fixed",
+    locale: "en-US",
+  });
+  assert.equal(autoTzFixedLocale.timezone, null);
+  assert.equal(autoTzFixedLocale.locale, "en-US");
+
+  await manager.open(autoTzFixedLocale.id);
+  assert.equal(launched[0].request.launchOptions.temporaryWindow.timezone, "Asia/Tokyo");
+  assert.equal(launched[0].request.launchOptions.temporaryWindow.locale, "en-US");
+  assert.equal(manager.list()[0].exitIp, "203.0.113.9");
+  await manager.close(autoTzFixedLocale.id); await tick();
+
+  // Failed probe clears only the auto timezone while keeping the fixed locale intact.
+  probeResult = null;
+  await assert.rejects(manager.detect(autoTzFixedLocale.id), { code: "PROXY_UNAVAILABLE" });
+  assert.equal(manager.list()[0].timezone, null);
+  assert.equal(manager.list()[0].locale, "en-US");
+  assert.equal(manager.list()[0].exitIp, null);
+
+  // Switch to fixed timezone + auto locale and probe successfully.
+  const fixedTzAutoLocale = manager.save({
+    ...config,
+    id: autoTzFixedLocale.id,
+    timezoneMode: "fixed",
+    localeMode: "auto",
+    timezone: "America/New_York",
+  });
+  assert.equal(fixedTzAutoLocale.timezone, "America/New_York");
+  assert.equal(fixedTzAutoLocale.locale, null);
+  probeResult = { timezone: "Asia/Tokyo", locale: "ja-JP", ip: "203.0.113.10" };
+  const detected = await manager.detect(fixedTzAutoLocale.id);
+  assert.equal(detected.timezone, "America/New_York");
+  assert.equal(detected.locale, "ja-JP");
+});
+
+test("fixed timezone and locale validation rejects invalid inputs and IPC contracts validate mode fields", async t => {
+  for (const invalid of [
+    { ...config, timezoneMode: "fixed", timezone: "" },
+    { ...config, timezoneMode: "fixed", timezone: "+08:00" },
+    { ...config, timezoneMode: "fixed", timezone: "Nowhere/Invalid" },
+    { ...config, localeMode: "fixed", locale: "" },
+    { ...config, localeMode: "fixed", locale: "zh_CN" },
+    { ...config, localeMode: "fixed", locale: "und" },
+    { ...config, timezoneMode: "manual" },
+  ]) {
+    assert.throws(() => normalizeTemporaryWindow(invalid), { code: "VALIDATION_FAILED" });
+  }
+
+  const { manager, repository } = await fixture(t);
+  const adapters = createSqliteRuntimeAdapters(repository);
+  const services = new ApplicationServices({
+    receiptStore: adapters.receiptStore,
+    runtime: { store: adapters.store, temporaryWindows: manager, proxies: { getNodes: () => nodes, status: () => ({ running: false }) } },
+  });
+  t.after(() => services.dispose());
+  manager.onChanged = windows => assertOutgoingContract(services.events.publish("temporaryWindows.changed", windows));
+  const request = {
+    id: "req-fixed",
+    method: "temporaryWindows.save",
+    params: { ...config, timezoneMode: "fixed", localeMode: "fixed", timezone: "America/New_York", locale: "en-US" },
+    commandId: randomUUID(),
+  };
+  assertRequestContract(request);
+  const saved = await services.execute(request);
+  assertMethodResultContract("temporaryWindows.save", saved);
+  assert.equal(saved.timezoneMode, "fixed");
+  assert.equal(saved.localeMode, "fixed");
+  assert.throws(
+    () => assertRequestContract({ ...request, params: { ...config, timezoneMode: "bad-mode" } }),
+    { code: "VALIDATION_FAILED" }
+  );
+});

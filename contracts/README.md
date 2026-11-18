@@ -17,6 +17,7 @@ Compatibility rules:
 - v1.12 adds `accounts.checkPromos` for batch Plus promotion checks using saved access tokens. The paired Desktop requires Agent 1.12.
 - v1.9 adds `icloud.delete` for an explicit list of email addresses and the iCloud `deleting` status. Deletion runs as an idempotent operation and blocks updates while active. The paired Desktop requires Agent 1.9.
 - v1.13 adds `icloud.cancelDelete` to gracefully stop an active iCloud batch deletion between items without disabling automatic email creation. The paired Desktop requires Agent 1.13.
+- v1.14 adds independent automatic and fixed timezone and locale settings to `temporaryWindows.save`. Each omitted mode defaults to automatic on creation and keeps its previous setting on edit. Clients negotiating minor 14 or later receive `timezoneMode` and `localeMode` in window records. Earlier clients retain the original record shape in save responses, lists, bootstrap snapshots and window change events. The paired Desktop requires Agent 1.14.
 - Mutating requests carry a UUID `commandId` and are idempotent.
 - The first request on every connection is `system.hello`.
 - A changed `instanceId` or a gap in event `seq` requires `system.bootstrap`.

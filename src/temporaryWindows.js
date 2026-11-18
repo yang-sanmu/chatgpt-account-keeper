@@ -2,11 +2,20 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { ApplicationError, ERROR_CODES, assertInput } from "./application/errors.js";
+import { normalizeLocale, normalizeTimezone } from "./environmentConfig.js";
 import { lookupThroughProxy } from "./geo.js";
 
 const error = (code, message) => new ApplicationError(ERROR_CODES[code], message);
 
-export function normalizeTemporaryWindow(input) {
+function withModeDefaults(value) {
+  return {
+    ...value,
+    timezoneMode: value.timezoneMode === "fixed" ? "fixed" : "auto",
+    localeMode: value.localeMode === "fixed" ? "fixed" : "auto",
+  };
+}
+
+export function normalizeTemporaryWindow(input, current = null) {
   assertInput(input && typeof input === "object", "窗口配置不能为空");
   const name = typeof input.name === "string" ? input.name.trim() : "";
   const note = input.note ?? "";
@@ -18,7 +27,23 @@ export function normalizeTemporaryWindow(input) {
   assertInput(url && ["https:", "http:"].includes(url.protocol) && !url.username && !url.password
     && url.href.length <= 4096, "默认主页须为有效的 HTTP/HTTPS 网址，且不能包含用户名或密码");
   assertInput(typeof input.proxyId === "string" && input.proxyId.length > 0, "请选择出口节点");
-  return { name, note, homepage: url.href, proxyId: input.proxyId };
+  const {
+    timezoneMode = current?.timezoneMode ?? "auto",
+    localeMode = current?.localeMode ?? "auto",
+    timezone: timezoneInput = current?.timezoneMode === "fixed" ? current.timezone : undefined,
+    locale: localeInput = current?.localeMode === "fixed" ? current.locale : undefined,
+  } = input;
+  assertInput(timezoneMode === "auto" || timezoneMode === "fixed", "时区模式只能为自动推测或固定");
+  assertInput(localeMode === "auto" || localeMode === "fixed", "语言模式只能为自动推测或固定");
+  const timezone = timezoneMode === "fixed" ? normalizeTimezone(timezoneInput) : null;
+  if (timezoneMode === "fixed") {
+    assertInput(Boolean(timezone), "请提供有效的 IANA 时区，例如 Asia/Shanghai 或 America/Los_Angeles");
+  }
+  const locale = localeMode === "fixed" ? normalizeLocale(localeInput) : null;
+  if (localeMode === "fixed") {
+    assertInput(Boolean(locale) && locale !== "und", "请提供有效的语言标签，例如 zh-CN 或 en-US");
+  }
+  return { name, note, homepage: url.href, proxyId: input.proxyId, timezoneMode, localeMode, timezone, locale };
 }
 
 export class SqliteTemporaryWindowStore {
@@ -62,11 +87,12 @@ export class TemporaryWindowManager {
   }
 
   view(value) {
-    const node = this.proxies.getNodes().find(node => node.id === value.proxyId);
-    const session = this.sessions.get(value.id);
-    const run = this.browserRuns?.listActive().find(run => run.accountId === value.id);
-    return { ...value, proxyName: node?.name ?? null, proxyUnavailable: !node || node.enabled === false || !!node.missing,
-      state: this.pending.has(value.id) ? "busy" : run?.state === "close_failed" ? "close_failed" : session || run ? "open" : "closed",
+    const normalized = withModeDefaults(value);
+    const node = this.proxies.getNodes().find(node => node.id === normalized.proxyId);
+    const session = this.sessions.get(normalized.id);
+    const run = this.browserRuns?.listActive().find(run => run.accountId === normalized.id);
+    return { ...normalized, proxyName: node?.name ?? null, proxyUnavailable: !node || node.enabled === false || !!node.missing,
+      state: this.pending.has(normalized.id) ? "busy" : run?.state === "close_failed" ? "close_failed" : session || run ? "open" : "closed",
       openedAt: session?.openedAt ?? null };
   }
 
@@ -86,18 +112,26 @@ export class TemporaryWindowManager {
 
   save(input) {
     if (this.stopping) throw error("AGENT_DRAINING", "Agent 正在退出");
-    const config = normalizeTemporaryWindow(input);
+    const current = input?.id ? withModeDefaults(this.require(input.id)) : null;
+    const config = normalizeTemporaryWindow(input, current);
     this.node(config.proxyId);
-    const current = input.id ? this.require(input.id) : null;
     if (current) this.assertIdle(current.id);
     const now = new Date().toISOString();
     const changedProxy = current?.proxyId !== config.proxyId;
+    const keepAutoTimezone = Boolean(current) && config.timezoneMode === "auto" && !changedProxy && current.timezoneMode === "auto";
+    const keepAutoLocale = Boolean(current) && config.localeMode === "auto" && !changedProxy && current.localeMode === "auto";
+    const switchedToAuto = Boolean(current) && (
+      (config.timezoneMode === "auto" && current.timezoneMode !== "auto") ||
+      (config.localeMode === "auto" && current.localeMode !== "auto")
+    );
+    const anyAuto = config.timezoneMode === "auto" || config.localeMode === "auto";
+    const keepDetectedMeta = Boolean(current) && !changedProxy && anyAuto && !switchedToAuto;
     const value = { ...current, ...config, id: current?.id ?? `tmp_${randomUUID()}`,
       createdAt: current?.createdAt ?? now, updatedAt: now,
-      timezone: changedProxy ? null : current.timezone,
-      locale: changedProxy ? null : current.locale,
-      exitIp: changedProxy ? null : current.exitIp,
-      detectedAt: changedProxy ? null : current.detectedAt };
+      timezone: config.timezoneMode === "fixed" ? config.timezone : keepAutoTimezone ? (current.timezone ?? null) : null,
+      locale: config.localeMode === "fixed" ? config.locale : keepAutoLocale ? (current.locale ?? null) : null,
+      exitIp: keepDetectedMeta ? (current.exitIp ?? null) : null,
+      detectedAt: keepDetectedMeta ? (current.detectedAt ?? null) : null };
     this.store.save(value); this.changed();
     return this.view(value);
   }
@@ -114,20 +148,31 @@ export class TemporaryWindowManager {
   }
 
   async detectRegion(id) {
-    const value = this.require(id);
+    const value = withModeDefaults(this.require(id));
     this.node(value.proxyId);
+    const fixedTimezone = value.timezoneMode === "fixed";
+    const fixedLocale = value.localeMode === "fixed";
+    if ((fixedTimezone && !value.timezone) || (fixedLocale && !value.locale)) {
+      throw error("VALIDATION_FAILED", "固定时区或语言配置缺失，请先编辑保存");
+    }
+    if (fixedTimezone && fixedLocale) return value;
     await this.proxies.ensureRunning();
     if (this.stopping) throw error("AGENT_DRAINING", "Agent 正在退出");
     this.node(value.proxyId);
     const proxy = this.proxies.proxyForNode(value.proxyId);
     if (!proxy) throw error("PROXY_UNAVAILABLE", "无法连接所选出口节点");
-    const region = await this.probe(proxy.server, { signal: this.abortController.signal });
+    const region = await this.probe(proxy.server, { signal: this.abortController.signal, localeOnly: fixedTimezone });
     if (this.stopping) throw error("AGENT_DRAINING", "Agent 正在退出");
-    if (!region?.timezone) {
-      this.store.save({ ...value, timezone: null, locale: null, exitIp: null, detectedAt: null });
-      throw error("PROXY_UNAVAILABLE", "出口 IP 时区探测失败，请检查节点连接后重试");
+    if (!(fixedTimezone ? region?.locale : region?.timezone)) {
+      this.store.save({ ...value,
+        timezone: fixedTimezone ? value.timezone : null,
+        locale: fixedLocale ? value.locale : null,
+        exitIp: null, detectedAt: null });
+      throw error("PROXY_UNAVAILABLE", `出口 IP ${fixedTimezone ? "语言" : "时区"}探测失败，请检查节点连接后重试`);
     }
-    const result = { ...value, timezone: region.timezone, locale: region.locale || "en-US",
+    const result = { ...value,
+      timezone: fixedTimezone ? value.timezone : region.timezone,
+      locale: fixedLocale ? value.locale : (region.locale || "en-US"),
       exitIp: region.ip ?? null, detectedAt: new Date().toISOString() };
     this.store.save(result); this.changed();
     return result;

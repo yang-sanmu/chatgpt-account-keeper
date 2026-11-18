@@ -7,7 +7,7 @@
 /// 协议主版本。不同主版本不兼容。
 pub const PROTOCOL_MAJOR: u32 = 1;
 /// 协议次版本。次版本只增加可选字段、方法、事件或能力。
-pub const PROTOCOL_MINOR: u32 = 13;
+pub const PROTOCOL_MINOR: u32 = 14;
 /// 帧长度上限。超过它必须在分配 payload 缓冲区之前拒绝。
 pub const MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
 

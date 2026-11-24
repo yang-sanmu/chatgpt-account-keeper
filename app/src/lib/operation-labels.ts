@@ -44,6 +44,7 @@ const OPERATIONS: Record<string, OperationMeta> = {
   "proxy-custom-import": { action: "导入自定义代理", resource: "global" },
   "proxy-custom-save": { action: "保存自定义代理", resource: "proxy" },
   "proxy-custom-rename": { action: "重命名自定义代理", resource: "global" },
+  "proxy-node-rename": { action: "重命名代理节点", resource: "proxy" },
   "proxy-custom-remove": { action: "删除自定义代理", resource: "global" },
   "proxy-refresh": { action: "刷新订阅", resource: "global" },
   "proxy-subscription-edit": { action: "编辑订阅", resource: "global" },

@@ -61,17 +61,17 @@ it("imports several links and retains failed links without retrying duplicates",
 
 it("collapses subscription nodes and edits custom connection fields without changing the id", async () => {
   const node: ProxyNode = {
-    id: "custom_a", name: "自有出口", type: "http", server: "localhost", port: 3000,
+    id: "custom_a", name: "自有出口", customKind: "simple", type: "http", server: "localhost", port: 3000,
     enabled: true, missing: false, localPort: null, latencyMs: null, latencyOk: null,
     latencyMessage: null, latencyTestedAt: null,
   };
   const runOperation = vi.fn().mockResolvedValue({});
   vi.spyOn(bridge, "agentCall").mockResolvedValue({ id: node.id, name: node.name, protocol: "http", server: "localhost", port: 3000, username: "old-user", password: "old-password" });
-  useKeeperStore.setState({ runOperation, proxies: { ...useKeeperStore.getState().proxies, nodes: [node, { ...node, id: "px_a", name: "订阅出口" }] } });
+  useKeeperStore.setState({ runOperation, proxies: { ...useKeeperStore.getState().proxies, nodes: [node, { ...node, id: "px_a", customKind: undefined, name: "订阅出口" }] } });
   render(<ProxiesSection />);
   const custom = within(screen.getByRole("table", { name: "自定义节点" }));
   expect(screen.queryByRole("table", { name: "订阅节点" })).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "展开订阅节点（1）" }));
+  fireEvent.click(screen.getByRole("button", { name: /订阅节点/ }));
   const subscription = within(screen.getByRole("table", { name: "订阅节点" }));
   expect(custom.queryByText("订阅出口")).toBeNull();
   expect(subscription.queryByText("自有出口")).toBeNull();
@@ -181,4 +181,204 @@ it("recognizes mixed batch formats and atomically imports the edited forms", asy
   expect(parsed[0]?.password).toBe("edited:@/#");
   expect(parsed[1]).toMatchObject({ name: "Office", protocol: "https", password: "p@ss", port: 443 });
   expect(parsed[2]).toMatchObject({ server: "::1", protocol: "socks5", password: "p:ss" });
+});
+
+it("expands subscription groups independently, supports search, and runs per-group latency test", async () => {
+  const runOperation = vi.fn().mockResolvedValue({});
+  const makeNode = (id: string, sourceId: string, name: string, extra: Partial<ProxyNode> = {}): ProxyNode => ({
+    id, sourceId, name, type: "vless", server: `${id}.example.test`, port: 443,
+    enabled: true, missing: false, localPort: null, latencyMs: null, latencyOk: null,
+    latencyMessage: null, latencyTestedAt: null, ...extra,
+  });
+  const sourceA = { id: "a", name: "FSCloud", configured: true, host: "a.example.test", updatedAt: null, attemptedAt: null, error: null, count: 1, missingCount: 0 };
+  const sourceB = { id: "b", name: "苏菲家宽", configured: true, host: "b.example.test", updatedAt: null, attemptedAt: null, error: null, count: 1, missingCount: 0 };
+  useKeeperStore.setState({
+    runOperation,
+    proxies: {
+      ...useKeeperStore.getState().proxies,
+      subscriptions: [sourceA, sourceB],
+      nodes: [
+        makeNode("px_a1", "a", "美国主力", { originalName: "美国-VLESS-8", customNamed: true }),
+        makeNode("px_b1", "b", "台湾专线"),
+      ],
+    },
+  });
+
+  render(<ProxiesSection />);
+  expect(screen.queryByRole("table", { name: "FSCloud 节点" })).toBeNull();
+  expect(screen.queryByRole("table", { name: "苏菲家宽 节点" })).toBeNull();
+
+  // 展开 FSCloud 仅显示其下属节点，不影响苏菲家宽。
+  fireEvent.click(screen.getByRole("button", { name: /FSCloud/ }));
+  const tableA = within(screen.getByRole("table", { name: "FSCloud 节点" }));
+  expect(tableA.getByText("美国主力")).toBeInTheDocument();
+  expect(tableA.getByText("原名：美国-VLESS-8")).toBeInTheDocument();
+  expect(tableA.queryByText("台湾专线")).toBeNull();
+  expect(screen.queryByRole("table", { name: "苏菲家宽 节点" })).toBeNull();
+
+  // 按组测速只测目标订阅源。
+  fireEvent.click(screen.getAllByRole("button", { name: "测速本组" })[0]!);
+  await waitFor(() => expect(runOperation).toHaveBeenCalledWith("proxies.testAll", { scope: "source", sourceId: "a" }));
+
+  // 搜索原名或另一分组节点时自动展开命中分组。
+  fireEvent.change(screen.getByLabelText("搜索代理节点"), { target: { value: "台湾" } });
+  expect(screen.getByRole("table", { name: "苏菲家宽 节点" })).toBeInTheDocument();
+  expect(screen.queryByRole("table", { name: "FSCloud 节点" })).toBeNull();
+});
+
+it("supports naming a subscription during import and renaming or restoring a subscription node", async () => {
+  const runOperation = vi.fn().mockResolvedValue({ result: { results: [{ index: 0, name: "自用机场", added: 1, updated: 0, removed: 0, skipped: 0 }] } });
+  const subNode: ProxyNode = {
+    id: "px_1", sourceId: "src1", name: "美国主力", originalName: "美国-VLESS-8", customNamed: true,
+    type: "vless", server: "us.example.test", port: 443, enabled: true, missing: false,
+    localPort: null, latencyMs: null, latencyOk: null, latencyMessage: null, latencyTestedAt: null,
+  };
+  useKeeperStore.setState({
+    runOperation,
+    proxies: {
+      ...useKeeperStore.getState().proxies,
+      subscriptions: [{ id: "src1", name: "FSCloud", configured: true, host: "f.example.test", updatedAt: null, attemptedAt: null, error: null, count: 1, missingCount: 0 }],
+      nodes: [subNode],
+    },
+  });
+
+  render(<ProxiesSection />);
+  fireEvent.change(screen.getByLabelText("订阅链接（每行一条）"), { target: { value: "https://new.example.test/sub" } });
+  fireEvent.change(screen.getByLabelText("订阅别名（选填）"), { target: { value: "自用机场" } });
+  fireEvent.click(screen.getByRole("button", { name: "导入订阅" }));
+  await waitFor(() => expect(runOperation).toHaveBeenCalledWith("proxies.addSubscriptions", {
+    urls: ["https://new.example.test/sub"],
+    names: ["自用机场"],
+  }));
+
+  fireEvent.click(screen.getByRole("button", { name: /FSCloud/ }));
+  const table = within(screen.getByRole("table", { name: "FSCloud 节点" }));
+  fireEvent.click(table.getByRole("button", { name: "重命名" }));
+  fireEvent.change(screen.getByLabelText("节点名称"), { target: { value: "北美一号" } });
+  fireEvent.click(screen.getByRole("button", { name: "保存名称" }));
+  await waitFor(() => expect(runOperation).toHaveBeenCalledWith("proxies.renameNode", { id: "px_1", name: "北美一号" }));
+
+  fireEvent.click(table.getByRole("button", { name: "重命名" }));
+  fireEvent.click(screen.getByRole("button", { name: "恢复原名" }));
+  await waitFor(() => expect(runOperation).toHaveBeenCalledWith("proxies.renameNode", { id: "px_1", name: null }));
+});
+
+it("imports and edits Clash YAML / share URI custom nodes", async () => {
+  const runOperation = vi.fn().mockResolvedValue({});
+  const agentCallSpy = vi.spyOn(bridge, "agentCall").mockImplementation(async (method) => {
+    if (method === "proxies.previewCustomConfig") {
+      return {
+        skipped: 0,
+        nodes: [
+          { name: "VPS-VLESS", type: "vless", server: "198.51.100.10", port: 56702, yaml: "type: vless\nserver: 198.51.100.10\nport: 56702" },
+          { name: "VPS-Hy2", type: "hysteria2", server: "198.51.100.10", port: 443, yaml: "type: hysteria2\nserver: 198.51.100.10\nport: 443" },
+        ],
+      } as never;
+    }
+    if (method === "proxies.getCustomConfig") {
+      return {
+        id: "custom_vps",
+        name: "自建-VLESS",
+        type: "vless",
+        server: "198.51.100.10",
+        port: 56702,
+        yaml: "type: vless\nserver: 198.51.100.10\nport: 56702",
+      } as never;
+    }
+    return {} as never;
+  });
+
+  useKeeperStore.setState({
+    runOperation,
+    proxies: {
+      ...useKeeperStore.getState().proxies,
+      nodes: [{
+        id: "custom_vps", name: "自建-VLESS", customKind: "yaml", type: "vless", server: "198.51.100.10", port: 56702,
+        enabled: true, missing: false, localPort: null, latencyMs: null, latencyOk: null, latencyMessage: null, latencyTestedAt: null,
+      }],
+    },
+  });
+
+  render(<ProxiesSection />);
+  fireEvent.click(screen.getByRole("button", { name: "新增代理" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Clash YAML / 分享链接" }));
+  fireEvent.change(screen.getByLabelText("Clash YAML 或分享链接"), { target: { value: "proxies: []" } });
+  fireEvent.click(screen.getByRole("button", { name: "识别节点" }));
+  await waitFor(() => expect(screen.getAllByLabelText("节点名称")).toHaveLength(2));
+  fireEvent.change(screen.getAllByLabelText("节点名称")[0]!, { target: { value: "我的美国VPS" } });
+  fireEvent.click(screen.getByRole("button", { name: "保存 2 个节点" }));
+  await waitFor(() => expect(runOperation).toHaveBeenCalledWith("proxies.saveCustomConfig", {
+    items: [
+      { name: "我的美国VPS", yaml: "type: vless\nserver: 198.51.100.10\nport: 56702" },
+      { name: "VPS-Hy2", yaml: "type: hysteria2\nserver: 198.51.100.10\nport: 443" },
+    ],
+  }));
+
+  const customTable = within(screen.getByRole("table", { name: "自定义节点" }));
+  fireEvent.click(customTable.getByRole("button", { name: "编辑" }));
+  await waitFor(() => expect(screen.getByLabelText("节点 YAML 配置")).toHaveValue("type: vless\nserver: 198.51.100.10\nport: 56702"));
+  expect(agentCallSpy).toHaveBeenCalledWith("proxies.getCustomConfig", { id: "custom_vps" });
+  fireEvent.change(screen.getByLabelText("节点名称"), { target: { value: "自建-VLESS-改" } });
+  fireEvent.click(screen.getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(runOperation).toHaveBeenCalledWith("proxies.saveCustomConfig", {
+    id: "custom_vps",
+    items: [{ name: "自建-VLESS-改", yaml: "type: vless\nserver: 198.51.100.10\nport: 56702" }],
+  }));
+});
+
+it("clears stale YAML preview when input changes and preserves leading indentation", async () => {
+  const runOperation = vi.fn().mockResolvedValue({});
+  const previewInputs: string[] = [];
+  vi.spyOn(bridge, "agentCall").mockImplementation(async (method, params) => {
+    if (method === "proxies.previewCustomConfig") {
+      const text = (params as { input: string }).input;
+      previewInputs.push(text);
+      if (text.includes("BAD")) throw new Error("YAML 格式无效");
+      if (text.includes("NODE_B")) {
+        return { skipped: 0, nodes: [{ name: "节点B", type: "vless", server: "b.example.test", port: 443, yaml: "type: vless\nserver: b.example.test\nport: 443" }] } as never;
+      }
+      return { skipped: 0, nodes: [{ name: "节点A", type: "vless", server: "a.example.test", port: 443, yaml: "type: vless\nserver: a.example.test\nport: 443" }] } as never;
+    }
+    return {} as never;
+  });
+
+  useKeeperStore.setState({ runOperation });
+  render(<ProxiesSection />);
+  fireEvent.click(screen.getByRole("button", { name: "新增代理" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Clash YAML / 分享链接" }));
+
+  // 先识别 A
+  fireEvent.change(screen.getByLabelText("Clash YAML 或分享链接"), { target: { value: "NODE_A" } });
+  fireEvent.click(screen.getByRole("button", { name: "识别节点" }));
+  await waitFor(() => expect(screen.getByLabelText("节点名称")).toHaveValue("节点A"));
+
+  // 改成无效输入 B：旧预览 A 必须立即消失，且不能再把 A 保存出去
+  fireEvent.change(screen.getByLabelText("Clash YAML 或分享链接"), { target: { value: "BAD" } });
+  expect(screen.queryByLabelText("节点名称")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "识别节点" }));
+  await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("YAML 格式无效"));
+  fireEvent.click(screen.getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(runOperation).not.toHaveBeenCalled());
+
+  // 改为带首行缩进的有效 YAML B 并直接点保存：保留原始缩进并保存 B
+  const indentedB = "  - name: NODE_B\n    type: vless\n    server: b.example.test\n    port: 443";
+  fireEvent.change(screen.getByLabelText("Clash YAML 或分享链接"), { target: { value: indentedB } });
+  fireEvent.click(screen.getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(runOperation).toHaveBeenCalledWith("proxies.saveCustomConfig", {
+    items: [{ name: "节点B", yaml: "type: vless\nserver: b.example.test\nport: 443" }],
+  }));
+  expect(previewInputs.at(-1)).toBe(indentedB);
+
+  // 重新打开弹窗，先识别 A 再选一个超过 256 KB 的文件：旧输入和预览必须清空，保存按钮不可提交旧节点 A
+  fireEvent.click(screen.getByRole("button", { name: "新增代理" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Clash YAML / 分享链接" }));
+  fireEvent.change(screen.getByLabelText("Clash YAML 或分享链接"), { target: { value: "NODE_A" } });
+  fireEvent.click(screen.getByRole("button", { name: "识别节点" }));
+  await waitFor(() => expect(screen.getByLabelText("节点名称")).toHaveValue("节点A"));
+  const oversized = new File(["x".repeat(262145)], "big.yaml", { type: "text/yaml" });
+  fireEvent.change(screen.getByLabelText("选择本地 YAML 文件"), { target: { files: [oversized] } });
+  await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("文件过大"));
+  expect(screen.getByLabelText("Clash YAML 或分享链接")).toHaveValue("");
+  expect(screen.queryByLabelText("节点名称")).toBeNull();
+  expect(screen.getByRole("button", { name: "保存" })).toBeDisabled();
 });

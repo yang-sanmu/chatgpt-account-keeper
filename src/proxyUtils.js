@@ -50,9 +50,11 @@ export function mergeProxyNodes(rawNodes, previousNodes, referencedIds) {
     seen.add(id);
 
     const old = prevById.get(id);
+    const customName = typeof old?.customName === "string" && old.customName.trim() ? old.customName.trim() : null;
     nodes.push({
       id,
-      name: raw.name,
+      name: customName ?? raw.name,
+      ...(customName ? { customName } : {}),
       raw,
       enabled: old ? old.enabled !== false : true,
       missing: false,

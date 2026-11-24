@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-export const SCHEMA_VERSION = 16;
+export const SCHEMA_VERSION = 17;
 
 const SCHEMA_V1 = String.raw`
 CREATE TABLE IF NOT EXISTS command_receipts (
@@ -549,6 +549,10 @@ CREATE TABLE IF NOT EXISTS account_credentials (
 );
 `;
 
+const SCHEMA_V17 = String.raw`
+ALTER TABLE proxy_nodes ADD COLUMN custom_name TEXT;
+`;
+
 export const MIGRATIONS = Object.freeze([
   Object.freeze({
     version: 1,
@@ -586,6 +590,7 @@ export const MIGRATIONS = Object.freeze([
   Object.freeze({ version: 14, name: "proxy-subscriptions", sql: SCHEMA_V14, checksum: createHash("sha256").update(SCHEMA_V14).digest("hex") }),
   Object.freeze({ version: 15, name: "proxy-subscription-link-revision", sql: SCHEMA_V15, checksum: createHash("sha256").update(SCHEMA_V15).digest("hex") }),
   Object.freeze({ version: 16, name: "mail-settings-and-account-credentials", sql: SCHEMA_V16, checksum: createHash("sha256").update(SCHEMA_V16).digest("hex") }),
+  Object.freeze({ version: 17, name: "proxy-node-custom-names", sql: SCHEMA_V17, checksum: createHash("sha256").update(SCHEMA_V17).digest("hex") }),
 ]);
 
 export const MIGRATION_LEDGER_SQL = String.raw`

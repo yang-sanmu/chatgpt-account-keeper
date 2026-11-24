@@ -80,7 +80,7 @@ test("IPC v1 schema rejects unknown methods and unstable error codes", () => {
 });
 
 test("every advertised IPC method has runtime parameter and result contracts", () => {
-  assert.equal(Object.keys(methodSchema.$defs).length, 87);
+  assert.equal(Object.keys(methodSchema.$defs).length, 93);
   assert.deepEqual(
     Object.keys(METHOD_CONTRACTS).sort(),
     [...schema.$defs.method.enum].sort()
@@ -337,4 +337,31 @@ test("登录任务的所有阶段都被 browser.getTask 的结果契约接受", 
     /不符合契约/,
     "未知阶段仍应被拒绝，枚举不能放开成任意字符串"
   );
+});
+
+test("代理命名、YAML 导入与按组测速新契约校验通过", () => {
+  assert.doesNotThrow(() => assertRequestContract({
+    id: "p1", method: "proxies.previewCustomConfig", params: { input: "proxies: []" },
+  }));
+  assert.doesNotThrow(() => assertRequestContract({
+    id: "p2", method: "proxies.getCustomConfig", params: { id: "custom_1" },
+  }));
+  assert.doesNotThrow(() => assertRequestContract({
+    id: "p3", method: "proxies.saveCustomConfig",
+    params: { items: [{ name: "自建-VLESS", yaml: "type: vless\nserver: 198.51.100.1\nport: 443" }] },
+  }));
+  assert.doesNotThrow(() => assertRequestContract({
+    id: "p4", method: "proxies.renameNode", params: { id: "px_1", name: null },
+  }));
+  assert.doesNotThrow(() => assertRequestContract({
+    id: "p5", method: "proxies.testAll", params: { scope: "source", sourceId: "src_1" },
+  }));
+  assert.doesNotThrow(() => assertRequestContract({
+    id: "p6", method: "proxies.addSubscriptions",
+    params: { urls: ["https://example.test/sub"], names: ["我的机场"] },
+  }));
+  assert.doesNotThrow(() => assertMethodResultContract("proxies.previewCustomConfig", {
+    skipped: 0,
+    nodes: [{ name: "自建-VLESS", type: "vless", server: "198.51.100.1", port: 443, yaml: "type: vless" }],
+  }));
 });

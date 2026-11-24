@@ -4,7 +4,15 @@ import net from "node:net";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import YAML from "yaml";
-import { parseCustomProxies, appendCustomProxies } from "./customProxy.js";
+import { parseCustomProxies } from "./customProxy.js";
+import {
+  customConfigNodeId,
+  customNodeKind,
+  parseCustomConfigInput,
+  parseSingleCustomNodeYaml,
+  stringifyCustomNodeYaml,
+  validateNodeDisplayName,
+} from "./customProxyConfig.js";
 import {
   fromRoot,
   fromCacheRoot,
@@ -170,26 +178,33 @@ export function getNodes({ safe = true, store = readStore() } = {}) {
   // 而 portOf 会重新读整个 proxies.json —— 几百个节点的订阅就是几百次全文件解析。
   const ports = portMapFrom(nodes, activeBasePort ?? configuredBasePort(store));
   const routedIds = referencedProxyIds(store);
-  return nodes.map((n) => ({
-    id: n.id,
-    ...(n.sourceId ? { sourceId: n.sourceId } : {}),
-    name: n.name,
-    type: n.raw?.type ?? null,
-    server: n.raw?.server ?? null,
-    port: normalizeProxyPort(n.raw?.port),
-    enabled: n.enabled !== false,
-    missing: !!n.missing,
-    // 上次测速结果随节点一起返回，界面无需另外关联 Operation 结果。
-    latencyMs: nodeLatency.get(n.id)?.delay ?? null,
-    latencyOk: nodeLatency.get(n.id)?.ok ?? null,
-    latencyMessage: nodeLatency.get(n.id)?.message ?? null,
-    latencyTestedAt: nodeLatency.get(n.id)?.testedAt ?? null,
-    // 只有被分组实际引用的节点才有主边车监听端口；测速走独立临时进程。
-    localPort:
-      routedIds.has(n.id) && n.enabled !== false && !n.missing
-        ? ports.get(n.id) ?? null
-        : null,
-  }));
+  return nodes.map((n) => {
+    const isCustom = n.id.startsWith("custom_");
+    const hasCustomAlias = !isCustom && typeof n.customName === "string" && n.customName.trim().length > 0;
+    const originalName = typeof n.raw?.name === "string" && n.raw.name.trim() ? n.raw.name.trim() : null;
+    return {
+      id: n.id,
+      ...(n.sourceId ? { sourceId: n.sourceId } : {}),
+      name: n.name,
+      ...(hasCustomAlias ? { originalName, customNamed: true } : {}),
+      ...(isCustom ? { customKind: customNodeKind(n.raw) } : {}),
+      type: n.raw?.type ?? null,
+      server: n.raw?.server ?? null,
+      port: normalizeProxyPort(n.raw?.port),
+      enabled: n.enabled !== false,
+      missing: !!n.missing,
+      // 上次测速结果随节点一起返回，界面无需另外关联 Operation 结果。
+      latencyMs: nodeLatency.get(n.id)?.delay ?? null,
+      latencyOk: nodeLatency.get(n.id)?.ok ?? null,
+      latencyMessage: nodeLatency.get(n.id)?.message ?? null,
+      latencyTestedAt: nodeLatency.get(n.id)?.testedAt ?? null,
+      // 只有被分组实际引用的节点才有主边车监听端口；测速走独立临时进程。
+      localPort:
+        routedIds.has(n.id) && n.enabled !== false && !n.missing
+          ? ports.get(n.id) ?? null
+          : null,
+    };
+  });
 }
 
 /**
@@ -541,12 +556,24 @@ async function commitSubscriptions(requests, { assertIdle = () => {}, onApply = 
   });
 }
 
-export async function addSubscriptions(values, options) {
+export async function addSubscriptions(values, options = {}) {
   const sources = readStore().subscriptions ?? [];
-  const requests = await Promise.all(values.map(async (value) => {
+  const providedNames = Array.isArray(options?.names) ? options.names : [];
+  const requests = await Promise.all(values.map(async (value, index) => {
     const url = subscriptionUrl(value);
+    const rawName = providedNames[index];
+    let name;
+    if (typeof rawName === "string") {
+      const trimmed = rawName.trim();
+      if (trimmed) {
+        if (trimmed.length > 200 || /[\x00-\x1f\x7f]/.test(trimmed)) {
+          return { url, name: trimmed.slice(0, 200), downloaded: { error: "订阅别名须为 1–200 个字符" } };
+        }
+        name = trimmed;
+      }
+    }
     const duplicate = url && sources.some((source) => subscriptionUrl(source.url) === url);
-    return { url, downloaded: duplicate ? { error: "此链接已存在" } : await downloadSubscription(url) };
+    return { url, name, downloaded: duplicate ? { error: "此链接已存在" } : await downloadSubscription(url) };
   }));
   return commitSubscriptions(requests, options);
 }
@@ -587,11 +614,11 @@ export function removeSubscription(id, options) {
 export async function importCustom(input, protocol = "http") {
   const imported = parseCustomProxies(input, protocol);
   const previous = readStore();
-  const nodes = appendCustomProxies(previous.nodes, imported);
+  const { nodes, savedIds, createdIds } = upsertCustomNodes(previous.nodes, imported, { preserveExistingName: true });
   writeStore({ ...previous, nodes });
-  for (const node of imported) nodeLatency.delete(node.id);
+  for (const id of createdIds) nodeLatency.delete(id);
   // New nodes are not routed until selected by a group. Import need not stop Chrome traffic.
-  return { count: new Set(imported.map((node) => node.id)).size, total: nodes.length };
+  return { count: savedIds.length, total: nodes.length };
 }
 
 export async function setNodeEnabled(id, enabled) {
@@ -614,45 +641,221 @@ function requireCustomNode(store, id) {
 
 export function getCustom(id) {
   const node = requireCustomNode(readStore(), id);
+  if (customNodeKind(node.raw) !== "simple") {
+    throw badRequest("该自定义节点使用 Clash YAML 格式，请在 YAML 编辑器中查看与修改");
+  }
   return { id: node.id, name: node.name, protocol: node.raw.tls ? "https" : node.raw.type,
     server: node.raw.server, port: node.raw.port,
     username: node.raw.username ?? "", password: node.raw.password ?? "" };
 }
 
+export function previewCustomConfig(input) {
+  const { nodes, skipped } = parseCustomConfigInput(input);
+  return {
+    nodes: nodes.map(({ name, type, server, port, yaml }) => ({ name, type, server, port, yaml })),
+    skipped,
+  };
+}
+
+export function getCustomConfig(id) {
+  const node = requireCustomNode(readStore(), id);
+  return {
+    id: node.id,
+    name: node.name,
+    type: String(node.raw?.type ?? ""),
+    server: String(node.raw?.server ?? ""),
+    port: normalizeProxyPort(node.raw?.port) ?? 1,
+    yaml: stringifyCustomNodeYaml(node.raw),
+  };
+}
+
+function upsertCustomNodes(existingNodes, incomingItems, { preserveExistingName = false } = {}) {
+  const byId = new Map(existingNodes.map((node) => [node.id, node]));
+  const byConnection = new Map();
+  for (const node of existingNodes) {
+    if (!node.id.startsWith("custom_")) continue;
+    const key = customConfigNodeId(node.raw);
+    if (key && !byConnection.has(key)) byConnection.set(key, node);
+  }
+  const savedIds = new Set();
+  const createdIds = [];
+  for (const item of incomingItems) {
+    const key = customConfigNodeId(item.raw);
+    const matched = byConnection.get(key);
+    let nodeId = matched?.id ?? key;
+    if (!matched && byId.has(nodeId)) {
+      do {
+        nodeId = `custom_${randomUUID().replace(/-/g, "").slice(0, 20)}`;
+      } while (byId.has(nodeId));
+    }
+    const runtimeName = matched?.raw?.name ?? nodeId;
+    const displayName = preserveExistingName && matched?.name ? matched.name : item.name;
+    const customName = preserveExistingName && matched ? matched.customName : displayName;
+    const nextNode = {
+      ...matched,
+      id: nodeId,
+      name: displayName,
+      ...(customName ? { customName } : {}),
+      portSlot: matched?.portSlot,
+      enabled: matched ? matched.enabled !== false : true,
+      missing: false,
+      raw: { ...item.raw, name: runtimeName },
+    };
+    byId.set(nodeId, nextNode);
+    byConnection.set(key, nextNode);
+    savedIds.add(nodeId);
+    if (!matched) createdIds.push(nodeId);
+  }
+  return { nodes: [...byId.values()], savedIds: [...savedIds], createdIds };
+}
+
 export async function saveCustom(params) {
   const { id, protocol, port, username = "", password = "" } = params;
-  const name = typeof params.name === "string" ? params.name.trim() : "";
+  const name = validateNodeDisplayName(params.name);
   const server = typeof params.server === "string" ? params.server.trim() : "";
-  if (!name || name.length > 200 || /[\x00-\x1f\x7f]/.test(name)) throw badRequest("节点名称须为 1–200 个字符，且不能包含控制字符");
   if (!["http", "https", "socks5"].includes(protocol) || !Number.isInteger(port) || port < 1 || port > 65535 || !server || /[\s/@?#\\]/.test(server)) throw badRequest("请填写有效的协议、服务器和端口（1–65535）");
   if (typeof username !== "string" || typeof password !== "string" || (password && !username)) throw badRequest("填写密码时必须填写用户名");
   const host = server.includes(":") && !server.startsWith("[") ? `[${server}]` : server;
   const auth = username ? `${encodeURIComponent(username)}:${encodeURIComponent(password)}@` : "";
   const [parsed] = parseCustomProxies(`${protocol}://${auth}${host}:${port}`);
   const store = readStore();
-  const old = id ? requireCustomNode(store, id) : store.nodes.find((node) => node.id === parsed.id);
-  const nodeId = old?.id ?? parsed.id;
-  const node = { ...parsed, id: nodeId, name, enabled: old ? old.enabled !== false : true,
-    portSlot: old?.portSlot,
-    raw: { ...parsed.raw, name: old?.raw.name ?? parsed.raw.name } };
-  const connectionChanged = old && JSON.stringify(old.raw) !== JSON.stringify(node.raw);
-  const nodes = old ? store.nodes.map((item) => item.id === old.id ? node : item) : [...store.nodes, node];
+  if (!id) {
+    const { nodes, createdIds } = upsertCustomNodes(store.nodes, [{ name, raw: parsed.raw }]);
+    writeStore({ ...store, nodes });
+    for (const createdId of createdIds) nodeLatency.delete(createdId);
+    return { ok: true };
+  }
+  const old = requireCustomNode(store, id);
+  const node = {
+    ...parsed,
+    id: old.id,
+    name,
+    customName: name,
+    enabled: old.enabled !== false,
+    portSlot: old.portSlot,
+    raw: { ...parsed.raw, name: old.raw.name ?? parsed.raw.name },
+  };
+  const connectionChanged = stableJson(old.raw) !== stableJson(node.raw);
+  const nodes = store.nodes.map((item) => (item.id === old.id ? node : item));
   writeStore({ ...store, nodes });
   if (connectionChanged) {
-    nodeLatency.delete(nodeId);
-    if (referencedProxyIds().has(nodeId)) await restart();
+    nodeLatency.delete(old.id);
+    if (referencedProxyIds().has(old.id)) await restart();
   }
   return { ok: true };
 }
 
-export async function renameCustom(id, value) {
-  const name = typeof value === "string" ? value.trim() : "";
-  if (!name || name.length > 200 || /[\x00-\x1f\x7f]/.test(name)) throw badRequest("节点名称须为 1–200 个字符，且不能包含控制字符");
+export async function saveCustomConfig(params = {}) {
+  const { id, items } = params;
+  if (!Array.isArray(items) || !items.length || items.length > 100) {
+    throw badRequest("请提供 1–100 条有效的自定义节点配置");
+  }
+  if (id && items.length !== 1) {
+    throw badRequest("编辑自定义节点时一次只能保存 1 条配置");
+  }
+  const parsedItems = items.map((item) => {
+    if (!item || typeof item !== "object") throw badRequest("节点配置条目格式无效");
+    return parseSingleCustomNodeYaml(item.yaml, item.name);
+  });
+
+  if (id) {
+    return runLifecycleTransition(async () => {
+      const store = readStore();
+      const old = requireCustomNode(store, id);
+      const { name, raw } = parsedItems[0];
+      const runtimeName = old.raw?.name ?? old.id;
+      const updated = {
+        id: old.id,
+        name,
+        customName: name,
+        portSlot: old.portSlot,
+        enabled: old.enabled !== false,
+        missing: false,
+        raw: { ...raw, name: runtimeName },
+      };
+      const connectionChanged = stableJson(old.raw) !== stableJson(updated.raw);
+      const candidate = {
+        ...store,
+        nodes: store.nodes.map((item) => (item.id === old.id ? updated : item)),
+      };
+      const references = referencedProxyIds(store);
+      if (connectionChanged && references.has(old.id) && updated.enabled) {
+        const previousBasePort = activeBasePort;
+        try {
+          await ensureRunningUnlocked(candidate, references, { allowReuse: false });
+        } catch (error) {
+          activeBasePort = previousBasePort;
+          try {
+            await ensureRunningUnlocked(store, references, { allowReuse: false });
+          } catch {
+            /* 保留原始启动错误 */
+          }
+          throw Object.assign(
+            new Error(`新节点配置无法应用，已保留原配置：${error.message || error}`, { cause: error }),
+            { code: "PROXY_UNAVAILABLE" }
+          );
+        }
+      }
+      // 重读最新状态，仅更新目标节点，避免覆盖重启期间并发导入的新节点。
+      const latest = readStore();
+      writeStore({
+        ...latest,
+        nodes: latest.nodes.map((item) => (item.id === old.id ? updated : item)),
+      });
+      if (connectionChanged) nodeLatency.delete(old.id);
+      return { ok: true, count: 1, ids: [old.id] };
+    });
+  }
+
   const store = readStore();
-  requireCustomNode(store, id).name = name;
+  const { nodes, savedIds, createdIds } = upsertCustomNodes(store.nodes, parsedItems);
+  writeStore({ ...store, nodes });
+  for (const createdId of createdIds) nodeLatency.delete(createdId);
+  return { ok: true, count: savedIds.length, ids: savedIds };
+}
+
+export async function renameCustom(id, value) {
+  const name = validateNodeDisplayName(value);
+  const store = readStore();
+  const node = requireCustomNode(store, id);
+  node.name = name;
+  node.customName = name;
   // Runtime names are stable IDs; changing the display name does not restart traffic.
   writeStore(store);
   return { ok: true };
+}
+
+export async function renameNode(id, value) {
+  const store = readStore();
+  const node = store.nodes.find((item) => item.id === id);
+  if (!node) throw badRequest("代理节点不存在");
+  const isCustom = node.id.startsWith("custom_");
+  if (isCustom) {
+    const name = validateNodeDisplayName(value, { allowEmpty: false });
+    node.name = name;
+    node.customName = name;
+  } else {
+    const customName = validateNodeDisplayName(value, { allowEmpty: true });
+    const originalName = typeof node.raw?.name === "string" && node.raw.name.trim()
+      ? node.raw.name.trim()
+      : node.name;
+    if (customName) {
+      node.customName = customName;
+      node.name = customName;
+    } else {
+      delete node.customName;
+      node.name = originalName;
+    }
+  }
+  // Runtime names are stable IDs; changing the display name does not restart traffic.
+  writeStore(store);
+  return {
+    ok: true,
+    id: node.id,
+    name: node.name,
+    originalName: isCustom ? null : (typeof node.raw?.name === "string" && node.raw.name.trim() ? node.raw.name.trim() : node.name),
+    customNamed: !isCustom && Boolean(node.customName),
+  };
 }
 
 export async function removeCustom(id) {
@@ -1484,32 +1687,50 @@ export function getNodeLatency(nodeId) {
 }
 
 /**
- * 批量测速：独立进程一次加载所有启用节点，再逐个请求延迟。
+ * 批量测速：独立进程一次加载目标启用节点，再用有限并发请求延迟。
+ * 支持按范围（全部 / 某订阅源 / 自定义节点 / 未归属节点 / 指定 ID）过滤测速。
  *
- * onProgress 每测完一个节点回调一次，让上层 Operation 能报真实进度；
- * 一百多个节点串行测速否则是十几分钟的黑盒。
+ * onProgress 每测完一个节点回调一次，让上层 Operation 能报真实进度。
  */
-export async function testAllNodes({ onProgress } = {}) {
-  const { nodes } = readStore();
-  const targets = nodes.filter((n) => n.enabled !== false && !n.missing);
+export async function testAllNodes({ onProgress, scope = "all", sourceId = null, ids = null, concurrency = 5 } = {}) {
+  const { nodes, subscriptions = [] } = readStore();
+  const knownSourceIds = new Set(subscriptions.map((source) => source.id));
+  const idSet = Array.isArray(ids) && ids.length ? new Set(ids) : null;
+  const targets = nodes.filter((n) => {
+    if (n.enabled === false || n.missing) return false;
+    if (idSet) return idSet.has(n.id);
+    if (scope === "custom") return n.id.startsWith("custom_");
+    if (scope === "source") return Boolean(sourceId) && n.sourceId === sourceId;
+    if (scope === "unassigned") return !n.id.startsWith("custom_") && (!n.sourceId || !knownSourceIds.has(n.sourceId));
+    return true;
+  });
   if (!targets.length) throw badRequest("没有可测试的启用节点");
 
+  const workerCount = Math.min(Math.max(1, Math.floor(Number(concurrency) || 5)), targets.length);
   return withTestSidecar(targets, async () => {
-    const results = [];
-    for (const [index, node] of targets.entries()) {
-      const measured = rememberLatency(node.id, await measureTestNode(node));
-      results.push(measured);
-      try {
-        onProgress?.({
-          done: index + 1,
-          total: targets.length,
-          node: { id: node.id, name: node.name },
-          result: measured,
-        });
-      } catch {
-        // 进度回调失败不能中断剩余节点的测速
+    const results = new Array(targets.length);
+    let cursor = 0;
+    let done = 0;
+    const worker = async () => {
+      while (cursor < targets.length) {
+        const index = cursor++;
+        const node = targets[index];
+        const measured = rememberLatency(node.id, await measureTestNode(node));
+        results[index] = measured;
+        done++;
+        try {
+          onProgress?.({
+            done,
+            total: targets.length,
+            node: { id: node.id, name: node.name },
+            result: measured,
+          });
+        } catch {
+          // 进度回调失败不能中断剩余节点的测速
+        }
       }
-    }
+    };
+    await Promise.all(Array.from({ length: workerCount }, () => worker()));
     return { results, total: targets.length };
   });
 }

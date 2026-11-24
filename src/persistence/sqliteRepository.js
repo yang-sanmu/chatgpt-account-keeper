@@ -1314,6 +1314,7 @@ export class KeeperRepository {
           id: row.id,
           sortOrder: row.sort_order,
           name: row.name,
+          ...(row.custom_name ? { customName: row.custom_name } : {}),
           sourceId: row.source_id,
           ...(row.port_slot === null ? {} : { portSlot: row.port_slot }),
           enabled: !!row.enabled,
@@ -1377,17 +1378,18 @@ export class KeeperRepository {
     const network = this.getProxyState().network;
     this.transaction(() => {
       const upsert = this.db.prepare(
-        `INSERT INTO proxy_nodes(id, sort_order, name, raw_json, enabled, missing, legacy_extra_json, source_id, port_slot)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO proxy_nodes(id, sort_order, name, custom_name, raw_json, enabled, missing, legacy_extra_json, source_id, port_slot)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET sort_order=excluded.sort_order, name=excluded.name,
-           raw_json=excluded.raw_json, enabled=excluded.enabled, missing=excluded.missing,
-           source_id=excluded.source_id, port_slot=excluded.port_slot`
+           custom_name=excluded.custom_name, raw_json=excluded.raw_json, enabled=excluded.enabled,
+           missing=excluded.missing, source_id=excluded.source_id, port_slot=excluded.port_slot`
       );
       nodes.forEach((node, index) =>
         upsert.run(
           node.id,
           node.sortOrder ?? index,
           node.name ?? node.id,
+          typeof node.customName === "string" && node.customName.trim() ? node.customName.trim() : null,
           JSON.stringify(node.raw ?? {}),
           bool(node.enabled, true),
           bool(node.missing),

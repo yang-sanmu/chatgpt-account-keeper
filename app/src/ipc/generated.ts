@@ -126,9 +126,13 @@ export type Method =
   | "proxies.refreshSubscriptions"
   | "proxies.removeSubscription"
   | "proxies.importCustom"
+  | "proxies.previewCustomConfig"
   | "proxies.getCustom"
+  | "proxies.getCustomConfig"
   | "proxies.saveCustom"
+  | "proxies.saveCustomConfig"
   | "proxies.renameCustom"
+  | "proxies.renameNode"
   | "proxies.removeCustom"
   | "proxies.refreshSubscription"
   | "proxies.setRuntimeDirectory"
@@ -370,6 +374,12 @@ export interface KeeperIPCV1GeneratedSchema {
   customProxyParams?: CustomProxyParams;
   customProxyDetails?: CustomProxyDetails;
   renameCustomProxyParams?: RenameCustomProxyParams;
+  renameNodeParams?: RenameNodeParams;
+  customConfigInputParams?: CustomConfigInputParams;
+  customConfigPreviewResult?: CustomConfigPreviewResult;
+  customConfigDetails?: CustomConfigDetails;
+  saveCustomConfigParams?: SaveCustomConfigParams;
+  testAllProxiesParams?: TestAllProxiesParams;
   addSubscriptionsParams?: AddSubscriptionsParams;
   updateSubscriptionParams?: UpdateSubscriptionParams;
   refreshSubscriptionsParams?: RefreshSubscriptionsParams;
@@ -856,6 +866,9 @@ export interface ProxyStateResult {
     id: string;
     sourceId?: string;
     name: string;
+    originalName?: string | null;
+    customNamed?: boolean;
+    customKind?: "simple" | "yaml";
     type: string | null;
     server: string | null;
     port: number | null;
@@ -1421,6 +1434,81 @@ export interface RenameCustomProxyParams {
 }
 /**
  * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
+ * via the `definition` "renameNodeParams".
+ */
+export interface RenameNodeParams {
+  id: string;
+  name: string | null;
+}
+/**
+ * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
+ * via the `definition` "customConfigInputParams".
+ */
+export interface CustomConfigInputParams {
+  input: string;
+}
+/**
+ * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
+ * via the `definition` "customConfigPreviewResult".
+ */
+export interface CustomConfigPreviewResult {
+  nodes: {
+    name: string;
+    type: string;
+    server: string;
+    port: number;
+    yaml: string;
+  }[];
+  skipped: number;
+}
+/**
+ * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
+ * via the `definition` "customConfigDetails".
+ */
+export interface CustomConfigDetails {
+  id: string;
+  name: string;
+  type: string;
+  server: string;
+  port: number;
+  yaml: string;
+}
+/**
+ * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
+ * via the `definition` "saveCustomConfigParams".
+ */
+export interface SaveCustomConfigParams {
+  id?: string;
+  /**
+   * @minItems 1
+   * @maxItems 100
+   */
+  items: [
+    {
+      name: string;
+      yaml: string;
+    },
+    ...{
+      name: string;
+      yaml: string;
+    }[]
+  ];
+}
+/**
+ * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
+ * via the `definition` "testAllProxiesParams".
+ */
+export interface TestAllProxiesParams {
+  scope?: "all" | "custom" | "source" | "unassigned";
+  sourceId?: string | null;
+  /**
+   * @minItems 1
+   * @maxItems 10000
+   */
+  ids?: [string, ...string[]];
+}
+/**
+ * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
  * via the `definition` "addSubscriptionsParams".
  */
 export interface AddSubscriptionsParams {
@@ -1429,6 +1517,11 @@ export interface AddSubscriptionsParams {
    * @maxItems 32
    */
   urls: [string, ...string[]];
+  /**
+   * @minItems 1
+   * @maxItems 32
+   */
+  names?: [string | null, ...(string | null)[]];
 }
 /**
  * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
@@ -1732,15 +1825,19 @@ export interface IpcMethodContracts {
   "proxies.refreshSubscriptions": { params: RefreshSubscriptionsParams; result: Operation };
   "proxies.removeSubscription": { params: IdParams; result: Operation };
   "proxies.importCustom": { params: CustomProxyParams; result: Operation };
+  "proxies.previewCustomConfig": { params: CustomConfigInputParams; result: CustomConfigPreviewResult };
   "proxies.getCustom": { params: IdParams; result: CustomProxyDetails };
+  "proxies.getCustomConfig": { params: IdParams; result: CustomConfigDetails };
   "proxies.saveCustom": { params: CustomProxyDetails; result: Operation };
+  "proxies.saveCustomConfig": { params: SaveCustomConfigParams; result: Operation };
   "proxies.renameCustom": { params: RenameCustomProxyParams; result: Operation };
+  "proxies.renameNode": { params: RenameNodeParams; result: Operation };
   "proxies.removeCustom": { params: IdParams; result: Operation };
   "proxies.refreshSubscription": { params: Record<string, never>; result: Operation };
   "proxies.setRuntimeDirectory": { params: RuntimeDirectoryParams; result: Operation };
   "proxies.setNodeEnabled": { params: NodeEnabledParams; result: Operation };
   "proxies.testNode": { params: IdParams; result: Operation };
-  "proxies.testAll": { params: Record<string, never>; result: Operation };
+  "proxies.testAll": { params: TestAllProxiesParams; result: Operation };
   "profiles.scan": { params: Record<string, never>; result: Operation };
   "profiles.cleanCache": { params: ProfileCleanParams; result: Operation };
   "profiles.archiveOrphan": { params: NameParams; result: Operation };
@@ -1798,7 +1895,9 @@ export const OPERATION_METHODS = [
   "proxies.removeSubscription",
   "proxies.importCustom",
   "proxies.saveCustom",
+  "proxies.saveCustomConfig",
   "proxies.renameCustom",
+  "proxies.renameNode",
   "proxies.removeCustom",
   "proxies.refreshSubscription",
   "proxies.setRuntimeDirectory",

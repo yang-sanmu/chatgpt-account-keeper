@@ -6,7 +6,8 @@ function describeProxyNodes(proxies: ProxyState) {
     const source = (node.sourceId && aliases.get(node.sourceId)) || (node.id.startsWith("custom_") ? "自定义" : "订阅");
     const label = `${source} · ${node.name}`;
     const endpoint = [node.type, node.server && `${node.server}:${node.port ?? ""}`].filter(Boolean).join(" · ");
-    return { value: node.id, label, endpoint, disabled: !node.enabled || node.missing };
+    const searchText = [endpoint, node.originalName].filter(Boolean).join(" ");
+    return { value: node.id, label, endpoint, searchText, disabled: !node.enabled || node.missing };
   });
   const counts = new Map<string, number>();
   const endpoints = new Map<string, string[]>();
@@ -18,7 +19,7 @@ function describeProxyNodes(proxies: ProxyState) {
     else endpoints.set(key, [value]);
   }
   return options.map((option) => {
-    const { value, endpoint, disabled } = option;
+    const { value, endpoint, searchText, disabled } = option;
     let label = option.label;
     if ((counts.get(label) ?? 0) > 1) {
       if (endpoint) label += ` · ${endpoint}`;
@@ -30,7 +31,7 @@ function describeProxyNodes(proxies: ProxyState) {
       }
     }
     if (disabled) label += "（不可用）";
-    return { value, label, searchText: endpoint, disabled };
+    return { value, label, searchText, disabled };
   });
 }
 

@@ -67,8 +67,8 @@ import { getStrictNetworkCapabilities } from "../network/strictConfig.js";
 import { createPlanClient } from "../accountPlan.js";
 import { cancellableSleep, raceSignal, throwIfCancelled } from "../cancellation.js";
 
-// Minor 14 adds configurable auto/fixed timezone and locale fields on temporary windows.
-export const PROTOCOL_VERSION = Object.freeze({ major: 1, minor: 14 });
+// Minor 15 adds custom proxy YAML/URI preview & save, universal node renaming, named subscription import, and scoped latency tests.
+export const PROTOCOL_VERSION = Object.freeze({ major: 1, minor: 15 });
 
 export const MUTATING_METHODS = new Set([
   "icloud.saveConfig", "icloud.open", "icloud.close", "icloud.sync", "icloud.create", "icloud.runNow", "icloud.delete", "icloud.cancelDelete", "icloud.stop", "icloud.updateLocal", "icloud.acknowledge",
@@ -102,7 +102,9 @@ export const MUTATING_METHODS = new Set([
   "proxies.refreshSubscriptions",
   "proxies.removeSubscription",
   "proxies.importCustom",
+  "proxies.saveCustomConfig",
   "proxies.renameCustom",
+  "proxies.renameNode",
   "proxies.saveCustom",
   "proxies.removeCustom",
   "proxies.refreshSubscription",
@@ -712,7 +714,7 @@ export class ApplicationServices {
     add("proxies.getState", this._proxiesGetState);
     add("proxies.importSubscription", this._proxiesImport);
     add("proxies.addSubscriptions", (params) => this._subscriptionOperation("proxy-import", null,
-      (options) => this.runtime.proxies.addSubscriptions(params.urls, options)));
+      (options) => this.runtime.proxies.addSubscriptions(params.urls, { ...options, names: params.names })));
     add("proxies.updateSubscription", (params) => this._subscriptionOperation("proxy-subscription-edit", requireId(params),
       (options) => this.runtime.proxies.updateSubscription(params, options)));
     add("proxies.refreshSubscriptions", (params) => this._subscriptionOperation("proxy-refresh", params.ids?.[0] ?? null,
@@ -720,14 +722,33 @@ export class ApplicationServices {
     add("proxies.removeSubscription", (params) => this._subscriptionOperation("proxy-subscription-remove", requireId(params),
       (options) => this.runtime.proxies.removeSubscription(params.id, options)));
     add("proxies.importCustom", this._proxiesImportCustom);
+    add("proxies.previewCustomConfig", (params) => this.runtime.proxies.previewCustomConfig(params.input));
     add("proxies.getCustom", (params) => this.runtime.proxies.getCustom(requireId(params)));
+    add("proxies.getCustomConfig", (params) => this.runtime.proxies.getCustomConfig(requireId(params)));
     add("proxies.saveCustom", (params) => this._proxyOperation("proxy-custom-save", params.id ?? null, async () => {
       const result = await this.runtime.proxies.saveCustom(params);
       this.runtime.clearRegionCache();
       this.runtime.bumpConfigEpoch?.();
+      if (params.id) this._publishProxyReferenceUpdates([params.id]);
       return result;
     }));
-    add("proxies.renameCustom", (params) => this._proxyOperation("proxy-custom-rename", requireId(params), () => this.runtime.proxies.renameCustom(params.id, params.name)));
+    add("proxies.saveCustomConfig", (params) => this._proxyOperation("proxy-custom-save", params.id ?? null, async () => {
+      const result = await this.runtime.proxies.saveCustomConfig(params);
+      this.runtime.clearRegionCache();
+      this.runtime.bumpConfigEpoch?.();
+      this._publishProxyReferenceUpdates(params.id ? [params.id] : result?.ids);
+      return result;
+    }));
+    add("proxies.renameCustom", (params) => this._proxyOperation("proxy-custom-rename", requireId(params), async () => {
+      const result = await this.runtime.proxies.renameCustom(params.id, params.name);
+      this._publishProxyReferenceUpdates([params.id]);
+      return result;
+    }));
+    add("proxies.renameNode", (params) => this._proxyOperation("proxy-node-rename", requireId(params), async () => {
+      const result = await this.runtime.proxies.renameNode(params.id, params.name);
+      this._publishProxyReferenceUpdates([params.id]);
+      return result;
+    }));
     add("proxies.removeCustom", (params) => this._proxyOperation("proxy-custom-remove", requireId(params), async () => {
       const result = await this.runtime.proxies.removeCustom(params.id);
       this.runtime.clearRegionCache();
@@ -1880,11 +1901,33 @@ export class ApplicationServices {
     );
   }
 
-  _proxiesTestAll() {
+  _publishProxyReferenceUpdates(nodeIds) {
+    const ids = new Set((nodeIds ?? []).filter(Boolean));
+    if (!ids.size) return;
+    const groups = this.runtime.store.getGroups?.() ?? [];
+    const groupIds = new Set(groups.filter((group) => ids.has(group.proxyId)).map((group) => group.id));
+    if (groupIds.size) {
+      const context = accountViewContext(this.runtime);
+      for (const account of this.runtime.store.getAccounts?.() ?? []) {
+        if (account.groupId && groupIds.has(account.groupId)) {
+          this.events.publish("account.changed", publicAccount(account, this.runtime, context));
+        }
+      }
+    }
+    const windows = this.runtime.temporaryWindows;
+    if (windows && typeof windows.list === "function" && windows.list().some((window) => ids.has(window.proxyId))) {
+      windows.changed?.();
+    }
+  }
+
+  _proxiesTestAll(params = {}) {
     return this._proxyOperation(
       "proxy-test-all",
-      null,
+      params.sourceId ?? null,
       ({ update }) => this.runtime.proxies.testAllNodes({
+        scope: params.scope,
+        sourceId: params.sourceId,
+        ids: params.ids,
         onProgress: ({ done, total, node, result }) => {
           update({
             stage: "measure",

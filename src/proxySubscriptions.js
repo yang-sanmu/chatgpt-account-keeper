@@ -99,13 +99,17 @@ function indexBy(items, keyOf) {
 }
 
 export function mergeSubscriptionNodes(sourceId, incoming, previous, referenced) {
-  const namedKey = ({ name, key }) => JSON.stringify([name.trim(), key]);
-  const candidates = incoming.map((raw) => ({ raw, name: raw.name, key: connectionKey(raw) }));
+  const namedKey = ({ matchName, name, key }) => JSON.stringify([(matchName ?? name).trim(), key]);
+  const candidates = incoming.map((raw) => ({ raw, name: raw.name, matchName: raw.name, key: connectionKey(raw) }));
   const unique = [...indexBy(candidates, namedKey).values()].map(([first]) => first);
-  const old = previous.map((node) => ({
-    ...node,
-    key: connectionKey(normalizeProxyNode({ ...node.raw, name: node.name }) ?? {}),
-  }));
+  const old = previous.map((node) => {
+    const matchName = typeof node.raw?.name === "string" && node.raw.name.trim() ? node.raw.name.trim() : node.name;
+    return {
+      ...node,
+      matchName,
+      key: connectionKey(normalizeProxyNode({ ...node.raw, name: matchName }) ?? {}),
+    };
+  });
   const unmatched = new Set(old);
   const matched = new Map();
   for (const keyOf of [namedKey, (node) => node.key]) {
@@ -121,21 +125,23 @@ export function mergeSubscriptionNodes(sourceId, incoming, previous, referenced)
   const missing = [...unmatched].filter((node) => referenced.has(node.id));
   const nodes = unique.map((candidate) => {
     const prior = matched.get(candidate);
+    const customName = typeof prior?.customName === "string" && prior.customName.trim() ? prior.customName.trim() : null;
     return {
       id: prior?.id ?? `px_${randomUUID()}`,
       sourceId,
       portSlot: prior?.portSlot,
-      name: candidate.raw.name,
+      name: customName ?? candidate.raw.name,
+      ...(customName ? { customName } : {}),
       raw: candidate.raw,
       enabled: prior?.enabled !== false,
       missing: false,
     };
   });
-  for (const { key, ...node } of missing) nodes.push({ ...node, missing: true });
+  for (const { key, matchName, ...node } of missing) nodes.push({ ...node, missing: true });
   return {
     nodes,
     added: unique.length - matched.size,
-    updated: [...matched].filter(([next, prior]) => prior.missing || prior.name !== next.raw.name).length,
+    updated: [...matched].filter(([next, prior]) => prior.missing || prior.matchName !== next.raw.name).length,
     missing: missing.filter((node) => !node.missing).map((node) => ({ id: node.id, name: node.name })),
     removed: unmatched.size - missing.length,
     duplicates: candidates.length - unique.length,

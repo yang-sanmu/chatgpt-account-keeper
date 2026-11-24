@@ -7,7 +7,7 @@
 /// 协议主版本。不同主版本不兼容。
 pub const PROTOCOL_MAJOR: u32 = 1;
 /// 协议次版本。次版本只增加可选字段、方法、事件或能力。
-pub const PROTOCOL_MINOR: u32 = 14;
+pub const PROTOCOL_MINOR: u32 = 15;
 /// 帧长度上限。超过它必须在分配 payload 缓冲区之前拒绝。
 pub const MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
 
@@ -84,9 +84,13 @@ pub const UI_METHODS: &[&str] = &[
     "proxies.refreshSubscriptions",
     "proxies.removeSubscription",
     "proxies.importCustom",
+    "proxies.previewCustomConfig",
     "proxies.getCustom",
+    "proxies.getCustomConfig",
     "proxies.saveCustom",
+    "proxies.saveCustomConfig",
     "proxies.renameCustom",
+    "proxies.renameNode",
     "proxies.removeCustom",
     "proxies.refreshSubscription",
     "proxies.setRuntimeDirectory",
@@ -205,7 +209,7 @@ mod tests {
 
         // 数量固定，防止有人一边加一边删还让上面两条都过。
         assert_eq!(INTERNAL_METHODS.len(), 5);
-        assert_eq!(UI_METHODS.len(), 90);
+        assert_eq!(UI_METHODS.len(), 94);
     }
 
     #[test]

@@ -150,6 +150,8 @@ export class TemporaryWindowManager {
   async detectRegion(id) {
     const value = withModeDefaults(this.require(id));
     this.node(value.proxyId);
+    const udpConflict = this.proxies.getNodeUdpConflict?.(value.proxyId);
+    if (udpConflict) throw error("PROXY_UNAVAILABLE", udpConflict.message);
     const fixedTimezone = value.timezoneMode === "fixed";
     const fixedLocale = value.localeMode === "fixed";
     if ((fixedTimezone && !value.timezone) || (fixedLocale && !value.locale)) {

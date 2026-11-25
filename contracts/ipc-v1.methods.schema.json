@@ -268,6 +268,9 @@
           ],
           "minLength": 1,
           "maxLength": 200
+        },
+        "autoOutboundInterface": {
+          "type": "boolean"
         }
       }
     },
@@ -303,12 +306,151 @@
                 "windows",
                 "environment",
                 "pac",
-              "unavailable",
+                "unavailable",
                 "none"
               ]
             },
             "detail": {
               "type": "string"
+            }
+          }
+        },
+        "environment": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "source",
+            "interfaces",
+            "recommendedInterface",
+            "effectiveOutboundInterface",
+            "outboundInterfaceSource",
+            "outboundInterfaceWarning",
+            "tunConflict"
+          ],
+          "properties": {
+            "source": {
+              "enum": [
+                "windows-powershell",
+                "os-network-interfaces"
+              ]
+            },
+            "interfaces": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "name",
+                  "description",
+                  "status",
+                  "ipv4",
+                  "gateway",
+                  "metric",
+                  "recommended"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "description": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "status": {
+                    "enum": [
+                      "up",
+                      "down",
+                      "unknown"
+                    ]
+                  },
+                  "ipv4": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "gateway": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "metric": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "recommended": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            },
+            "recommendedInterface": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "effectiveOutboundInterface": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "outboundInterfaceSource": {
+              "enum": [
+                "manual",
+                "auto",
+                "none"
+              ]
+            },
+            "outboundInterfaceWarning": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "tunConflict": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "detected",
+                "adapterName",
+                "description",
+                "fakeIpDetected",
+                "detail"
+              ],
+              "properties": {
+                "detected": {
+                  "type": "boolean"
+                },
+                "adapterName": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "description": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "fakeIpDetected": {
+                  "type": "boolean"
+                },
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
             }
           }
         }
@@ -725,6 +867,9 @@
               "port": { "type": ["integer", "null"], "minimum": 1, "maximum": 65535 },
               "enabled": { "type": "boolean" },
               "missing": { "type": "boolean" },
+              "directOutbound": { "type": "boolean" },
+              "udpOnly": { "type": "boolean" },
+              "udpSupported": { "type": "boolean" },
               "latencyMs": { "type": ["number", "null"], "minimum": 0 },
               "latencyOk": { "type": ["boolean", "null"] },
               "latencyMessage": { "type": ["string", "null"] },
@@ -1344,7 +1489,8 @@
               "type": { "type": "string", "minLength": 1, "maxLength": 32 },
               "server": { "type": "string", "minLength": 1, "maxLength": 253 },
               "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
-              "yaml": { "type": "string", "minLength": 1, "maxLength": 32768 }
+              "yaml": { "type": "string", "minLength": 1, "maxLength": 32768 },
+              "udpOnly": { "type": "boolean" }
             }
           }
         },
@@ -1380,7 +1526,8 @@
             "required": ["name", "yaml"],
             "properties": {
               "name": { "type": "string", "minLength": 1, "maxLength": 200 },
-              "yaml": { "type": "string", "minLength": 1, "maxLength": 32768 }
+              "yaml": { "type": "string", "minLength": 1, "maxLength": 32768 },
+              "directOutbound": { "type": "boolean" }
             }
           }
         }
@@ -1458,6 +1605,21 @@
       "properties": {
         "id": { "type": "string", "minLength": 1 },
         "enabled": { "type": "boolean" }
+      }
+    },
+    "nodeDirectOutboundParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["directOutbound"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "ids": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 10000,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "directOutbound": { "type": "boolean" }
       }
     },
     "profileCleanParams": {

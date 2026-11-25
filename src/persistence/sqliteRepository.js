@@ -525,7 +525,8 @@ export class KeeperRepository {
       proxy.clash_verge_dir === null &&
       proxy.legacy_extra_json === null &&
       network.mode === "system" && network.relayProxyId === null &&
-      network.systemProxyUrl === null && network.outboundInterface === null
+      network.systemProxyUrl === null && network.outboundInterface === null &&
+      network.autoOutboundInterface !== false
     );
   }
 
@@ -1319,6 +1320,7 @@ export class KeeperRepository {
           ...(row.port_slot === null ? {} : { portSlot: row.port_slot }),
           enabled: !!row.enabled,
           missing: !!row.missing,
+          directOutbound: !!row.direct_outbound,
           ...(includeSecrets
             ? { raw }
             : { type: raw.type ?? null, server: raw.server ?? null, port: raw.port ?? null }),
@@ -1378,11 +1380,12 @@ export class KeeperRepository {
     const network = this.getProxyState().network;
     this.transaction(() => {
       const upsert = this.db.prepare(
-        `INSERT INTO proxy_nodes(id, sort_order, name, custom_name, raw_json, enabled, missing, legacy_extra_json, source_id, port_slot)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO proxy_nodes(id, sort_order, name, custom_name, raw_json, enabled, missing, direct_outbound, legacy_extra_json, source_id, port_slot)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET sort_order=excluded.sort_order, name=excluded.name,
            custom_name=excluded.custom_name, raw_json=excluded.raw_json, enabled=excluded.enabled,
-           missing=excluded.missing, source_id=excluded.source_id, port_slot=excluded.port_slot`
+           missing=excluded.missing, direct_outbound=excluded.direct_outbound,
+           source_id=excluded.source_id, port_slot=excluded.port_slot`
       );
       nodes.forEach((node, index) =>
         upsert.run(
@@ -1393,6 +1396,7 @@ export class KeeperRepository {
           JSON.stringify(node.raw ?? {}),
           bool(node.enabled, true),
           bool(node.missing),
+          bool(node.directOutbound),
           json(node.legacyExtra),
           node.sourceId ?? null,
           node.portSlot ?? null

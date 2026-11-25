@@ -10,6 +10,7 @@ import { configureChromeLauncher, launchForAccount } from "../src/browser.js";
 import { openPageForAccount, closePageForAccount, getOpenPages } from "../src/openPage.js";
 import { configureStoreBackend } from "../src/store.js";
 import * as proxies from "../src/proxyManager.js";
+import { configureHostNetworkDetector } from "../src/network/hostNetwork.js";
 import { isBusy, isHeld, isQuarantined, listQuarantined, resetLocksForTest } from "../src/locks.js";
 import { fromRoot } from "../src/paths.js";
 import { proxyNodeId } from "../src/proxyUtils.js";
@@ -29,6 +30,15 @@ test("失效中转启动失败可重复尝试、后台任务释放资源，之�
     getAccountEnvironment: () => ({ mode: "fixed", locale: "en-US", version: 1 }),
     effectiveProxyId: () => null,
   };
+  const restoreHost = configureHostNetworkDetector(() => ({
+    platform: process.platform,
+    source: "os-network-interfaces",
+    detectedAt: new Date().toISOString(),
+    interfaces: [],
+    virtualAdapters: [],
+    recommendedInterface: null,
+    tunConflict: { detected: false, adapterName: null, description: null, fakeIpDetected: false, detail: null },
+  }));
   const restoreStore = configureStoreBackend(store);
   const restoreProxy = proxies.configureProxyStoreBackend({
     readProxyStore: () => proxyStore, writeProxyStore: value => { proxyStore = value; },
@@ -58,7 +68,8 @@ test("失效中转启动失败可重复尝试、后台任务释放资源，之�
   } });
   t.after(async () => {
     await closePageForAccount(account.id);
-    services.dispose(); await background.dispose(); restoreProxy(); restoreStore(); resetLocksForTest();
+    proxies.stopAll();
+    services.dispose(); await background.dispose(); restoreProxy(); restoreStore(); restoreHost(); resetLocksForTest();
     assert.equal(path.dirname(profile), fixtureRoot);
     fs.rmSync(profile, { recursive: true, force: true });
   });
@@ -112,7 +123,7 @@ test("刷新移除中转节点时报告应用失败，并向界面发布已保�
   const relayName = "原中转";
   const relayId = proxyNodeId(relayName);
   let proxyStore = {
-    subscription: { url: "https://subscription.invalid/test" },
+    subscription: { url: "http://127.0.0.1/test" },
     network: { mode: "relay", relayProxyId: relayId },
     nodes: [{ id: relayId, name: relayName, enabled: true, missing: false,
       raw: { name: relayName, type: "http", server: "127.0.0.1", port: 1 } }],
@@ -133,7 +144,7 @@ test("刷新移除中转节点时报告应用失败，并向界面发布已保�
   services.events.subscribe(event => {
     if (event.event === "proxyState.changed") states.push(event.payload);
   });
-  t.after(() => { services.dispose(); restoreProxy(); restoreStore(); });
+  t.after(() => { proxies.stopAll(); services.dispose(); restoreProxy(); restoreStore(); });
   const operation = await services.invoke("proxies.refreshSubscription", {});
   const finished = await services.operations.waitForTerminal(operation.id);
   assert.equal(finished.state, "failed");

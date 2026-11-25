@@ -137,6 +137,7 @@ export type Method =
   | "proxies.refreshSubscription"
   | "proxies.setRuntimeDirectory"
   | "proxies.setNodeEnabled"
+  | "proxies.setNodeDirectOutbound"
   | "proxies.testNode"
   | "proxies.testAll"
   | "profiles.scan"
@@ -386,6 +387,7 @@ export interface KeeperIPCV1GeneratedSchema {
   subscriptionParams?: SubscriptionParams;
   runtimeDirectoryParams?: RuntimeDirectoryParams;
   nodeEnabledParams?: NodeEnabledParams;
+  nodeDirectOutboundParams?: NodeDirectOutboundParams;
   profileCleanParams?: ProfileCleanParams;
   nameParams?: NameParams;
   conversationUpsertParams?: ConversationUpsertParams;
@@ -538,6 +540,7 @@ export interface NetworkConfigParams {
   relayProxyId: string | null;
   systemProxyUrl: string | null;
   outboundInterface: string | null;
+  autoOutboundInterface?: boolean;
 }
 /**
  * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
@@ -549,6 +552,29 @@ export interface NetworkConfigResult {
     server: string | null;
     source: "manual" | "windows" | "environment" | "pac" | "unavailable" | "none";
     detail: string;
+  };
+  environment?: {
+    source: "windows-powershell" | "os-network-interfaces";
+    interfaces: {
+      name: string;
+      description: string | null;
+      status: "up" | "down" | "unknown";
+      ipv4: string | null;
+      gateway: string | null;
+      metric: number | null;
+      recommended: boolean;
+    }[];
+    recommendedInterface: string | null;
+    effectiveOutboundInterface: string | null;
+    outboundInterfaceSource: "manual" | "auto" | "none";
+    outboundInterfaceWarning: string | null;
+    tunConflict: {
+      detected: boolean;
+      adapterName: string | null;
+      description: string | null;
+      fakeIpDetected: boolean;
+      detail: string | null;
+    };
   };
 }
 /**
@@ -874,6 +900,9 @@ export interface ProxyStateResult {
     port: number | null;
     enabled: boolean;
     missing: boolean;
+    directOutbound?: boolean;
+    udpOnly?: boolean;
+    udpSupported?: boolean;
     latencyMs: number | null;
     latencyOk: boolean | null;
     latencyMessage: string | null;
@@ -1458,6 +1487,7 @@ export interface CustomConfigPreviewResult {
     server: string;
     port: number;
     yaml: string;
+    udpOnly?: boolean;
   }[];
   skipped: number;
 }
@@ -1487,10 +1517,12 @@ export interface SaveCustomConfigParams {
     {
       name: string;
       yaml: string;
+      directOutbound?: boolean;
     },
     ...{
       name: string;
       yaml: string;
+      directOutbound?: boolean;
     }[]
   ];
 }
@@ -1565,6 +1597,19 @@ export interface RuntimeDirectoryParams {
 export interface NodeEnabledParams {
   id: string;
   enabled: boolean;
+}
+/**
+ * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
+ * via the `definition` "nodeDirectOutboundParams".
+ */
+export interface NodeDirectOutboundParams {
+  id?: string;
+  /**
+   * @minItems 1
+   * @maxItems 10000
+   */
+  ids?: [string, ...string[]];
+  directOutbound: boolean;
 }
 /**
  * This interface was referenced by `KeeperIPCV1GeneratedSchema`'s JSON-Schema
@@ -1836,6 +1881,7 @@ export interface IpcMethodContracts {
   "proxies.refreshSubscription": { params: Record<string, never>; result: Operation };
   "proxies.setRuntimeDirectory": { params: RuntimeDirectoryParams; result: Operation };
   "proxies.setNodeEnabled": { params: NodeEnabledParams; result: Operation };
+  "proxies.setNodeDirectOutbound": { params: NodeDirectOutboundParams; result: Operation };
   "proxies.testNode": { params: IdParams; result: Operation };
   "proxies.testAll": { params: TestAllProxiesParams; result: Operation };
   "profiles.scan": { params: Record<string, never>; result: Operation };
@@ -1902,6 +1948,7 @@ export const OPERATION_METHODS = [
   "proxies.refreshSubscription",
   "proxies.setRuntimeDirectory",
   "proxies.setNodeEnabled",
+  "proxies.setNodeDirectOutbound",
   "proxies.testNode",
   "proxies.testAll",
   "profiles.scan",

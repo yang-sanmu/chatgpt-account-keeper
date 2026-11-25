@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   ArrowRight,
   Check,
+  CheckCircle2,
   Globe,
   Laptop,
   Loader2,
@@ -31,12 +32,18 @@ import type { NetworkConfigParams, NetworkConfigResult } from "@/ipc/generated";
 import { notify } from "@/lib/notify";
 import { cn } from "@/lib/utils";
 import { useKeeperStore } from "@/store/keeperStore";
+import {
+  effectiveSystemProxyServer,
+  getNodeUdpConflict,
+  upstreamUdpCompatibility,
+} from "@/lib/proxy-network-compat";
 
 const DEFAULT_CONFIG: NetworkConfigParams = {
   mode: "system",
   relayProxyId: null,
   systemProxyUrl: null,
   outboundInterface: null,
+  autoOutboundInterface: true,
 };
 
 const MODES = [
@@ -47,7 +54,7 @@ const MODES = [
     icon: Zap,
     description: "直接连接分组专用节点，省去前置代理。",
     steps: ["浏览器", "分组专用节点", "网站"],
-    footnote: "分组未绑定专用节点时，浏览器直接访问网站。",
+    footnote: "检测到本机 TUN 时自动绑定物理网卡与 IP-DoH 绕过系统代理。",
   },
   {
     id: "system",
@@ -56,7 +63,7 @@ const MODES = [
     icon: Laptop,
     description: "通过系统当前使用的代理连接分组专用节点。",
     steps: ["浏览器", "系统代理", "分组专用节点", "网站"],
-    footnote: "分组也使用系统代理时，只经过一次系统代理。",
+    footnote: "支持按节点开启「直连出站」，与住宅代理混合共存。",
   },
   {
     id: "relay",
@@ -65,7 +72,7 @@ const MODES = [
     icon: Waypoints,
     description: "固定一个中转节点，独立于系统代理的节点选择。",
     steps: ["浏览器", "指定中转", "分组专用节点", "网站"],
-    footnote: "分组节点与中转相同时，只连接一次该节点。",
+    footnote: "中转首跳自动走直出物理网卡，分组与中转相同时只连一次。",
   },
 ] as const;
 
@@ -86,8 +93,6 @@ const SYSTEM_PROXY_PRESETS = [
   { label: "SOCKS5 (7890)", value: "socks5://127.0.0.1:7890" },
   { label: "v2rayN (10808)", value: "http://127.0.0.1:10808" },
 ] as const;
-
-const INTERFACE_PRESETS = ["以太网", "Wi-Fi"] as const;
 
 function RouteDiagram({
   steps,
@@ -157,6 +162,10 @@ function formatNodeLatency(ms: number | null, ok: boolean | null) {
 
 export function NetworkPage() {
   const proxies = useKeeperStore((state) => state.proxies);
+  const groups = useKeeperStore((state) => state.groups);
+  const temporaryWindows = useKeeperStore((state) => state.temporaryWindows);
+  const runOperation = useKeeperStore((state) => state.runOperation);
+
   const [current, setCurrent] = useState<NetworkConfigResult | null>(
     proxies.network ?? null
   );
@@ -166,6 +175,7 @@ export function NetworkPage() {
   const [dirty, setDirty] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [fixingUdp, setFixingUdp] = useState(false);
   const [loadError, setLoadError] = useState(false);
 
   useEffect(() => {
@@ -215,6 +225,7 @@ export function NetworkPage() {
   const usableNodes = proxies.nodes.filter(
     (node) => node.enabled && !node.missing
   );
+  const directOutboundNodes = usableNodes.filter((node) => node.directOutbound);
   const relay = usableNodes.find((node) => node.id === draft.relayProxyId);
   const savedRelay = proxies.nodes.find(
     (node) => node.id === current?.config.relayProxyId
@@ -236,6 +247,41 @@ export function NetworkPage() {
     (state) => Boolean(state.icloud?.busy || state.icloud?.browserOpen)
   );
   const runtimeLocked = busy || temporaryBusy || icloudBusy;
+
+  const environment = current?.environment ?? null;
+  const physicalInterfaces = environment?.interfaces ?? [];
+  const recommendedInterface = environment?.recommendedInterface ?? null;
+  const tunConflict = environment?.tunConflict ?? null;
+  const autoOutboundEnabled = draft.autoOutboundInterface !== false;
+
+  const draftSystemServer = effectiveSystemProxyServer(draft, current);
+  const draftUdpCompat = upstreamUdpCompatibility({
+    mode: draft.mode,
+    systemProxyServer: draftSystemServer,
+    relayNode: relay ?? null,
+  });
+  const conflictingUdpNodes = draftUdpCompat.blocksUdp
+    ? usableNodes.filter((node) =>
+        Boolean(
+          getNodeUdpConflict(node, {
+            mode: draft.mode,
+            systemProxyServer: draftSystemServer,
+            relayNode: relay ?? null,
+          })
+        )
+      )
+    : [];
+  const referencedNodeIds = new Set<string>([
+    ...groups.map((group) => group.proxyId).filter((id): id is string => Boolean(id)),
+    ...temporaryWindows.map((win) => win.proxyId).filter((id): id is string => Boolean(id)),
+  ]);
+  const conflictingBoundUdpNodes = conflictingUdpNodes.filter((node) => referencedNodeIds.has(node.id));
+
+  const showOutboundInterfaceCard =
+    draft.mode !== "system" ||
+    directOutboundNodes.length > 0 ||
+    Boolean(tunConflict?.detected) ||
+    Boolean(draft.outboundInterface);
 
   const refresh = async () => {
     setLoading(true);
@@ -261,6 +307,7 @@ export function NetworkPage() {
       const payload: NetworkConfigParams = {
         ...draft,
         outboundInterface: draft.outboundInterface?.trim() || null,
+        autoOutboundInterface: draft.autoOutboundInterface !== false,
       };
       const result = await agentCall(
         "network.updateConfig",
@@ -281,6 +328,26 @@ export function NetworkPage() {
     }
   };
 
+  const enableDirectForConflictingUdp = async () => {
+    if (!conflictingUdpNodes.length || fixingUdp) return;
+    setFixingUdp(true);
+    try {
+      const ids = conflictingUdpNodes.map((node) => node.id) as [string, ...string[]];
+      await runOperation("proxies.setNodeDirectOutbound", {
+        ids,
+        directOutbound: true,
+      });
+      notify.success(
+        "已开启 UDP 节点直连出站",
+        `已为 ${ids.length} 个 UDP 协议节点跳过前置代理`
+      );
+    } catch (error) {
+      notify.error("批量设置直连出站失败", error);
+    } finally {
+      setFixingUdp(false);
+    }
+  };
+
   const savedModeMeta = MODES.find((mode) => mode.id === current?.config.mode);
   const savedModeTitle =
     savedModeMeta?.title ?? (loadError ? "读取失败" : "读取中…");
@@ -291,11 +358,21 @@ export function NetworkPage() {
     ? formatNodeLatency(relay.latencyMs, relay.latencyOk)
     : null;
 
+  const savedOutboundSummary = current?.config.outboundInterface
+    ? `绑定网卡 ${current.config.outboundInterface}`
+    : environment?.effectiveOutboundInterface
+      ? `自动直出 ${environment.effectiveOutboundInterface}`
+      : "遵循系统默认路由";
+
+  const activeRecommendedDetails = physicalInterfaces.find(
+    (nic) => nic.name === environment?.effectiveOutboundInterface
+  );
+
   return (
     <Page>
       <PageHeader
         title="网络配置"
-        description="选择连接分组专用节点的前置链路方式与出站网卡，组内账号共用分组出口。"
+        description="选择连接分组专用节点的前置链路方式与直出物理网卡，组内账号共用分组出口。"
         actions={
           <Button
             variant="outline"
@@ -341,6 +418,11 @@ export function NetworkPage() {
                         {current.systemProxy.server}
                       </span>
                     )}
+                    {directOutboundNodes.length > 0 && (
+                      <Badge variant="neutral" className="font-normal">
+                        混合直出 {directOutboundNodes.length} 个节点
+                      </Badge>
+                    )}
                   </>
                 )}
                 {current.config.mode === "relay" && (
@@ -356,15 +438,14 @@ export function NetworkPage() {
                     >
                       {nodeLabels.get(current.config.relayProxyId ?? "") ?? "未找到节点"}
                     </span>
+                    <span className="text-muted">· {savedOutboundSummary}</span>
                   </>
                 )}
                 {current.config.mode === "direct" && (
                   <>
                     <span>直出路由:</span>
                     <span className="font-medium text-primary">
-                      {current.config.outboundInterface
-                        ? `绑定网卡 ${current.config.outboundInterface}`
-                        : "遵循系统默认路由"}
+                      {savedOutboundSummary}
                     </span>
                   </>
                 )}
@@ -435,6 +516,121 @@ export function NetworkPage() {
               {busy && <Badge variant="warn">账号浏览器/任务运行中</Badge>}
               {temporaryBusy && <Badge variant="warn">临时窗口已打开</Badge>}
               {icloudBusy && <Badge variant="warn">iCloud 浏览器活动</Badge>}
+            </div>
+          </div>
+        )}
+
+        {/* TUN 虚拟网卡冲突与直出物理网卡诊断横幅 */}
+        {environment && (environment.outboundInterfaceWarning || tunConflict?.detected) && (
+          environment.outboundInterfaceWarning ? (
+            <div
+              role="alert"
+              className="flex flex-wrap items-center justify-between gap-3 rounded-panel border border-warn bg-warn-soft px-4 py-3 text-xs text-warn"
+            >
+              <div className="flex items-start gap-2.5">
+                <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+                <div className="space-y-1">
+                  <p className="font-medium">{environment.outboundInterfaceWarning}</p>
+                  {tunConflict?.detail && (
+                    <p className="text-2xs opacity-90">{tunConflict.detail}</p>
+                  )}
+                </div>
+              </div>
+              {(draft.outboundInterface !== null || !autoOutboundEnabled) && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-7 shrink-0 px-2.5 text-xs"
+                  onClick={() =>
+                    change({
+                      outboundInterface: null,
+                      autoOutboundInterface: true,
+                    })
+                  }
+                >
+                  恢复自动选择{recommendedInterface ? `（${recommendedInterface}）` : ""}
+                </Button>
+              )}
+            </div>
+          ) : (
+            <div
+              role="note"
+              className="flex flex-wrap items-start justify-between gap-3 rounded-panel border border-accent/40 bg-accent-soft/50 px-4 py-3 text-xs text-primary"
+            >
+              <div className="flex items-start gap-2.5">
+                <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-accent" />
+                <div className="space-y-1">
+                  <p className="font-medium">
+                    已检测到本机 TUN（{tunConflict?.adapterName ?? "虚拟网卡"}
+                    {tunConflict?.description ? ` / ${tunConflict.description}` : ""}
+                    ），项目直出链路将绑定物理网卡 {environment.effectiveOutboundInterface}
+                  </p>
+                  <p className="text-secondary leading-relaxed">
+                    直连模式、指定中转首跳、未绑定直连窗口与开启「直连出站」的节点将绑定物理网卡{" "}
+                    <span className="font-mono font-medium text-primary">
+                      {environment.effectiveOutboundInterface}
+                    </span>
+                    {activeRecommendedDetails?.ipv4 ? `（${activeRecommendedDetails.ipv4}）` : ""}
+                    {" "}并通过 IP-DoH 解析域名，避免被系统 TUN 坏节点或 Fake-IP（198.18.0.0/15）劫持。
+                  </p>
+                  <p className="text-2xs text-muted">
+                    提示：极少数国内付款域沿用浏览器本地直出列表，若外部代理处于全局模式且选了坏节点，建议将其切回规则模式。
+                  </p>
+                </div>
+              </div>
+            </div>
+          )
+        )}
+
+        {/* UDP 协议节点与 HTTP 前置兼容性告警 */}
+        {conflictingUdpNodes.length > 0 && (
+          <div
+            role="alert"
+            className="flex flex-wrap items-start justify-between gap-3 rounded-panel border border-warn bg-warn-soft px-4 py-3 text-xs text-warn"
+          >
+            <div className="flex items-start gap-2.5">
+              <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+              <div className="space-y-1">
+                <p className="font-medium">
+                  发现 {conflictingUdpNodes.length} 个 UDP 协议节点（Hysteria2 / TUIC / WireGuard 等）与当前前置代理不兼容
+                  {conflictingBoundUdpNodes.length > 0
+                    ? `，其中 ${conflictingBoundUdpNodes.length} 个已被分组或临时窗口绑定`
+                    : ""}
+                </p>
+                <p className="text-2xs opacity-90 leading-relaxed">
+                  {draftUdpCompat.reason}。受影响节点：
+                  {conflictingUdpNodes
+                    .slice(0, 5)
+                    .map((node) => `${node.name}（${node.type}）`)
+                    .join("、")}
+                  {conflictingUdpNodes.length > 5 ? ` 等 ${conflictingUdpNodes.length} 个` : ""}。
+                </p>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-7 px-2.5 text-xs"
+                disabled={fixingUdp || saving || (runtimeLocked && conflictingBoundUdpNodes.length > 0)}
+                onClick={() => void enableDirectForConflictingUdp()}
+              >
+                {fixingUdp && <Loader2 className="mr-1 size-3 animate-spin" />}
+                一键设为直连出站（{conflictingUdpNodes.length}）
+              </Button>
+              {draft.mode === "system" && draftUdpCompat.socks5Suggestion && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-7 px-2.5 text-xs"
+                  onClick={() => change({ systemProxyUrl: draftUdpCompat.socks5Suggestion })}
+                >
+                  改用 SOCKS5 入口
+                </Button>
+              )}
             </div>
           </div>
         )}
@@ -603,7 +799,7 @@ export function NetworkPage() {
                   </div>
 
                   <p className="text-xs leading-relaxed text-muted">
-                    支持无认证的 HTTP、HTTPS 和 SOCKS5 入口。自动检测不到固定入口时跟随系统网络；PAC 需要为专用节点填写固定入口。
+                    支持无认证的 HTTP、HTTPS 和 SOCKS5 入口（SOCKS5 自动启用 UDP 转发）。若混用自建 Hysteria2 / TUIC 节点，建议在「代理节点」为自建节点单独开启「直连出站」。
                   </p>
                 </div>
 
@@ -636,7 +832,7 @@ export function NetworkPage() {
                     </div>
 
                     <p className="border-t border-subtle pt-2 text-2xs text-muted">
-                      点击右上角“刷新”可重新探测当前操作系统代理状态。
+                      点击右上角“刷新”可重新探测当前操作系统代理与物理网卡状态。
                     </p>
                   </div>
                 )}
@@ -644,12 +840,14 @@ export function NetworkPage() {
             </Card>
           )}
 
-          {/* 指定中转与直出设置面板 */}
-          {draft.mode !== "system" && (
+          {/* 指定中转与直出物理网卡设置面板 */}
+          {(draft.mode === "relay" || showOutboundInterfaceCard) && (
             <div
               className={cn(
                 "grid gap-4",
-                draft.mode === "relay" ? "lg:grid-cols-2" : "grid-cols-1"
+                draft.mode === "relay" && showOutboundInterfaceCard
+                  ? "lg:grid-cols-2"
+                  : "grid-cols-1"
               )}
             >
               {draft.mode === "relay" && (
@@ -749,68 +947,133 @@ export function NetworkPage() {
                 </Card>
               )}
 
-              <Card className="flex flex-col justify-between">
-                <CardHeader className="pb-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="space-y-1">
-                      <CardTitle className="text-base">直出设置</CardTitle>
-                      <CardDescription>
-                        指定底层连接专用节点或中转节点时绑定的物理网络接口。
-                      </CardDescription>
+              {showOutboundInterfaceCard && (
+                <Card className="flex flex-col justify-between">
+                  <CardHeader className="pb-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="space-y-1">
+                        <CardTitle className="text-base">
+                          {draft.mode === "system" ? "混合直出物理网卡" : "直出物理网卡设置"}
+                        </CardTitle>
+                        <CardDescription>
+                          {draft.mode === "system"
+                            ? "用于开启「直连出站」的节点及 iCloud 直连窗口绕过本机 TUN。"
+                            : "指定底层连接专用节点、中转首跳及直连窗口时绑定的真实物理网卡（已自动排除 Mihomo / Wintun 等虚拟网卡）。"}
+                        </CardDescription>
+                      </div>
+                      <Badge variant="neutral" className="text-2xs font-normal">
+                        {draft.outboundInterface
+                          ? "手动指定"
+                          : autoOutboundEnabled
+                            ? "自动选择"
+                            : "跟随系统"}
+                      </Badge>
                     </div>
-                    <Badge variant="neutral" className="text-2xs font-normal">
-                      可选高级项
-                    </Badge>
-                  </div>
-                </CardHeader>
-                <CardContent className="space-y-3.5">
-                  <div className="space-y-1.5">
-                    <Label htmlFor="outbound-interface">直出网卡（可选）</Label>
-                    <Input
-                      id="outbound-interface"
-                      value={draft.outboundInterface ?? ""}
-                      onChange={(event) =>
-                        change({
-                          outboundInterface: event.target.value || null,
-                        })
-                      }
-                      placeholder="留空遵循系统路由，例如：以太网 或 Wi-Fi"
-                    />
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <span className="text-2xs text-muted">常见网卡名：</span>
-                    {INTERFACE_PRESETS.map((item) => (
+                  </CardHeader>
+                  <CardContent className="space-y-3.5">
+                    <div className="flex flex-wrap items-center gap-1.5">
                       <button
-                        key={item}
                         type="button"
-                        onClick={() => change({ outboundInterface: item })}
+                        onClick={() =>
+                          change({
+                            outboundInterface: null,
+                            autoOutboundInterface: true,
+                          })
+                        }
                         className={cn(
-                          "rounded-chip border px-2 py-0.5 text-2xs transition-colors disabled:pointer-events-none disabled:opacity-50",
-                          draft.outboundInterface === item
-                            ? "border-accent bg-accent-soft text-accent"
+                          "rounded-chip border px-2.5 py-1 text-2xs transition-colors disabled:pointer-events-none disabled:opacity-50",
+                          !draft.outboundInterface && autoOutboundEnabled
+                            ? "border-accent bg-accent-soft text-accent font-medium"
                             : "border-subtle bg-sunken text-secondary hover:bg-hover hover:text-primary"
                         )}
                       >
-                        {item}
+                        自动选择活跃物理网卡（推荐
+                        {recommendedInterface ? `：${recommendedInterface}` : ""}）
                       </button>
-                    ))}
-                    {draft.outboundInterface && (
+
+                      {physicalInterfaces.map((nic) => {
+                        const selected = draft.outboundInterface === nic.name;
+                        const meta = [
+                          nic.status === "up" ? nic.ipv4 ?? "已连接" : "未连接",
+                          nic.recommended ? "推荐" : null,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ");
+                        return (
+                          <button
+                            key={nic.name}
+                            type="button"
+                            title={nic.description ?? nic.name}
+                            onClick={() =>
+                              change({
+                                outboundInterface: nic.name,
+                                autoOutboundInterface: true,
+                              })
+                            }
+                            className={cn(
+                              "inline-flex items-center gap-1.5 rounded-chip border px-2.5 py-1 text-2xs transition-colors disabled:pointer-events-none disabled:opacity-50",
+                              selected
+                                ? "border-accent bg-accent-soft text-accent font-medium"
+                                : "border-subtle bg-sunken text-secondary hover:bg-hover hover:text-primary",
+                              nic.status !== "up" && !selected && "opacity-70"
+                            )}
+                          >
+                            <span
+                              aria-hidden="true"
+                              className={cn(
+                                "size-1.5 rounded-full",
+                                nic.status === "up" ? "bg-ok" : "bg-muted"
+                              )}
+                            />
+                            <span>{nic.name}</span>
+                            {meta && <span className="font-mono opacity-80">({meta})</span>}
+                          </button>
+                        );
+                      })}
+
                       <button
                         type="button"
-                        onClick={() => change({ outboundInterface: null })}
-                        className="rounded-chip border border-subtle bg-sunken px-2 py-0.5 text-2xs text-muted hover:bg-hover hover:text-primary disabled:pointer-events-none disabled:opacity-50"
+                        onClick={() =>
+                          change({
+                            outboundInterface: null,
+                            autoOutboundInterface: false,
+                          })
+                        }
+                        className={cn(
+                          "rounded-chip border px-2.5 py-1 text-2xs transition-colors disabled:pointer-events-none disabled:opacity-50",
+                          !draft.outboundInterface && !autoOutboundEnabled
+                            ? "border-warn bg-warn-soft text-warn font-medium"
+                            : "border-subtle bg-sunken text-muted hover:bg-hover hover:text-primary"
+                        )}
                       >
-                        恢复系统默认路由
+                        强制跟随系统路由（不绑网卡）
                       </button>
-                    )}
-                  </div>
+                    </div>
 
-                  <p className="text-xs leading-relaxed text-muted">
-                    用于连接专用节点或中转节点。开启 TUN／VPN 时，留空仍可能受到系统路由影响；可填写实际物理网卡名称并验证直出。未绑定节点的浏览器直连仍遵循系统路由。
-                  </p>
-                </CardContent>
-              </Card>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="outbound-interface">直出网卡（可选）</Label>
+                      <Input
+                        id="outbound-interface"
+                        value={draft.outboundInterface ?? ""}
+                        onChange={(event) =>
+                          change({
+                            outboundInterface: event.target.value || null,
+                          })
+                        }
+                        placeholder={
+                          recommendedInterface
+                            ? `留空将自动选择 ${recommendedInterface}，或手动输入网卡名称`
+                            : "留空自动检测，例如：WLAN 或 以太网"
+                        }
+                      />
+                    </div>
+
+                    <p className="text-xs leading-relaxed text-muted">
+                      开启自动选择后，仅在检测到本机 TUN 冲突时自动绑定当前活跃物理网卡并切换为 IP-DoH 解析，切换 Wi-Fi / 有线网络时自动跟随；无 TUN 时保持系统默认路由。
+                    </p>
+                  </CardContent>
+                </Card>
+              )}
             </div>
           )}
         </fieldset>

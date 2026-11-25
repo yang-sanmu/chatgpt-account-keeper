@@ -80,7 +80,7 @@ test("IPC v1 schema rejects unknown methods and unstable error codes", () => {
 });
 
 test("every advertised IPC method has runtime parameter and result contracts", () => {
-  assert.equal(Object.keys(methodSchema.$defs).length, 93);
+  assert.equal(Object.keys(methodSchema.$defs).length, 94);
   assert.deepEqual(
     Object.keys(METHOD_CONTRACTS).sort(),
     [...schema.$defs.method.enum].sort()
@@ -362,6 +362,30 @@ test("代理命名、YAML 导入与按组测速新契约校验通过", () => {
   }));
   assert.doesNotThrow(() => assertMethodResultContract("proxies.previewCustomConfig", {
     skipped: 0,
-    nodes: [{ name: "自建-VLESS", type: "vless", server: "198.51.100.1", port: 443, yaml: "type: vless" }],
+    nodes: [{ name: "自建-VLESS", type: "vless", server: "198.51.100.1", port: 443, yaml: "type: vless", udpOnly: false }],
+  }));
+  assert.doesNotThrow(() => assertRequestContract({
+    id: "p7", method: "proxies.setNodeDirectOutbound", params: { id: "px_1", directOutbound: true },
+  }));
+  assert.doesNotThrow(() => assertRequestContract({
+    id: "p8", method: "proxies.setNodeDirectOutbound", params: { ids: ["px_1", "px_2"], directOutbound: true },
+  }));
+  assert.doesNotThrow(() => assertRequestContract({
+    id: "p9",
+    method: "network.updateConfig",
+    params: { mode: "direct", relayProxyId: null, systemProxyUrl: null, outboundInterface: null, autoOutboundInterface: true },
+  }));
+  assert.doesNotThrow(() => assertMethodResultContract("network.getConfig", {
+    config: { mode: "direct", relayProxyId: null, systemProxyUrl: null, outboundInterface: null, autoOutboundInterface: true },
+    systemProxy: { server: null, source: "none", detail: "none" },
+    environment: {
+      source: "windows-powershell",
+      interfaces: [{ name: "WLAN", description: "Intel Wi-Fi", status: "up", ipv4: "192.168.4.148", gateway: "192.168.4.1", metric: 35, recommended: true }],
+      recommendedInterface: "WLAN",
+      effectiveOutboundInterface: "WLAN",
+      outboundInterfaceSource: "auto",
+      outboundInterfaceWarning: null,
+      tunConflict: { detected: true, adapterName: "Mihomo", description: "Meta Tunnel", fakeIpDetected: true, detail: "detected" },
+    },
   }));
 });

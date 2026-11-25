@@ -1,11 +1,29 @@
 import { execFileSync } from "node:child_process";
 
 export const DEFAULT_NETWORK_CONFIG = Object.freeze({
-  mode: "system", relayProxyId: null, systemProxyUrl: null, outboundInterface: null,
+  mode: "system",
+  relayProxyId: null,
+  systemProxyUrl: null,
+  outboundInterface: null,
+  autoOutboundInterface: true,
 });
+
+export const UDP_ONLY_PROXY_TYPES = Object.freeze(new Set(["hysteria2", "tuic", "hysteria", "wireguard"]));
 
 function invalid(message) {
   return Object.assign(new Error(message), { badRequest: true });
+}
+
+export function isUdpOnlyProxyType(type) {
+  return UDP_ONLY_PROXY_TYPES.has(String(type ?? "").trim().toLowerCase());
+}
+
+export function upstreamSupportsUdp(raw) {
+  if (!raw || typeof raw !== "object") return false;
+  const type = String(raw.type ?? "").trim().toLowerCase();
+  if (!type || type === "http" || type === "https") return false;
+  if (type === "direct" || isUdpOnlyProxyType(type)) return true;
+  return raw.udp === true;
 }
 
 export function normalizeSystemProxyUrl(value) {
@@ -32,6 +50,11 @@ export function normalizeNetworkConfig(input = {}) {
       throw invalid(key === "relayProxyId" ? "请选择有效的中转节点" : "请填写有效的直出网卡名称");
     }
     value[key] = value[key]?.trim() ?? null;
+  }
+  if (value.autoOutboundInterface === undefined) {
+    value.autoOutboundInterface = true;
+  } else if (typeof value.autoOutboundInterface !== "boolean") {
+    throw invalid("自动选择物理网卡配置必须是布尔值");
   }
   if (value.mode === "relay" && !value.relayProxyId) throw invalid("指定中转模式必须选择中转节点");
   value.systemProxyUrl = normalizeSystemProxyUrl(value.systemProxyUrl);
@@ -81,15 +104,22 @@ export function detectSystemProxy({ platform = process.platform, env = process.e
 }
 
 export function resolveSystemProxy(config) {
-  return config.systemProxyUrl
+  return config?.systemProxyUrl
     ? { server: config.systemProxyUrl, source: "manual", detail: "使用手动指定的系统代理入口" }
     : detectSystemProxy();
 }
 
-function systemRaw(server) {
+export function systemRaw(server) {
   const url = new URL(server);
-  return { name: "network-system", type: url.protocol === "socks5:" ? "socks5" : "http",
-    server: url.hostname.replace(/^\[|\]$/g, ""), port: Number(url.port || (url.protocol === "https:" ? 443 : url.protocol === "http:" ? 80 : 1080)), ...(url.protocol === "https:" ? { tls: true } : {}) };
+  const isSocks5 = url.protocol === "socks5:";
+  return {
+    name: "network-system",
+    type: isSocks5 ? "socks5" : "http",
+    server: url.hostname.replace(/^\[|\]$/g, ""),
+    port: Number(url.port || (url.protocol === "https:" ? 443 : url.protocol === "http:" ? 80 : 1080)),
+    ...(url.protocol === "https:" ? { tls: true } : {}),
+    ...(isSocks5 ? { udp: true } : {}),
+  };
 }
 
 function canonical(raw) {
@@ -112,9 +142,48 @@ function sameSystemEndpoint(raw, system) {
     !!raw.tls === !!system.tls;
 }
 
+export function udpDialerConflict(node, { config, systemProxy, relayNode } = {}) {
+  const protocol = String(node?.raw?.type ?? node?.type ?? "").trim().toLowerCase();
+  if (!isUdpOnlyProxyType(protocol) || node?.directOutbound === true) return null;
+  if (!config || config.mode === "direct") return null;
+
+  if (config.mode === "system") {
+    if (!systemProxy?.server) return null;
+    const system = systemRaw(systemProxy.server);
+    if (node?.raw && sameSystemEndpoint(node.raw, system)) return null;
+    if (!upstreamSupportsUdp(system)) {
+      return {
+        code: "UDP_DIALER_INCOMPATIBLE",
+        message: `节点「${node.name}」使用 ${protocol}（UDP 协议），无法通过当前 HTTP 系统代理（${systemProxy.server}）转发；请在「代理节点」为该节点开启「直连出站」，或在「网络配置」改用 SOCKS5 入口 / 直连模式`,
+      };
+    }
+    return null;
+  }
+
+  if (config.mode === "relay" && relayNode) {
+    if (node?.raw && relayNode?.raw && sameProxyNode(node, relayNode)) return null;
+    if (!upstreamSupportsUdp(relayNode.raw)) {
+      return {
+        code: "UDP_DIALER_INCOMPATIBLE",
+        message: `节点「${node.name}」使用 ${protocol}（UDP 协议），当前中转节点「${relayNode.name}」（${relayNode.raw?.type ?? "unknown"}）不支持 UDP 转发；请为该节点开启「直连出站」或更换支持 UDP 的中转节点`,
+      };
+    }
+  }
+  return null;
+}
+
 /** Generate copies: never change a persisted subscription or share its dialer references. */
-export function compileConnectionRoutes({ nodes, proxyIds, network = DEFAULT_NETWORK_CONFIG, systemProxy = { server: null, source: "none" } }) {
+export function compileConnectionRoutes({
+  nodes,
+  proxyIds,
+  network = DEFAULT_NETWORK_CONFIG,
+  systemProxy = { server: null, source: "none" },
+  effectiveOutboundInterface = undefined,
+  allowPartialUdpSkip = false,
+}) {
   const config = normalizeNetworkConfig(network);
+  const outboundInterface =
+    effectiveOutboundInterface !== undefined ? effectiveOutboundInterface : config.outboundInterface;
   const byId = new Map(nodes.map((node) => [node.id, node]));
   const requireNode = (id) => {
     const node = byId.get(id);
@@ -131,25 +200,70 @@ export function compileConnectionRoutes({ nodes, proxyIds, network = DEFAULT_NET
   const ids = new Set(proxyIds);
   if (relay) ids.add(relay.id);
   const targets = nodes.filter((node) => ids.has(node.id) && node.enabled !== false && !node.missing);
-  if (config.mode === "system" && targets.length && ["pac", "unavailable"].includes(systemProxy.source) && !systemProxy.server) {
+  const needsSystemCheck = targets.some((node) => node.directOutbound !== true);
+  if (config.mode === "system" && needsSystemCheck && ["pac", "unavailable"].includes(systemProxy.source) && !systemProxy.server) {
     throw Object.assign(new Error(systemProxy.detail), { code: "PROXY_UNAVAILABLE" });
   }
+
   const adapters = [];
-  const copy = (node, name, dialer = null) => {
-    const { "dialer-proxy": oldDialer, ...raw } = node.raw;
-    return { ...raw, name, ...(dialer ? { "dialer-proxy": dialer } : {}),
-      ...(!dialer && config.mode !== "system" && config.outboundInterface ? { "interface-name": config.outboundInterface } : {}) };
+  const compiledTargets = [];
+  const skippedConflicts = new Map();
+  const copy = (node, name, dialer = null, bindInterface = false) => {
+    const { "dialer-proxy": oldDialer, "interface-name": oldNic, ...raw } = node.raw;
+    const nextNic = dialer ? null : bindInterface && outboundInterface ? outboundInterface : oldNic ?? null;
+    return {
+      ...raw,
+      name,
+      ...(dialer ? { "dialer-proxy": dialer } : {}),
+      ...(nextNic ? { "interface-name": nextNic } : {}),
+    };
   };
+
   const system = config.mode === "system" && systemProxy.server ? systemRaw(systemProxy.server) : null;
   let needsRelay = false;
   let needsSystem = false;
+  let hasDirectOutbound = false;
+
   for (const node of targets) {
+    if (node.directOutbound === true) {
+      hasDirectOutbound = true;
+      compiledTargets.push(node);
+      adapters.push(copy(node, `out-${node.id}`, null, true));
+      continue;
+    }
+
+    const conflict = udpDialerConflict(node, { config, systemProxy, relayNode: relay });
+    if (conflict) {
+      if (allowPartialUdpSkip) {
+        skippedConflicts.set(node.id, conflict);
+        continue;
+      }
+      throw Object.assign(new Error(conflict.message), { code: "PROXY_UNAVAILABLE", conflict });
+    }
+
     let dialer = null;
     if (relay && !sameProxyNode(node, relay)) { dialer = "network-relay"; needsRelay = true; }
     if (system && !sameSystemEndpoint(node.raw, system)) { dialer = system.name; needsSystem = true; }
-    adapters.push(copy(node, `out-${node.id}`, dialer));
+    const bindInterface = !dialer && config.mode !== "system";
+    compiledTargets.push(node);
+    adapters.push(copy(node, `out-${node.id}`, dialer, bindInterface));
   }
-  if (needsRelay) adapters.push(copy(relay, "network-relay"));
+
+  if (needsRelay) adapters.push(copy(relay, "network-relay", null, true));
   if (needsSystem) adapters.push(system);
-  return { adapters, targets, config };
+
+  const mixedDirectAdapter = config.mode === "system" && Boolean(outboundInterface) && hasDirectOutbound;
+  if (mixedDirectAdapter) {
+    adapters.push({ name: "network-direct", type: "direct", "interface-name": outboundInterface });
+  }
+
+  return {
+    adapters,
+    targets: compiledTargets,
+    config,
+    outboundInterface,
+    hasDirectOutbound,
+    mixedDirectAdapter,
+    skippedConflicts,
+  };
 }

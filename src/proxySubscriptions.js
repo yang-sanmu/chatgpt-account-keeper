@@ -1,9 +1,12 @@
+import http from "node:http";
+import https from "node:https";
 import { randomUUID } from "node:crypto";
 import YAML from "yaml";
 import { normalizeProxyNode } from "./proxyUtils.js";
 
 const MAX_BYTES = 8 * 1024 * 1024;
 const MAX_NODES = 10000;
+const MAX_REDIRECTS = 5;
 
 export function subscriptionUrl(value) {
   try {
@@ -35,28 +38,125 @@ async function readSubscription(response) {
   return Buffer.concat(chunks).toString("utf8").trim();
 }
 
-export async function fetchSubscription(value) {
-  const url = subscriptionUrl(value);
-  if (!url) return { error: "请输入有效的 HTTP(S) 订阅链接" };
-  let response;
-  try {
-    response = await fetch(url, {
-      headers: { "user-agent": "clash-verge/mihomo" },
-      signal: AbortSignal.timeout(45000),
-    });
-  } catch {
-    return { error: "无法拉取订阅，请检查网络和链接" };
+function requestViaHttpProxy(targetUrl, proxyUrl, { timeoutMs = 45000 } = {}) {
+  const [major, minor] = process.versions.node.split(".").map(Number);
+  if (major < 24 || (major === 24 && minor < 5)) {
+    throw new Error("经代理拉取订阅需要 Node.js 24.5 或更新版本");
   }
+  const proxy = new URL(proxyUrl);
+  if (!["http:", "https:"].includes(proxy.protocol)) {
+    throw new Error("订阅拉取代理地址无效");
+  }
+  const proxyEnv = { HTTP_PROXY: proxy.href, HTTPS_PROXY: proxy.href, NO_PROXY: "" };
+  const httpAgent = new http.Agent({ keepAlive: false, proxyEnv });
+  const httpsAgent = new https.Agent({ keepAlive: false, rejectUnauthorized: true, proxyEnv });
+  const deadline = Date.now() + timeoutMs;
+
+  const fetchOnce = (urlString, redirectsLeft) =>
+    new Promise((resolve, reject) => {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) return reject(new Error("请求超时"));
+      let parsed;
+      try {
+        parsed = new URL(urlString);
+      } catch {
+        return reject(new Error("重定向目标无效"));
+      }
+      if (!["http:", "https:"].includes(parsed.protocol)) {
+        return reject(new Error("不支持的重定向协议"));
+      }
+      const isHttps = parsed.protocol === "https:";
+      const client = isHttps ? https : http;
+      const req = client.request(
+        parsed,
+        {
+          method: "GET",
+          agent: isHttps ? httpsAgent : httpAgent,
+          headers: { "user-agent": "clash-verge/mihomo", Connection: "close" },
+        },
+        (res) => {
+          const status = res.statusCode ?? 0;
+          if ([301, 302, 303, 307, 308].includes(status) && res.headers.location && redirectsLeft > 0) {
+            res.resume();
+            let nextUrl;
+            try {
+              nextUrl = new URL(res.headers.location, parsed).href;
+            } catch {
+              return reject(new Error("重定向地址无效"));
+            }
+            resolve(fetchOnce(nextUrl, redirectsLeft - 1));
+            return;
+          }
+          if (status < 200 || status >= 300) {
+            res.resume();
+            resolve({ ok: false, status, text: "" });
+            return;
+          }
+          const chunks = [];
+          let bytes = 0;
+          res.on("data", (chunk) => {
+            bytes += chunk.length;
+            if (bytes > MAX_BYTES) {
+              const sizeError = Object.assign(new Error("订阅内容过大"), { readError: true });
+              res.destroy(sizeError);
+              req.destroy(sizeError);
+              return;
+            }
+            chunks.push(chunk);
+          });
+          res.on("error", (err) => reject(Object.assign(err, { readError: true })));
+          res.on("end", () => {
+            resolve({ ok: true, status, text: Buffer.concat(chunks).toString("utf8").trim() });
+          });
+        }
+      );
+      const timer = setTimeout(() => req.destroy(new Error("请求超时")), remaining);
+      req.on("close", () => clearTimeout(timer));
+      req.on("error", reject);
+      req.end();
+    });
+
+  return fetchOnce(targetUrl, MAX_REDIRECTS).finally(() => {
+    httpAgent.destroy();
+    httpsAgent.destroy();
+  });
+}
+
+export async function fetchSubscriptionText(url, { proxyUrl = null, timeoutMs = 45000 } = {}) {
+  if (proxyUrl) {
+    return requestViaHttpProxy(url, proxyUrl, { timeoutMs });
+  }
+  const response = await fetch(url, {
+    headers: { "user-agent": "clash-verge/mihomo" },
+    signal: AbortSignal.timeout(timeoutMs),
+  });
   if (!response.ok) {
     await response.body?.cancel().catch(() => {});
-    return { error: `订阅拉取失败（HTTP ${response.status}）` };
+    return { ok: false, status: response.status, text: "" };
   }
   let text;
   try {
     text = await readSubscription(response);
-  } catch {
-    return { error: "订阅内容过大或下载中断" };
+  } catch (error) {
+    throw Object.assign(error instanceof Error ? error : new Error(String(error)), { readError: true });
   }
+  return { ok: true, status: response.status, text };
+}
+
+export async function fetchSubscription(value, { proxyUrl = null } = {}) {
+  const url = subscriptionUrl(value);
+  if (!url) return { error: "请输入有效的 HTTP(S) 订阅链接" };
+  let response;
+  try {
+    response = await fetchSubscriptionText(url, { proxyUrl });
+  } catch (error) {
+    if (error?.readError) return { error: "订阅内容过大或下载中断" };
+    return { error: "无法拉取订阅，请检查网络和链接" };
+  }
+  if (!response.ok) {
+    return { error: `订阅拉取失败（HTTP ${response.status}）` };
+  }
+  let text = response.text;
   if (!text.includes("proxies:") && /^[A-Za-z0-9+/=\s]+$/.test(text)) {
     text = Buffer.from(text, "base64").toString("utf8");
   }
@@ -135,6 +235,7 @@ export function mergeSubscriptionNodes(sourceId, incoming, previous, referenced)
       raw: candidate.raw,
       enabled: prior?.enabled !== false,
       missing: false,
+      directOutbound: Boolean(prior?.directOutbound),
     };
   });
   for (const { key, matchName, ...node } of missing) nodes.push({ ...node, missing: true });

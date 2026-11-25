@@ -58,6 +58,7 @@ export function mergeProxyNodes(rawNodes, previousNodes, referencedIds) {
       raw,
       enabled: old ? old.enabled !== false : true,
       missing: false,
+      directOutbound: Boolean(old?.directOutbound),
     });
   }
 

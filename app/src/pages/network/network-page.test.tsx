@@ -107,3 +107,74 @@ it("keeps newly read and refreshed system entry information when editing a draft
   expect(screen.getByLabelText("入口地址（留空自动检测）")).toHaveValue("http://127.0.0.1:7891");
   expect(useKeeperStore.getState().proxies.network?.systemProxy.server).toBe(refreshed.systemProxy.server);
 });
+
+it("displays TUN conflict diagnostics, enumerated physical NICs, and 1-click UDP compatibility actions", async () => {
+  const user = userEvent.setup();
+  const withEnv: NetworkConfigResult = {
+    ...network,
+    environment: {
+      source: "windows-powershell",
+      interfaces: [
+        { name: "WLAN", description: "Intel Wi-Fi 6E", status: "up", ipv4: "192.168.4.148", gateway: "192.168.4.1", metric: 35, recommended: true },
+        { name: "以太网", description: "Intel Ethernet", status: "down", ipv4: null, gateway: null, metric: null, recommended: false },
+      ],
+      recommendedInterface: "WLAN",
+      effectiveOutboundInterface: "WLAN",
+      outboundInterfaceSource: "auto",
+      outboundInterfaceWarning: null,
+      tunConflict: {
+        detected: true,
+        adapterName: "Mihomo",
+        description: "Meta Tunnel",
+        fakeIpDetected: true,
+        detail: "检测到活跃 TUN 网卡 Mihomo（Meta Tunnel）",
+      },
+    },
+  };
+  tauri.onMethod("network.getConfig", () => withEnv);
+  const directCalls: Record<string, unknown>[] = [];
+  tauri.onMethod("proxies.setNodeDirectOutbound", (params) => {
+    directCalls.push(params);
+    return {
+      id: "op-direct",
+      kind: "proxy-node-direct-outbound",
+      resourceId: null,
+      state: "succeeded",
+      stage: "complete",
+      message: "ok",
+      progress: 1,
+      startedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      finishedAt: new Date().toISOString(),
+      result: { ok: true, count: 1 },
+      error: null,
+      blocksUpdate: false,
+    };
+  });
+  let saved: Record<string, unknown> | undefined;
+  tauri.onMethod("network.updateConfig", (params) => { saved = params; return { ...withEnv, config: params }; });
+
+  render(<NetworkPage />);
+  await screen.findByText(/已检测到本机 TUN（Mihomo/);
+  expect(screen.getByText(/发现 1 个 UDP 协议节点/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /自动选择活跃物理网卡（推荐：WLAN）/ })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /^WLAN/ })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /^以太网/ })).toBeInTheDocument();
+
+  await user.click(screen.getByRole("button", { name: "一键设为直连出站（1）" }));
+  await waitFor(() => expect(directCalls).toEqual([{ ids: ["px_hy"], directOutbound: true }]));
+
+  await user.click(screen.getByRole("button", { name: "改用 SOCKS5 入口" }));
+  expect(screen.getByLabelText("入口地址（留空自动检测）")).toHaveValue("socks5://127.0.0.1:7890");
+
+  await user.click(screen.getByRole("button", { name: "强制跟随系统路由（不绑网卡）" }));
+  await user.click(screen.getByRole("button", { name: "保存网络配置" }));
+  await waitFor(() =>
+    expect(saved).toMatchObject({
+      mode: "system",
+      systemProxyUrl: "socks5://127.0.0.1:7890",
+      outboundInterface: null,
+      autoOutboundInterface: false,
+    })
+  );
+});

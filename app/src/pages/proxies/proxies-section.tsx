@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { StatusDot } from "@/components/ui/status-dot";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
-import { Activity, ChevronDown, ChevronRight, Play, Search, X } from "lucide-react";
+import { Activity, AlertTriangle, ChevronDown, ChevronRight, Play, Search, X } from "lucide-react";
 import { notify } from "@/lib/notify";
 import { cn } from "@/lib/utils";
 import { formatDateTime } from "@/lib/format";
@@ -15,6 +15,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { CustomNodeDialog } from "./custom-node-dialog";
 import { NodeRenameDialog } from "./node-rename-dialog";
 import { SubscriptionsSection } from "./subscriptions-section";
+import {
+  effectiveSystemProxyServer,
+  getNodeUdpConflict,
+  upstreamUdpCompatibility,
+} from "@/lib/proxy-network-compat";
 import type { ProxyNode } from "@/ipc/types";
 
 function matchesQuery(node: ProxyNode, keywords: string[], sourceName?: string) {
@@ -45,6 +50,25 @@ export function ProxiesSection() {
   const [customExpanded, setCustomExpanded] = React.useState(true);
   const [unassignedExpanded, setUnassignedExpanded] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
+  const [togglingDirectId, setTogglingDirectId] = React.useState<string | null>(null);
+  const [fixingUdp, setFixingUdp] = React.useState(false);
+
+  const network = proxies.network ?? null;
+  const networkMode = network?.config.mode ?? "system";
+  const systemProxyServer = network ? effectiveSystemProxyServer(network.config, network) : null;
+  const relayNode = React.useMemo(
+    () => (network?.config.relayProxyId ? proxies.nodes.find((item) => item.id === network.config.relayProxyId) ?? null : null),
+    [network?.config.relayProxyId, proxies.nodes]
+  );
+  const udpCompatContext = React.useMemo(
+    () => ({ mode: networkMode, systemProxyServer, relayNode }),
+    [networkMode, systemProxyServer, relayNode]
+  );
+  const udpCompat = React.useMemo(() => upstreamUdpCompatibility(udpCompatContext), [udpCompatContext]);
+  const conflictingUdpNodes = React.useMemo(
+    () => (udpCompat.blocksUdp ? proxies.nodes.filter((node) => Boolean(getNodeUdpConflict(node, udpCompatContext))) : []),
+    [proxies.nodes, udpCompat.blocksUdp, udpCompatContext]
+  );
 
   const sources = proxies.subscriptions ?? [];
   const sourceIds = React.useMemo(() => new Set(sources.map((source) => source.id)), [sources]);
@@ -149,6 +173,36 @@ export function ProxiesSection() {
     }
   };
 
+  const handleToggleDirectOutbound = async (node: ProxyNode, nextDirect: boolean) => {
+    if (togglingDirectId) return;
+    setTogglingDirectId(node.id);
+    try {
+      await runOperation("proxies.setNodeDirectOutbound", { id: node.id, directOutbound: nextDirect });
+      notify.success(
+        nextDirect ? "已开启直连出站" : "已恢复跟随全局",
+        nextDirect ? `节点「${node.name}」将跳过前置代理直出` : `节点「${node.name}」将跟随网络配置`
+      );
+    } catch (error) {
+      notify.error("切换出站策略失败", error);
+    } finally {
+      setTogglingDirectId(null);
+    }
+  };
+
+  const handleFixConflictingUdp = async () => {
+    if (!conflictingUdpNodes.length || fixingUdp) return;
+    setFixingUdp(true);
+    try {
+      const ids = conflictingUdpNodes.map((node) => node.id) as [string, ...string[]];
+      await runOperation("proxies.setNodeDirectOutbound", { ids, directOutbound: true });
+      notify.success("已开启直连出站", `已为 ${ids.length} 个 UDP 节点跳过前置代理`);
+    } catch (error) {
+      notify.error("批量设置直连出站失败", error);
+    } finally {
+      setFixingUdp(false);
+    }
+  };
+
   const handleTestNode = async (id: string) => {
     try {
       await runOperation("proxies.testNode", { id });
@@ -179,6 +233,7 @@ export function ProxiesSection() {
             <th className="text-left font-normal text-muted px-4 py-2">节点名称</th>
             <th className="text-left font-normal text-muted px-4 py-2 w-48">服务器</th>
             <th className="text-left font-normal text-muted px-4 py-2 w-24">协议</th>
+            <th className="text-left font-normal text-muted px-4 py-2 w-28">出站</th>
             <th className="text-left font-normal text-muted px-4 py-2 w-24">本地端口</th>
             <th className="text-left font-normal text-muted px-4 py-2 w-24">延迟</th>
             <th className="text-right font-normal text-muted px-4 py-2">操作</th>
@@ -187,10 +242,14 @@ export function ProxiesSection() {
         <tbody className="divide-y divide-subtle bg-panel">
           {nodes.length === 0 ? (
             <tr>
-              <td colSpan={7} className="text-center text-muted py-6">{emptyText}</td>
+              <td colSpan={8} className="text-center text-muted py-6">{emptyText}</td>
             </tr>
           ) : (
-            nodes.map((node) => (
+            nodes.map((node) => {
+              const udpConflict = getNodeUdpConflict(node, udpCompatContext);
+              const isDirect = Boolean(node.directOutbound);
+              const busyDirect = togglingDirectId === node.id || fixingUdp;
+              return (
               <tr key={node.id} className={cn(!node.enabled && "opacity-60")}>
                 <td className="px-4 py-2">
                   <Switch
@@ -214,6 +273,44 @@ export function ProxiesSection() {
                 </td>
                 <td className="px-4 py-2 text-secondary">
                   {node.type || "—"}
+                </td>
+                <td className="px-4 py-2 whitespace-nowrap">
+                  <button
+                    type="button"
+                    disabled={node.missing || busyDirect}
+                    onClick={() => void handleToggleDirectOutbound(node, !isDirect)}
+                    aria-label={isDirect ? `关闭 ${node.name} 直连出站` : `开启 ${node.name} 直连出站`}
+                    title={
+                      udpConflict
+                        ? `${udpConflict}（点击立即开启直连出站）`
+                        : isDirect
+                          ? "已开启节点级直连出站：跳过全局系统代理/中转，有 TUN 时自动经物理网卡直出（点击恢复跟随全局）"
+                          : networkMode === "direct"
+                            ? "当前全局已为直连模式；点击可提前标记为节点直出，切回系统代理/中转后仍保持直出"
+                            : "跟随全局网络模式（点击可单独设为直连出站，跳过前置代理）"
+                    }
+                    className={cn(
+                      "inline-flex items-center gap-1 rounded-chip border px-2 py-0.5 text-2xs transition-colors disabled:pointer-events-none disabled:opacity-50",
+                      isDirect
+                        ? "border-accent bg-accent-soft text-accent font-medium hover:opacity-85"
+                        : udpConflict
+                          ? "border-warn bg-warn-soft text-warn font-medium hover:opacity-90"
+                          : networkMode === "direct"
+                            ? "border-subtle bg-sunken text-muted hover:bg-hover hover:text-primary"
+                            : "border-subtle bg-sunken text-secondary hover:bg-hover hover:text-primary"
+                    )}
+                  >
+                    {udpConflict && !isDirect && <AlertTriangle className="size-3 shrink-0" />}
+                    <span>
+                      {isDirect
+                        ? "直连出站"
+                        : udpConflict
+                          ? "UDP 冲突"
+                          : networkMode === "direct"
+                            ? "全局直连"
+                            : "跟随全局"}
+                    </span>
+                  </button>
                 </td>
                 <td className="px-4 py-2 text-secondary tabular">
                   {node.localPort || "—"}
@@ -253,7 +350,8 @@ export function ProxiesSection() {
                   )}
                 </td>
               </tr>
-            ))
+            );
+            })
           )}
         </tbody>
       </table>
@@ -328,6 +426,30 @@ export function ProxiesSection() {
           </Button>
         </div>
       </div>
+
+      {conflictingUdpNodes.length > 0 && (
+        <div
+          role="alert"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-panel border border-warn bg-warn-soft px-4 py-2.5 text-xs text-warn"
+        >
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="size-4 shrink-0" />
+            <span>
+              {udpCompat.reason}，当前有 {conflictingUdpNodes.length} 个 UDP 节点（如 Hysteria2 / TUIC）未开启「直连出站」，测速和连接会失败。
+            </span>
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-7 px-2.5 text-xs"
+            disabled={fixingUdp}
+            onClick={() => void handleFixConflictingUdp()}
+          >
+            {fixingUdp ? "处理中…" : `一键设为直连出站（${conflictingUdpNodes.length}）`}
+          </Button>
+        </div>
+      )}
 
       <Card>
         <CardContent className="p-4 space-y-5">

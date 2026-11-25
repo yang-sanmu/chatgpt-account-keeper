@@ -11,6 +11,11 @@ import { notify } from "@/lib/notify";
 import { cn } from "@/lib/utils";
 import type { CustomProxyDetails } from "@/ipc/generated";
 import { parseCustomProxyInput } from "../../../../src/customProxyInput.js";
+import {
+  effectiveSystemProxyServer,
+  isUdpOnlyNode,
+  upstreamUdpCompatibility,
+} from "@/lib/proxy-network-compat";
 
 type ProxyDraft = Omit<CustomProxyDetails, "port"> & { port: string };
 type ConfigDraft = {
@@ -19,6 +24,7 @@ type ConfigDraft = {
   server: string;
   port: number;
   yaml: string;
+  udpOnly?: boolean;
   showYaml?: boolean;
 };
 
@@ -52,6 +58,25 @@ export function CustomNodeDialog({
   const [configError, setConfigError] = React.useState("");
   const [configStatus, setConfigStatus] = React.useState("");
   const [recognizingConfig, setRecognizingConfig] = React.useState(false);
+
+  const proxies = useKeeperStore((s) => s.proxies);
+  const currentNetwork = proxies.network ?? null;
+  const currentUdpCompat = React.useMemo(() => {
+    if (!currentNetwork) return { blocksUdp: false, reason: null, socks5Suggestion: null };
+    const relayNode = currentNetwork.config.relayProxyId
+      ? proxies.nodes.find((item) => item.id === currentNetwork.config.relayProxyId) ?? null
+      : null;
+    return upstreamUdpCompatibility({
+      mode: currentNetwork.config.mode,
+      systemProxyServer: effectiveSystemProxyServer(currentNetwork.config, currentNetwork),
+      relayNode,
+    });
+  }, [currentNetwork, proxies.nodes]);
+  const [directOutboundForUdp, setDirectOutboundForUdp] = React.useState<boolean>(() => currentUdpCompat.blocksUdp);
+  const previewUdpCount = React.useMemo(
+    () => configDrafts.filter((item) => isUdpOnlyNode(item)).length,
+    [configDrafts]
+  );
 
   const [loading, setLoading] = React.useState(!!nodeId);
   const [loadError, setLoadError] = React.useState(false);
@@ -134,6 +159,7 @@ export function CustomNodeDialog({
     try {
       const preview = await agentCall("proxies.previewCustomConfig", { input: rawText });
       setConfigDrafts(preview.nodes.map((node) => ({ ...node, showYaml: preview.nodes.length === 1 })));
+      setDirectOutboundForUdp(currentUdpCompat.blocksUdp);
       setConfigStatus(
         `已识别 ${preview.nodes.length} 个节点${preview.skipped > 0 ? `（跳过 ${preview.skipped} 条无效项）` : ""}，可修改名称或 YAML 后保存。`
       );
@@ -201,6 +227,7 @@ export function CustomNodeDialog({
     const items = itemsToSave.map((item) => ({
       name: item.name.trim(),
       yaml: item.yaml,
+      ...(!nodeId && directOutboundForUdp && isUdpOnlyNode(item) ? { directOutbound: true } : {}),
     }));
     for (const item of items) {
       if (!item.name || !item.yaml.trim()) {
@@ -209,7 +236,10 @@ export function CustomNodeDialog({
     }
     await runOperation("proxies.saveCustomConfig", {
       ...(nodeId ? { id: nodeId } : {}),
-      items: items as [{ name: string; yaml: string }, ...{ name: string; yaml: string }[]],
+      items: items as [
+        { name: string; yaml: string; directOutbound?: boolean },
+        ...{ name: string; yaml: string; directOutbound?: boolean }[],
+      ],
     });
   };
 
@@ -379,6 +409,27 @@ export function CustomNodeDialog({
                   {configError && <p role="alert" className="text-xs text-danger">{configError}</p>}
                   {configStatus && <p role="status" className="text-xs text-secondary">{configStatus}</p>}
                 </div>
+              )}
+
+              {!nodeId && previewUdpCount > 0 && (
+                <label className="flex items-start gap-2 rounded-panel border border-warn/60 bg-warn-soft/50 px-3 py-2 text-xs text-primary cursor-pointer">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5"
+                    checked={directOutboundForUdp}
+                    onChange={(event) => setDirectOutboundForUdp(event.target.checked)}
+                  />
+                  <span className="space-y-0.5">
+                    <span className="block font-medium">
+                      为导入的 {previewUdpCount} 个 UDP 协议节点（Hysteria2 / TUIC / WireGuard 等）开启「直连出站」
+                    </span>
+                    <span className="block text-muted">
+                      {currentUdpCompat.blocksUdp
+                        ? `${currentUdpCompat.reason}，建议开启以跳过 HTTP 前置代理。`
+                        : "开启后在系统代理或指定中转模式下仍保持直出，避免与 HTTP 前置代理冲突。"}
+                    </span>
+                  </span>
+                </label>
               )}
 
               {configDrafts.map((item, index) => (

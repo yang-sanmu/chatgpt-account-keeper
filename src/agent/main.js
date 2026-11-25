@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import * as store from "../store.js";
 import * as proxies from "../proxyManager.js";
+import { warmupHostNetworkSnapshot } from "../network/hostNetwork.js";
 import {
   reloadPersistedStatusCache,
   startStatusMonitor,
@@ -281,6 +282,7 @@ async function main() {
       if (selectedDataRoot) log.info(`Agent 数据目录：${selectedDataRoot}`);
     },
     afterStart: () => {
+      warmupHostNetworkSnapshot();
       agent.services.runtime.icloud?.schedule();
       startProfileMaintenance();
       // 巡检定时器与调度时钟都在后台组合完成后才启动。

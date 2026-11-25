@@ -7,7 +7,7 @@ import path from "node:path";
 import WebSocket from "ws";
 import { connectManualBrowser } from "./manualBrowser.js";
 import { fromRoot, ensureDir } from "./paths.js";
-import { proxyForAccount, proxyForNode, ensureRunning, getNetworkConfig, waitForNetworkTransition } from "./proxyManager.js";
+import { proxyForAccount, proxyForNode, getNodeUdpConflict, ensureRunning, ensureDirectBypassProxy, getNetworkConfig, waitForNetworkTransition } from "./proxyManager.js";
 import { getAccount, effectiveProxyId, getAccountEnvironment, getGroup } from "./store.js";
 import { previewGroupRegion, resolveRegionForAccount } from "./geo.js";
 import { DEFAULT_BROWSER_LOCALE, environmentSnapshot } from "./environmentConfig.js";
@@ -1345,13 +1345,26 @@ async function prepareAccountLaunch(account, opts) {
   if (inspectionProxyUrl) {
     launchArgs.proxy = applyProxyBypass({ server: inspectionProxyUrl }, opts.proxyBypass);
   } else if (icloud && icloud.networkMode !== "inherit") {
-    if (icloud.networkMode === "direct") launchArgs.args.push("--no-proxy-server");
-    else if (icloud.networkMode === "system") {
+    if (icloud.networkMode === "direct") {
+      const bypass = await ensureDirectBypassProxy({ signal: opts.signal });
+      if (bypass) {
+        launchArgs.proxy = { server: bypass.server };
+        log.info(`iCloud 窗口经物理网卡 ${bypass.outboundInterface} 直出 -> ${bypass.server}`);
+      } else {
+        launchArgs.args.push("--no-proxy-server");
+      }
+    } else if (icloud.networkMode === "system") {
       const system = resolveSystemProxy({ systemProxyUrl: null });
-      if (["pac", "unavailable"].includes(system.source)) throw new Error("无法识别系统代理，请使用直连或跟随网络配置");
+      if (["pac", "unavailable"].includes(system.source)) {
+        throw new Error("无法识别系统代理，请改用“跟随网络配置”填写固定入口，或改用直连模式");
+      }
       if (system.server) launchArgs.proxy = { server: system.server };
     } else throw new Error("无效的 iCloud 网络模式");
   } else if (selectedProxyId || networkConfig.mode === "relay") {
+    const udpConflict = selectedProxyId ? getNodeUdpConflict(selectedProxyId) : null;
+    if (udpConflict) {
+      throw Object.assign(new Error(udpConflict.message), { code: "PROXY_UNAVAILABLE", conflict: udpConflict });
+    }
     // 边车必须先就绪，否则 Chromium 会连到一个还没监听的端口。
     await ensureRunning();
     const p = getProxy();
@@ -1368,7 +1381,15 @@ async function prepareAccountLaunch(account, opts) {
   } else {
     const p = getProxy();
     if (p) launchArgs.proxy = applyProxyBypass(p, opts.proxyBypass);
-    else if (networkConfig.mode === "direct") launchArgs.args.push("--no-proxy-server");
+    else if (networkConfig.mode === "direct") {
+      const bypass = await ensureDirectBypassProxy({ signal: opts.signal });
+      if (bypass) {
+        launchArgs.proxy = { server: bypass.server };
+        log.info(`账号 ${liveAccount.id} 经物理网卡 ${bypass.outboundInterface} 直出 -> ${bypass.server}`);
+      } else {
+        launchArgs.args.push("--no-proxy-server");
+      }
+    }
   }
 
   // A fixed account environment survives group/output changes. Inheritance keeps

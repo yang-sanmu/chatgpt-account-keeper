@@ -67,8 +67,8 @@ import { getStrictNetworkCapabilities } from "../network/strictConfig.js";
 import { createPlanClient } from "../accountPlan.js";
 import { cancellableSleep, raceSignal, throwIfCancelled } from "../cancellation.js";
 
-// Minor 15 adds custom proxy YAML/URI preview & save, universal node renaming, named subscription import, and scoped latency tests.
-export const PROTOCOL_VERSION = Object.freeze({ major: 1, minor: 15 });
+// Minor 16 adds host physical NIC / TUN environment diagnostics, auto outbound NIC toggle, and per-node directOutbound override.
+export const PROTOCOL_VERSION = Object.freeze({ major: 1, minor: 16 });
 
 export const MUTATING_METHODS = new Set([
   "icloud.saveConfig", "icloud.open", "icloud.close", "icloud.sync", "icloud.create", "icloud.runNow", "icloud.delete", "icloud.cancelDelete", "icloud.stop", "icloud.updateLocal", "icloud.acknowledge",
@@ -110,6 +110,7 @@ export const MUTATING_METHODS = new Set([
   "proxies.refreshSubscription",
   "proxies.setRuntimeDirectory",
   "proxies.setNodeEnabled",
+  "proxies.setNodeDirectOutbound",
   "proxies.testNode",
   "proxies.testAll",
   "profiles.scan",
@@ -679,7 +680,11 @@ export class ApplicationServices {
     add("environments.update", this._environmentsUpdate);
     add("environments.reset", this._environmentsReset);
     add("network.getCapabilities", getStrictNetworkCapabilities);
-    add("network.getConfig", () => this.runtime.proxies.getNetworkConfig());
+    add("network.getConfig", () => (
+      typeof this.runtime.proxies.getNetworkConfigFresh === "function"
+        ? this.runtime.proxies.getNetworkConfigFresh({ force: true })
+        : this.runtime.proxies.getNetworkConfig()
+    ));
     add("network.updateConfig", this._networkUpdateConfig);
     add("system.bootstrap", this._bootstrap);
     add("system.getActivity", this._getActivity);
@@ -758,6 +763,7 @@ export class ApplicationServices {
     add("proxies.refreshSubscription", this._proxiesRefresh);
     add("proxies.setRuntimeDirectory", this._proxiesSetDirectory);
     add("proxies.setNodeEnabled", this._proxiesSetNodeEnabled);
+    add("proxies.setNodeDirectOutbound", this._proxiesSetNodeDirectOutbound);
     add("proxies.testNode", this._proxiesTestNode);
     add("proxies.testAll", this._proxiesTestAll);
     add("profiles.scan", this._profilesScan);
@@ -1884,6 +1890,40 @@ export class ApplicationServices {
       if (!node) fail(ERROR_CODES.NOT_FOUND, "代理节点不存在");
       this.runtime.bumpConfigEpoch?.();
       return node;
+    });
+  }
+
+  _proxiesSetNodeDirectOutbound(params) {
+    assertInput(typeof params.directOutbound === "boolean", "directOutbound 必须是布尔值");
+    const hasIds = Array.isArray(params.ids);
+    const hasId = typeof params.id === "string" && params.id.trim().length > 0;
+    assertInput(hasId !== hasIds, "请提供单个节点 id 或节点列表 ids");
+    const target = hasIds ? params.ids : requireId(params);
+    if (hasIds) {
+      assertInput(
+        target.length > 0 && target.every((item) => typeof item === "string" && item.trim().length > 0),
+        "ids 必须是非空节点 ID 数组"
+      );
+    }
+    const assertIdle = () => {
+      assertInput(!this.draining, "Agent 正在退出或更新，请稍后重试");
+      const busy = this._getActivity().blockers.some(
+        (item) => item.kind !== "operation" || item.detail.kind !== "proxy-node-direct-outbound"
+      );
+      if (busy || this.runtime.browserRuns?.listActive?.().length) {
+        fail(
+          ERROR_CODES.RESOURCE_BUSY,
+          "此节点正被分组或临时窗口使用，切换出站策略会重启代理边车；请先关闭浏览器窗口并等待运行任务结束后重试",
+          { retryable: true }
+        );
+      }
+    };
+    return this._proxyOperation("proxy-node-direct-outbound", hasId ? target : null, async () => {
+      const result = await this.runtime.proxies.setNodeDirectOutbound(target, params.directOutbound, { assertIdle });
+      if (!result) fail(ERROR_CODES.NOT_FOUND, "代理节点不存在");
+      this.runtime.clearRegionCache?.();
+      this.runtime.bumpConfigEpoch?.();
+      return result;
     });
   }
 

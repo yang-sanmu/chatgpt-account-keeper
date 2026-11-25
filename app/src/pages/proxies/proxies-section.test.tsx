@@ -382,3 +382,102 @@ it("clears stale YAML preview when input changes and preserves leading indentati
   expect(screen.queryByLabelText("节点名称")).toBeNull();
   expect(screen.getByRole("button", { name: "保存" })).toBeDisabled();
 });
+
+it("highlights UDP/HTTP conflicts, toggles per-node directOutbound, and defaults UDP directOutbound on YAML import", async () => {
+  const runOperation = vi.fn().mockResolvedValue({});
+  vi.spyOn(bridge, "agentCall").mockImplementation(async (method) => {
+    if (method === "proxies.previewCustomConfig") {
+      return {
+        skipped: 0,
+        nodes: [
+          { name: "VPS-VLESS", type: "vless", server: "198.51.100.10", port: 443, yaml: "type: vless\nserver: 198.51.100.10\nport: 443", udpOnly: false },
+          { name: "VPS-HY2", type: "hysteria2", server: "198.51.100.10", port: 443, yaml: "type: hysteria2\nserver: 198.51.100.10\nport: 443", udpOnly: true },
+        ],
+      } as never;
+    }
+    return {} as never;
+  });
+
+  useKeeperStore.setState({
+    runOperation,
+    proxies: {
+      ...useKeeperStore.getState().proxies,
+      network: {
+        config: { mode: "system", relayProxyId: null, systemProxyUrl: null, outboundInterface: null, autoOutboundInterface: true },
+        systemProxy: { server: "http://127.0.0.1:7900", source: "windows", detail: "使用 Windows 系统代理入口" },
+      },
+      nodes: [
+        {
+          id: "custom_hy2", name: "自建 HY2", customKind: "yaml", type: "hysteria2", server: "hy2.example.test", port: 443,
+          enabled: true, missing: false, directOutbound: false, udpOnly: true,
+          localPort: null, latencyMs: null, latencyOk: null, latencyMessage: null, latencyTestedAt: null,
+        },
+        {
+          id: "custom_res", name: "住宅 HTTP", customKind: "simple", type: "http", server: "res.example.test", port: 8080,
+          enabled: true, missing: false, directOutbound: false, udpOnly: false,
+          localPort: null, latencyMs: null, latencyOk: null, latencyMessage: null, latencyTestedAt: null,
+        },
+      ],
+    },
+  });
+
+  render(<ProxiesSection />);
+  expect(screen.getByRole("alert")).toHaveTextContent("当前有 1 个 UDP 节点");
+  const customTable = within(screen.getByRole("table", { name: "自定义节点" }));
+  expect(customTable.getByRole("button", { name: "开启 自建 HY2 直连出站" })).toHaveTextContent("UDP 冲突");
+
+  fireEvent.click(customTable.getByRole("button", { name: "开启 自建 HY2 直连出站" }));
+  await waitFor(() =>
+    expect(runOperation).toHaveBeenCalledWith("proxies.setNodeDirectOutbound", { id: "custom_hy2", directOutbound: true })
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "一键设为直连出站（1）" }));
+  await waitFor(() =>
+    expect(runOperation).toHaveBeenCalledWith("proxies.setNodeDirectOutbound", { ids: ["custom_hy2"], directOutbound: true })
+  );
+
+  // Import YAML in HTTP system mode: UDP directOutbound checkbox defaults to checked and only applies to UDP nodes.
+  fireEvent.click(screen.getByRole("button", { name: "新增代理" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Clash YAML / 分享链接" }));
+  fireEvent.change(screen.getByLabelText("Clash YAML 或分享链接"), { target: { value: "proxies: []" } });
+  fireEvent.click(screen.getByRole("button", { name: "识别节点" }));
+  await waitFor(() => expect(screen.getByRole("checkbox")).toBeChecked());
+  fireEvent.click(screen.getByRole("button", { name: "保存 2 个节点" }));
+  await waitFor(() =>
+    expect(runOperation).toHaveBeenCalledWith("proxies.saveCustomConfig", {
+      items: [
+        { name: "VPS-VLESS", yaml: "type: vless\nserver: 198.51.100.10\nport: 443" },
+        { name: "VPS-HY2", yaml: "type: hysteria2\nserver: 198.51.100.10\nport: 443", directOutbound: true },
+      ],
+    })
+  );
+});
+
+it("warns when a relay node reports udpSupported: false for UDP-only downstream nodes", () => {
+  useKeeperStore.setState({
+    proxies: {
+      ...useKeeperStore.getState().proxies,
+      network: {
+        config: { mode: "relay", relayProxyId: "custom_socks", systemProxyUrl: null, outboundInterface: null, autoOutboundInterface: true },
+        systemProxy: { server: null, source: "none", detail: "none" },
+      },
+      nodes: [
+        {
+          id: "custom_socks", name: "无UDP中转", customKind: "simple", type: "socks5", server: "relay.example.test", port: 1080,
+          enabled: true, missing: false, directOutbound: false, udpOnly: false, udpSupported: false,
+          localPort: null, latencyMs: null, latencyOk: null, latencyMessage: null, latencyTestedAt: null,
+        },
+        {
+          id: "custom_hy2", name: "自建 HY2", customKind: "yaml", type: "hysteria2", server: "hy2.example.test", port: 443,
+          enabled: true, missing: false, directOutbound: false, udpOnly: true, udpSupported: true,
+          localPort: null, latencyMs: null, latencyOk: null, latencyMessage: null, latencyTestedAt: null,
+        },
+      ],
+    },
+  });
+
+  render(<ProxiesSection />);
+  expect(screen.getByRole("alert")).toHaveTextContent("无UDP中转");
+  const customTable = within(screen.getByRole("table", { name: "自定义节点" }));
+  expect(customTable.getByRole("button", { name: "开启 自建 HY2 直连出站" })).toHaveTextContent("UDP 冲突");
+});

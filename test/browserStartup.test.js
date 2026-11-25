@@ -6,7 +6,8 @@ import path from "node:path";
 import { waitForDevToolsEndpoint, configureChromeLauncher, getChromeLauncher, launchForAccount } from "../src/browser.js";
 import { ChromeProcessLauncher } from "../src/chromeProcessLauncher.js";
 import { configureStoreBackend } from "../src/store.js";
-import { configureProxyStoreBackend } from "../src/proxyManager.js";
+import { configureProxyStoreBackend, stopAll } from "../src/proxyManager.js";
+import { configureHostNetworkDetector } from "../src/network/hostNetwork.js";
 import { fromRoot } from "../src/paths.js";
 
 test("account launch preserves inherited defaults and only forwards an explicit fixed environment", async t => {
@@ -41,13 +42,23 @@ test("iCloud direct mode ignores configured proxy; inherit uses it with an indep
   fs.mkdirSync(fixtureRoot, { recursive: true });
   const profile = fs.mkdtempSync(path.join(fixtureRoot, "keeper-icloud-network-"));
   const account = { id: "icloud_primary", profileDir: path.relative(fromRoot(), profile) };
+  const restoreHost = configureHostNetworkDetector(() => ({
+    platform: process.platform,
+    source: "os-network-interfaces",
+    detectedAt: new Date().toISOString(),
+    interfaces: [],
+    virtualAdapters: [],
+    recommendedInterface: null,
+    tunConflict: { detected: false, adapterName: null, description: null, fakeIpDetected: false, detail: null },
+  }));
   const restoreStore = configureStoreBackend({ getAccount: () => { throw new Error("must not resolve a ChatGPT account"); } });
   const restoreProxy = configureProxyStoreBackend({ readProxyStore: () => ({ nodes: [], network: { mode: "system", systemProxyUrl: "http://127.0.0.1:31999" } }) });
   const previous = getChromeLauncher(); const captured = [];
   const stop = new Error("stop before creating a real browser");
   configureChromeLauncher({ launch: async options => { captured.push(options); throw stop; } });
   t.after(() => {
-    configureChromeLauncher(previous); restoreProxy(); restoreStore();
+    stopAll();
+    configureChromeLauncher(previous); restoreProxy(); restoreStore(); restoreHost();
     assert.equal(path.dirname(profile), fixtureRoot); fs.rmSync(profile, { recursive: true, force: true });
   });
   for (const mode of ["direct", "inherit"]) {
@@ -60,6 +71,54 @@ test("iCloud direct mode ignores configured proxy; inherit uses it with an indep
   assert.equal(captured[0].launchArgs.locale, "zh-CN");
   assert.equal(captured[0].manual, false);
   assert.equal(captured[0].userDataDir, profile);
+});
+
+test("iCloud system mode ignores stale project systemProxyUrl and bound UDP conflict fails closed with specific message", async t => {
+  const fixtureRoot = path.join(fromRoot(), "tmp");
+  fs.mkdirSync(fixtureRoot, { recursive: true });
+  const profile = fs.mkdtempSync(path.join(fixtureRoot, "keeper-icloud-system-"));
+  const icloudAccount = { id: "icloud_primary", profileDir: path.relative(fromRoot(), profile) };
+  const hy2Account = { id: "hy2-acc", profileDir: path.relative(fromRoot(), profile), groupId: "g_hy2" };
+  const hy2Node = {
+    id: "px_hy2",
+    name: "JP HY2",
+    enabled: true,
+    missing: false,
+    directOutbound: false,
+    raw: { name: "JP HY2", type: "hysteria2", server: "jp.example.test", port: 443, password: "pw" },
+  };
+  const restoreStore = configureStoreBackend({
+    getAccount: (id) => (id === hy2Account.id ? hy2Account : null),
+    getAccountEnvironment: () => ({ mode: "fixed", locale: "en-US", version: 1 }),
+    getGroup: () => ({ id: "g_hy2", proxyId: hy2Node.id }),
+    getGroups: () => [{ id: "g_hy2", proxyId: hy2Node.id }],
+    effectiveProxyId: (acc) => (acc.id === hy2Account.id ? hy2Node.id : null),
+  });
+  let currentNetwork = { mode: "direct", systemProxyUrl: "http://127.0.0.1:31999" };
+  const restoreProxy = configureProxyStoreBackend({
+    readProxyStore: () => ({ nodes: [hy2Node], network: currentNetwork }),
+  });
+  const previous = getChromeLauncher();
+  const captured = [];
+  const stop = new Error("stop before creating a real browser");
+  configureChromeLauncher({ launch: async options => { captured.push(options); throw stop; } });
+  t.after(() => {
+    stopAll();
+    configureChromeLauncher(previous); restoreProxy(); restoreStore();
+    assert.equal(path.dirname(profile), fixtureRoot); fs.rmSync(profile, { recursive: true, force: true });
+  });
+
+  await assert.rejects(
+    launchForAccount(icloudAccount, { headless: false, runToken: "icloud-sys", icloud: { networkMode: "system" } }),
+    error => error === stop
+  );
+  assert.notEqual(captured[0].launchArgs.proxy?.server, "http://127.0.0.1:31999");
+
+  currentNetwork = { mode: "system", systemProxyUrl: "http://127.0.0.1:7890" };
+  await assert.rejects(
+    launchForAccount(hy2Account, { headless: false, runToken: "hy2-conflict" }),
+    error => error.code === "PROXY_UNAVAILABLE" && /hysteria2/.test(error.message) && /直连出站/.test(error.message)
+  );
 });
 
 // Exercise the real polling loop and filesystem. Only elapsed time is accelerated;

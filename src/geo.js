@@ -166,6 +166,7 @@ export function lookupThroughProxy(server, { signal, localeOnly = false } = {}) 
         port: proxyUrl.port,
         method: "GET",
         path: target, // 走代理时请求行要用绝对 URL
+        agent: false,
         headers: { Host: "ip-api.com", Connection: "close" },
         timeout: 12000,
         signal,

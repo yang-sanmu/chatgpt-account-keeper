@@ -79,6 +79,7 @@ export const METHOD_CONTRACTS = Object.freeze({
   "proxies.refreshSubscription": ["emptyParams", "operationResult"],
   "proxies.setRuntimeDirectory": ["runtimeDirectoryParams", "operationResult"],
   "proxies.setNodeEnabled": ["nodeEnabledParams", "operationResult"],
+  "proxies.setNodeDirectOutbound": ["nodeDirectOutboundParams", "operationResult"],
   "proxies.testNode": ["idParams", "operationResult"],
   "proxies.testAll": ["testAllProxiesParams", "operationResult"],
   "profiles.scan": ["emptyParams", "operationResult"],

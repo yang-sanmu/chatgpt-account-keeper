@@ -51,6 +51,9 @@ config/groups.json
 .mihomo-test/
 mihomo/
 mihomo-test/
+mihomo-direct/
+mihomo-subscription/
+mihomo-inspection/
 
 # 个人会话内容（运行时数据，用 .example 做模板）
 config/conversations.json
